@@ -1,0 +1,10 @@
+Raw/
+BIDS/
+.venv/
+__pycache__/
+
+
+*.snirf
+*.nirs
+*.mat
+*.zip

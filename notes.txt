@@ -1,0 +1,18 @@
+***Things To Watch Out For***
+
+1. Missing Data: the README mentions explicitly that some subjects like R9 and FLS5 are missing certain data. Include
+exception handling to deal with these obastacles.
+
+2. File Nomenclature: write a Python regex parser to handle the different naming conventions
+
+3. Different Study Features/Equipment: As mentioned in the paper, the preprocessing pipeline is used for the Expert/Novice and
+Learning Curve Study. However, the tES studies will likely have a different preprocessing pipeline, especially because they have
+different features as shown below.
+
+
+Feature         |      Expert/Novice & Learning Curve      |   tES Studies (Short/Long)
+--------------------------------------------------------------------------------------------------
+Hardware        |               TechEn CW6                 |        NIRx NIRScout
+Sampling Rate   |                20 Hz                     |          7.8125 Hz
+Wavelength      |               690 / 830 nm               |        760 / 850 nm
+Channel Count   |           25 Long / 8 Short              |       28 Long / 8 Short
