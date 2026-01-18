@@ -1,0 +1,61 @@
+======================================================================
+PHASE 1: THE REPRODUCTION AND VALIDATION PIPELINE (ASTaUND)
+======================================================================
+
+Objective: Successfully mimic the preprocessing and technical 
+validation pipeline described in Kamat et al. (2023) Scientific Data 
+to isolate cortical neural signatures from surgical tasks.
+
+----------------------------------------------------------------------
+STEP 1: DATA QUALITY ANALYSIS (1:1 REPRODUCTION)
+----------------------------------------------------------------------
+- Method: Power-based Signal-to-Noise Ratio (SNR) and Motion Ratio (MR).
+- SNR Logic: 20 * log10(mean(Intensity) / std(Intensity)).
+- SNR Threshold: Valid channels must fall between 80 dB and 140 dB.
+- MR Logic: Percentage of the recording free from motion artifacts 
+  (spikes/baseline shifts) detected by the hmrR_MotionArtifact function.
+- OPTION: Scalp Coupling Index (SCI). Measures the correlation 
+  of cardiac oscillations between 690nm and 830nm wavelengths. 
+
+----------------------------------------------------------------------
+STEP 2: MODIFIED BEER-LAMBERT LAW (1:1 REPRODUCTION)
+----------------------------------------------------------------------
+- Task: Convert Raw Light Intensity to HbO2 and HbR concentrations.
+- Specific Constants (PPF): 
+    * 6.4 for 690nm
+    * 5.8 for 830nm
+- Goal: Transform physics-based optical density into biological signals.
+- OPTION: Standard Differential Pathlength Factors (DPF). Using age-
+  corrected constants instead of the paper-specific PPF values.
+
+----------------------------------------------------------------------
+STEP 3: MOTION ARTIFACT REMOVAL (1:1 REPRODUCTION)
+----------------------------------------------------------------------
+- Method: Recursive PCA (rPCA).
+- Logic: Iteratively identifies and removes the principal components 
+  of the signal that account for excessive variance (motion spikes) 
+  caused by physical laparoscopic tool use.
+- OPTION: Temporal Derivative Distribution Repair (TDDR) or Spline 
+  Interpolation. Alternative algorithms for smoothing motion spikes.
+
+----------------------------------------------------------------------
+STEP 4: SYSTEMIC NOISE REGRESSION (1:1 REPRODUCTION)
+----------------------------------------------------------------------
+- Method: Ordinary Least Squares (OLS) Regression.
+- Regressors: 8mm Short-Separation Channels.
+- Goal: Subtract physiological noise (heart rate, scalp blood flow) 
+  measured by the short channels from the 30-40mm cortical channels.
+- OPTION: Adaptive Filtering (RLS/LMS). A dynamic method of noise 
+  cancellation that adjusts to physiological changes in real-time.
+
+----------------------------------------------------------------------
+STEP 5: GLM & TECHNICAL VALIDATION (1:1 REPRODUCTION)
+----------------------------------------------------------------------
+- Model: General Linear Model (GLM) with Gaussian Basis Functions.
+- Purpose: Extract the flexible Hemodynamic Response Function (HRF) 
+  for the surgical pattern cutting task.
+- Metric: Contrast-to-Noise Ratio (CNR).
+- Formula: |μ_expert - μ_novice| / sqrt(σ²_expert + σ²_novice).
+- OPTION: Canonical HRF. Using a fixed "double-gamma" function instead 
+  of flexible Gaussian Basis Functions.
+======================================================================

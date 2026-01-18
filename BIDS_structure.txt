@@ -1,0 +1,62 @@
+======================================================================
+BIDS DATASET STRUCTURE SUMMARY: ASTaUND DATASET
+======================================================================
+
+The Brain Imaging Data Structure (BIDS) is a standardized hierarchy for 
+organizing neuroimaging data. It ensures that experimental metadata 
+(task timing, hardware specs) is machine-readable, allowing for 
+automated, reproducible preprocessing pipelines.
+
+----------------------------------------------------------------------
+1. ROOT DIRECTORY STRUCTURE
+----------------------------------------------------------------------
+- dataset_description.json : High-level project metadata (Authors, 
+                             BIDS version, Citation info).
+- participants.tsv        : Master spreadsheet mapping Subject IDs 
+                             to demographics (Age, Sex, Expertise Level).
+- participants.json       : Data dictionary defining the columns 
+                             within the participants.tsv file.
+- sub-<label>/            : Individual subject directories 
+                             (e.g., sub-A01 for Experts, sub-R01 for Novices).
+
+----------------------------------------------------------------------
+2. SUBJECT MODALITY DIRECTORY (sub-<label>/nirs/)
+----------------------------------------------------------------------
+Each recording is split into a standardized "Trio" of files:
+
+- _nirs.snirf (The Data): 
+    A binary HDF5-based file containing raw light intensity time-series, 
+    optode 3D coordinates, and hardware configuration.
+
+- _nirs.json (The Metadata): 
+    A machine-readable sidecar containing the physics parameters:
+    * Wavelengths: (e.g., 690nm, 830nm).
+    * Sampling Frequency: (e.g., 20.0 Hz or 7.81 Hz).
+    * Partial Pathlength Factors (PPF): Required for MBLL conversion.
+
+- _events.tsv (The Task Timing): 
+    A table used to synchronize brain activity with surgical tasks:
+    * onset: Start time of the Pattern Cutting task (seconds).
+    * duration: Total time taken to complete the task.
+    * trial_type: Categorical label (e.g., FLS_Pattern_Cutting).
+
+----------------------------------------------------------------------
+3. CHANNEL CLASSIFICATION
+----------------------------------------------------------------------
+The ASTaUND dataset distinguishes between two channel types:
+
+- Long-Separation (30–40mm): 
+    Penetrates the cortex to measure hemodynamic activity (Signal).
+- Short-Separation (8mm): 
+    Measures superficial scalp/skull blood flow (Noise). Used in OLS 
+    regression to remove systemic physiological interference.
+
+----------------------------------------------------------------------
+4. RESEARCH UTILITY
+----------------------------------------------------------------------
+Standardizing the data into BIDS format allows the use of the 
+'mne-bids' and 'mne-nirs' Python libraries. This enables the 
+pipeline to programmatically crawl the dataset, handling different 
+hardware and sampling rates across the four ASTaUND sub-studies 
+without hardcoded file paths.
+======================================================================

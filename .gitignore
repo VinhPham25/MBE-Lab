@@ -1,4 +1,5 @@
 Raw/
 BIDS/
+data/
 .venv/
 __pycache__/
