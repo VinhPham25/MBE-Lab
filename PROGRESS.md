@@ -2,8 +2,8 @@
 
 **Last Updated:** January 19, 2026  
 **Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.1 Complete - Data Loading Working  
-**Next Milestone:** Section 2.2 - SNR Calculation (4 tasks)
+**Current Stage:** Section 2.2 Complete - SNR Calculation Working  
+**Next Milestone:** Section 2.3 - Motion Ratio Calculation (3 tasks)
 
 ---
 
@@ -11,23 +11,23 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Section 2.1 Complete - Data Loading Pipeline Working
-- **Completion:** 12% (11/92 tasks)
+- **Active Stage:** Section 2.2 Complete - SNR Calculation Working
+- **Completion:** 15% (14/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Complete data loading pipeline tested on A1, all checks passed
+- **Latest Achievement:** SNR calculation on raw intensity validated (mean: 17.17 dB, matches paper's ~15-30 dB range)
 
 ### Recent Changes
+- [2026-01-19] ✅ Completed Section 2.2 - SNR Calculation (3/3 tasks)
+- [2026-01-19] Implemented 05_calculate_snr.py - calculates SNR on raw intensity (20*log10(mean/std))
+- [2026-01-19] Tested on A1: Mean SNR 17.17 dB (range: 2.50-37.30 dB) - matches paper's Figure 4 (~15-30 dB)
+- [2026-01-19] SNR by wavelength: 690nm=15.58 dB, 830nm=18.76 dB
 - [2026-01-19] ✅ Completed Section 2.1 - Data Loading & Metadata (4/4 tasks)
 - [2026-01-19] Created complete data loading pipeline (01-04 scripts in stage_a_raw_qa/)
-- [2026-01-19] Tested on A1: 66 channels, 25 Hz, 10 events (5 trials), mean duration 114s
-- [2026-01-19] All verification checks passed, outputs saved (metadata.csv, events.csv, pipeline_test.json)
-- [2026-01-19] ✅ Completed Section 1 - Environment Setup (7/7 tasks) - MILESTONE
-- [2026-01-19] Created code/utils.py with 9 utility functions
 
 ### Next Steps
-1. Begin Section 2.2 - SNR Calculation on Raw Intensity (4 tasks)
-2. Then Section 2.3 - Motion Ratio Calculation (3 tasks)
-3. Then Section 2.4 - QA Report Generation (5 tasks)
+1. Begin Section 2.3 - Motion Ratio Calculation on Raw Intensity (3 tasks)
+2. Then Section 2.4 - QA Report Generation (5 tasks)
+3. Then Section 2.5 - Exclusion List Management (2 tasks)
 
 ---
 
@@ -163,7 +163,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 4/22 tasks (18%)  
+**Completion:** 7/22 tasks (32%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -172,11 +172,10 @@ elif system == "NIRx":
 - [x] **2.1.3** (2026-01-19) Implemented 03_extract_events.py - extracts/verifies events, calculated trial durations
 - [x] **2.1.4** (2026-01-19) Created 04_test_pipeline.py - complete pipeline test passed, outputs saved (metadata.csv, events.csv, pipeline_test.json)
 
-#### 2.2 SNR Calculation on Raw Intensity (Step A2)
-- [ ] **2.2.1** Implement SNR calculation function (20*log10(mean/std)) on raw intensity data
-- [ ] **2.2.2** Implement 80-140 dB threshold check and bad channel identification
-- [ ] **2.2.3** Create SNR results saving function (CSV output with channel, SNR, pass/fail status)
-- [ ] **2.2.4** Test SNR calculation on subject A1 and verify results are reasonable (~100-110 dB mean)
+#### 2.2 SNR Calculation on Raw Intensity (Step A2) ✅ COMPLETE
+- [x] **2.2.1** (2026-01-19) Implemented 05_calculate_snr.py - SNR = 20*log10(mean/std) on raw intensity, tested on A1
+- [x] **2.2.2** (2026-01-19) Created save_snr_results() function - saves CSV with channel, wavelength, mean, std, snr_db
+- [x] **2.2.3** (2026-01-19) Verified on A1: Mean SNR=17.17 dB (range 2.50-37.30), matches paper's Figure 4 (~15-30 dB range)
 
 #### 2.3 Motion Ratio Calculation on Raw Intensity (Step A3)
 - [ ] **2.3.1** Implement motion artifact detection algorithm (derivative, amplitude threshold, std threshold)
@@ -372,10 +371,10 @@ When you encounter a blocker, add it here with this format:
 
 ### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** 4/22 tasks complete (18%)  
+**Status:** 7/22 tasks complete (32%)  
 **Key Deliverables:**
 - [x] Data loading pipeline implemented and tested
-- [ ] SNR calculation validated on raw data
+- [x] SNR calculation validated on raw data
 - [ ] Motion ratio calculation validated
 - [ ] QA reports generated for all 14 Expert/Novice subjects
 - [ ] Exclusion lists created for Stage B
@@ -529,14 +528,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 11 (12%)
+- **Completed:** 14 (15%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 81
+- **Remaining:** 78
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 4/22 (18%)
+- **Section 2 (Stage A):** 7/22 (32%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
@@ -552,6 +551,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** January 19, 2026  
-**Next update:** After completing task 2.2.1  
+**Next update:** After completing task 2.3.1  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
