@@ -781,4 +781,233 @@ outputs/stage_c_validation/
 - **Check:** rPCA parameters (n_components, window size)
 - **Solution:** Adjust parameters or increase number of iterations
 
-**Issue:** HbO₂/HbR not showing expecte
+**Issue:** HbO₂/HbR not showing expected inverse relationship
+- **Check:** PPF values in Beer-Lambert conversion
+- **Solution:** Verify 6.4 (690nm) and 5.8 (830nm) for TechEn; use defaults for NIRx
+
+**Issue:** Short-channel regression not effective
+- **Check:** Short channels correctly identified (~8mm separation)
+- **Solution:** Verify channel labeling in .snirf metadata
+
+**Issue:** HRF peaks at wrong time
+- **Check:** Event markers (condition 1 should be trial start)
+- **Solution:** Verify event timing in raw data annotations
+
+**Issue:** CNR values much lower than expected
+- **Check:** Group assignment (Expert vs Novice, etc.)
+- **Solution:** Verify subject metadata, check if preprocessing removed too much signal
+
+**Issue:** .snirf file won't load
+- **Check:** File corruption, BIDS compliance
+- **Solution:** Re-download from Figshare, check file integrity
+
+---
+
+## 13. REFERENCES
+
+### Primary Paper
+Kamat, A., Eastmond, C., Gao, Y. et al. Assessment of Surgical Tasks Using Neuroimaging Dataset (ASTaUND). *Sci Data* 10, 699 (2023). https://doi.org/10.1038/s41597-023-02603-3
+
+### Key Methodological References
+- **fNIRS Best Practices:** Yücel, M. A. et al. Best practices for fNIRS publications. *Neurophotonics* 8 (2021).
+- **CNR Calculation:** von Lühmann, A., Li, X., Gilmore, N., Boas, D. A. & Yücel, M. A. Open Access Multimodal fNIRS Resting State Dataset. *Front Neurosci* 14 (2020).
+- **Beer-Lambert Law:** Cui, X., Bray, S. & Reiss, A. L. Functional near infrared spectroscopy (NIRS) signal improvement. *Neuroimage* 49 (2010).
+
+### Software Documentation
+- **MNE-Python:** https://mne.tools/stable/index.html
+- **MNE-NIRS:** https://mne.tools/mne-nirs/stable/index.html
+- **HOMER2/3 (Reference Only):** https://homer-fnirs.org/
+
+### Dataset Access
+- **Figshare Repository:** https://doi.org/10.6084/m9.figshare.c.6429713
+- **BIDS Specification:** https://bids.neuroimaging.io/
+- **SNIRF Format:** https://github.com/fNIRS/snirf
+
+---
+
+## 14. SUCCESS CRITERIA
+
+### Phase 1 is considered successful when:
+
+1. **Stage A Replication:**
+   - [ ] SNR and Motion Ratio plots visually match paper's Figure 4
+   - [ ] Channel exclusion rates are comparable to paper
+   - [ ] QA metrics calculated for all 4 datasets
+
+2. **Stage B Processing:**
+   - [ ] All subjects successfully processed without errors
+   - [ ] Hemoglobin values are physiologically plausible
+   - [ ] Processing pipeline uses exact parameters from paper
+
+3. **Stage C Validation:**
+   - [ ] HRF plots match paper's Figure 3c, 3d morphology
+   - [ ] CNR values show expected group differences
+   - [ ] Statistical tests confirm significance where expected
+   - [ ] Expert vs Novice comparison shows expertise effects
+
+4. **Documentation:**
+   - [ ] All code is well-documented and reproducible
+   - [ ] Deviations from paper are clearly explained
+   - [ ] Comparison table shows reproduced vs paper values
+   - [ ] Final report ready for Dr. Nezafati's review
+
+5. **Readiness for Phase 2:**
+   - [ ] Processed data ready for ML pipeline
+   - [ ] Understanding of fNIRS preprocessing complete
+   - [ ] Baseline results established for comparison
+
+---
+
+## 15. NOTES FOR IMPLEMENTATION
+
+### For the Implementation Agent:
+
+1. **Start with One Subject:**
+   - Pick one subject from Expert/Novice dataset
+   - Run through entire pipeline (Stages A, B, C)
+   - Verify outputs before scaling to all subjects
+
+2. **Modular Code Structure:**
+   - Each stage should be independent script/module
+   - Use consistent data structures (pandas DataFrames for metrics)
+   - Save intermediate outputs at each stage
+
+3. **Error Handling:**
+   - Implement try/except blocks for file loading
+   - Log all warnings and errors
+   - Continue processing even if one subject fails
+
+4. **Visualization Standards:**
+   - Use same plotting style as paper (white bars, black edges)
+   - Include error bars where appropriate
+   - Save high-resolution figures (300 dpi)
+   - Use consistent color schemes
+
+5. **Data Validation:**
+   - Add assert statements for expected data ranges
+   - Print summary statistics at each stage
+   - Compare intermediate results to expected values
+
+6. **Configuration File:**
+   - Create `config.yaml` with all parameters
+   - Avoid hardcoding values in scripts
+   - Make it easy to adjust parameters for testing
+
+### Example Config Structure:
+```yaml
+# config.yaml
+datasets:
+  expert_novice:
+    system: "TechEn_CW6"
+    sfreq: 20
+    wavelengths: [690, 830]
+    ppf: {690: 6.4, 830: 5.8}
+  
+stage_a:
+  snr_threshold_low: 80
+  snr_threshold_high: 140
+  motion_tMotion: 0.5
+  motion_tStdev: 20
+
+stage_b:
+  filter_low: 0.01
+  filter_high: 0.5
+  rpca_n_components: 0.97
+  
+stage_c:
+  epoch_tmin: -5
+  epoch_tmax: 30
+  baseline: [-5, 0]
+  hrf_peak_window: [5, 15]
+```
+
+---
+
+## 16. EXPECTED OUTCOMES
+
+### Stage A Expected Results:
+
+**SNR Values (from Figure 4):**
+- Expert/Novice: Mean ~100-110 dB, SD ~10-15 dB
+- Learning Curve: Mean ~95-105 dB, SD ~10-20 dB
+- Short-term tES: Mean ~90-100 dB, SD ~15-20 dB
+- Long-term tES: Mean ~95-105 dB, SD ~10-15 dB
+
+**Motion Ratio Values (from Figure 4):**
+- Expert/Novice: Mean ~0.1-0.2 (10-20% of data)
+- Learning Curve: Mean ~0.15-0.25
+- Short-term tES: Mean ~0.1-0.2
+- Long-term tES: Mean ~0.15-0.25
+
+**Channel Exclusions:**
+- Typically 0-5 channels per subject excluded
+- Short-separation channels may have higher exclusion rates
+
+### Stage B Expected Results:
+
+**Optical Density:**
+- Range: 0.1 to 2.0 (typical physiological)
+- Should be smooth after filtering
+- Motion spikes should be reduced after rPCA
+
+**Hemoglobin Concentrations:**
+- HbO₂: ±10 to ±50 μM during task
+- HbR: ±5 to ±30 μM during task (smaller magnitude than HbO₂)
+- Baseline-corrected values should center around 0
+
+### Stage C Expected Results:
+
+**HRF Morphology:**
+- **HbO₂:** Increases starting ~2-3s, peaks ~8-12s, returns to baseline ~20-25s
+- **HbR:** Decreases (inverse), smaller amplitude, similar timing
+- **Peak amplitude:** 5-15 μM for HbO₂, 2-8 μM for HbR
+
+**CNR Values (from Figure 4i):**
+- Expert vs Novice: CNR ~1.5-3.0 (should show clear separation)
+- Trainee vs Control: CNR ~1.0-2.5
+- Sham vs tDCS: CNR ~1.0-2.0
+- Sham vs tRNS: CNR ~1.0-2.0
+
+**Statistical Significance:**
+- Expert vs Novice: p < 0.05 (experts show lower activation)
+- Learning effects: p < 0.05 (activation decreases over training)
+- Stimulation effects: May or may not reach significance (depends on individual differences)
+
+---
+
+## 17. FINAL NOTES
+
+### Remember:
+
+1. **Exact Replication is the Goal:**
+   - Use exact parameters from paper
+   - Don't "improve" the pipeline
+   - Document any necessary deviations
+
+2. **Stage A is Critical:**
+   - Sets the quality bar for entire pipeline
+   - Bad channels must be excluded early
+   - Transparency in reporting (like paper's Figure 4)
+
+3. **Validate at Each Stage:**
+   - Don't proceed if outputs look wrong
+   - Compare intermediate results to expected ranges
+   - Ask for help if stuck
+
+4. **Document Everything:**
+   - Code comments explaining why, not just what
+   - Save all intermediate outputs
+   - Keep a lab notebook of issues encountered
+
+5. **This is Phase 1:**
+   - Goal is reproduction, not innovation
+   - Establishes baseline for Phase 2 (ML pipeline)
+   - Demonstrates understanding of fNIRS processing
+
+---
+
+**END OF PRD**
+
+*Version: 2.0: Restructured with 3-Stage Workflow*  
+*Last Updated: January 18, 2026*  
+*Authored By: Vinh Pham*

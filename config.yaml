@@ -1,0 +1,282 @@
+# ASTaUND Phase 1 - fNIRS Preprocessing Pipeline Configuration
+# Created: 2026-01-18
+# Reference: PROJECT.md Sections 2, 11, and throughout
+
+# ==============================================================================
+# DATASET SPECIFICATIONS
+# ==============================================================================
+
+datasets:
+  expert_novice:
+    name: "Expert-Novice"
+    system: "TechEn_CW6"
+    sfreq: 25.0  # Hz (verified from actual data - 25 Hz, not 20 Hz as in PRD)
+    wavelengths: [690, 830]  # nm
+    n_long_channels: 25
+    n_short_channels: 8
+    ppf:  # Partial Path-length Factors
+      690: 6.4
+      830: 5.8
+    coverage: ["PFC", "M1", "SMA"]
+    n_subjects: 14
+    subjects: ["A1", "A2", "R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12"]
+    data_path: "data/BIDS/Expert-Novice"
+    
+  learning_curve:
+    name: "Learning-Curve"
+    system: "TechEn_CW6"
+    sfreq: 20  # Hz
+    wavelengths: [690, 830]  # nm
+    n_long_channels: 25
+    n_short_channels: 7  # Note: 7 instead of 8 due to hardware issues
+    ppf:
+      690: 6.4
+      830: 5.8
+    coverage: ["PFC", "M1", "SMA"]
+    n_subjects: 13
+    subjects: ["C1", "C2", "C3", "C4", "C5", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"]
+    data_path: "data/BIDS/Learning_Curve"
+    
+  short_term_tes:
+    name: "Short-Term-tES"
+    system: "NIRx_NIRScout"
+    sfreq: 7.8125  # Hz
+    wavelengths: [760, 850]  # nm
+    n_long_channels: 28
+    n_short_channels: 8
+    ppf: "default"  # Use mne-nirs default values for NIRx
+    coverage: ["PFC", "M1", "SMA"]
+    n_subjects: 12
+    subjects: ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"]
+    data_path: "data/BIDS/Short-Term_tES"
+    
+  long_term_tes:
+    name: "Long-Term-tES"
+    system: "NIRx_NIRScout"
+    sfreq: 7.8125  # Hz
+    wavelengths: [760, 850]  # nm
+    n_long_channels: 28
+    n_short_channels: 8
+    ppf: "default"  # Use mne-nirs default values for NIRx
+    coverage: ["PFC", "M1", "SMA"]
+    n_subjects: 21
+    groups:
+      tDCS: ["tDCSL4", "tDCSL5", "tDCSL7", "tDCSL14", "tDCSL15", "tDCSL19", "tDCSL22"]
+      tRNS: ["tRNSL2", "tRNSL9", "tRNSL10", "tRNSL13", "tRNSL17", "tRNSL21", "tRNSL23"]
+      Sham: ["ShamL3", "ShamL6", "ShamL11", "ShamL18", "ShamL24", "ShamL25", "ShamL26"]
+    data_path: "data/BIDS/Long-Term_tES"
+
+# ==============================================================================
+# STAGE A: RAW QUALITY ASSESSMENT PARAMETERS
+# ==============================================================================
+
+stage_a:
+  # SNR (Signal-to-Noise Ratio) Thresholds
+  snr:
+    threshold_low: 80  # dB - minimum acceptable SNR
+    threshold_high: 140  # dB - maximum acceptable SNR (saturation)
+    formula: "20 * log10(mean / std)"  # SNR calculation on raw intensity
+    
+  # Motion Artifact Detection Parameters (from MATLAB code)
+  motion:
+    tMotion: 0.5  # Amplitude threshold
+    tStdev: 20  # Standard deviation multiplier
+    AMPThresh: 0.5  # Amplitude threshold for motion detection
+    STDEVthresh: 5  # Standard deviation threshold
+    
+  # Quality Gates for proceeding to Stage B
+  quality_gates:
+    min_channel_pass_rate: 0.70  # At least 70% of channels must pass SNR
+    max_motion_ratio: 0.5  # Less than 50% motion artifacts
+    
+  # Output settings
+  outputs:
+    figures_dpi: 300  # High resolution for publication-quality figures
+    bar_color: "white"
+    bar_edge_color: "black"
+    bad_channel_color: "red"
+    threshold_line_color: "green"
+    threshold_line_style: "--"
+
+# ==============================================================================
+# STAGE B: PREPROCESSING PIPELINE PARAMETERS
+# ==============================================================================
+
+stage_b:
+  # Step B1: Intensity to Optical Density
+  optical_density:
+    valid_range_min: 0.1  # Minimum physiological OD
+    valid_range_max: 2.0  # Maximum physiological OD
+    
+  # Step B2: Bandpass Filtering
+  filter:
+    l_freq: 0.01  # Hz - Low cutoff (remove slow drift)
+    h_freq: 0.5   # Hz - High cutoff (remove high-frequency noise)
+    method: "iir"  # IIR filter method
+    
+  # Step B3: Motion Artifact Detection (on OD)
+  motion_detection:
+    # Reuse Stage A motion parameters
+    tMotion: 0.5
+    tStdev: 20
+    
+  # Step B4: Recursive PCA (rPCA) Motion Correction
+  rpca:
+    n_components: 0.97  # Retain 97% of variance
+    window_size: 50  # Samples per window (adjust based on sampling rate)
+    max_iterations: 10  # Maximum number of recursive iterations
+    
+  # Step B5: Modified Beer-Lambert Law
+  beer_lambert:
+    # PPF values specified per dataset (see datasets section above)
+    hb_range_min: -100  # μM - Flag if outside this range
+    hb_range_max: 100   # μM - Flag if outside this range
+    typical_range: 50   # μM - Typical task response range
+    
+  # Step B6: Short-Channel Regression
+  short_channel_regression:
+    method: "OLS"  # Ordinary Least Squares
+    short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
+    
+  # Data Saving
+  outputs:
+    format: "fif"  # MNE-Python native format
+    naming_convention: "{subject_id}_{dataset}_{session}_processed_raw.fif"
+
+# ==============================================================================
+# STAGE C: POST-PROCESSING VALIDATION PARAMETERS
+# ==============================================================================
+
+stage_c:
+  # Step C1: HRF Extraction
+  epochs:
+    tmin: -5  # seconds before stimulus onset (baseline period)
+    tmax: 30  # seconds after stimulus onset
+    baseline: [-5, 0]  # Baseline correction period (seconds)
+    event_id:
+      trial_start: 1  # Condition 1 = trial start
+      trial_end: 2    # Condition 2 = trial end
+    
+  # HRF Analysis
+  hrf:
+    expected_peak_time_min: 8   # seconds - Expected HRF peak window start
+    expected_peak_time_max: 12  # seconds - Expected HRF peak window end
+    peak_analysis_window: [5, 15]  # seconds - Window for extracting peak amplitude
+    expected_hbo_amplitude: [5, 15]  # μM - Typical HbO peak amplitude range
+    expected_hbr_amplitude: [2, 8]   # μM - Typical HbR peak amplitude range
+    
+  # Brain Region Channel Mapping
+  # Note: Specific channel indices will be extracted from .snirf metadata
+  brain_regions:
+    PFC: "Prefrontal Cortex"
+    M1: "Primary Motor Cortex"
+    SMA: "Supplementary Motor Area"
+    
+  # Step C2: Contrast-to-Noise Ratio (CNR)
+  cnr:
+    formula: "abs(mu1 - mu2) / sqrt(sigma1^2 + sigma2^2)"
+    peak_window: [5, 15]  # seconds - Window for extracting HRF peak
+    threshold_detectable: 1.0  # CNR > 1.0 indicates detectable difference
+    threshold_strong: 2.0      # CNR > 2.0 indicates strong separation
+    
+  # Step C3: Statistical Validation
+  statistics:
+    alpha: 0.05  # Significance level for hypothesis tests
+    test_type: "two-tailed"  # Two-tailed t-test
+    effect_size_metric: "cohen_d"
+    meaningful_effect_size: 0.5  # Cohen's d > 0.5 is meaningful
+    
+  # Group Comparisons
+  comparisons:
+    expert_novice:
+      - ["Expert", "Novice"]
+    learning_curve:
+      - ["Trainee", "Control"]
+    long_term_tes:
+      - ["Sham", "tDCS"]
+      - ["Sham", "tRNS"]
+      - ["tDCS", "tRNS"]
+      
+  # Visualization Settings
+  visualization:
+    hbo_color: "red"
+    hbr_color: "blue"
+    error_band_alpha: 0.3
+    line_width: 2
+    figure_dpi: 300
+
+# ==============================================================================
+# EVENT MARKERS
+# ==============================================================================
+
+events:
+  condition_1: "trial_start"  # Trial onset
+  condition_2: "trial_end"    # Trial offset
+  
+# ==============================================================================
+# FILE PATHS
+# ==============================================================================
+
+paths:
+  bids_root: "data/BIDS"
+  raw_root: "data/Raw"
+  processed_root: "outputs/stage_b_processed/data"
+  stage_a_outputs: "outputs/stage_a_qa"
+  stage_b_outputs: "outputs/stage_b_processed"
+  stage_c_outputs: "outputs/stage_c_validation"
+  code_root: "code"
+  
+# ==============================================================================
+# LOGGING AND DEBUGGING
+# ==============================================================================
+
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  save_logs: true
+  log_dir: "outputs/logs"
+  
+debug:
+  save_intermediate_outputs: true
+  verbose: true
+  plot_intermediate_steps: false  # Set to true for debugging
+
+# ==============================================================================
+# VALIDATION CRITERIA (Success Metrics)
+# ==============================================================================
+
+validation:
+  stage_a:
+    snr_mean_range: [90, 120]  # dB - Expected mean SNR range
+    motion_ratio_range: [0.05, 0.25]  # Expected motion ratio range
+    max_exclusion_rate: 0.30  # Maximum 30% of channels excluded
+    
+  stage_b:
+    od_range: [0.1, 2.0]  # Valid optical density range
+    hb_range: [-100, 100]  # μM - Valid hemoglobin concentration range
+    
+  stage_c:
+    hrf_peak_time: [8, 12]  # seconds - Expected HRF peak timing
+    cnr_minimum: 1.0  # Minimum CNR for detectable group differences
+    p_value_threshold: 0.05  # Significance threshold
+    
+# ==============================================================================
+# REPRODUCIBILITY
+# ==============================================================================
+
+reproducibility:
+  random_seed: 42
+  save_processing_metadata: true
+  track_software_versions: true
+  
+# ==============================================================================
+# PERFORMANCE
+# ==============================================================================
+
+performance:
+  n_jobs: -1  # Use all available CPU cores (-1)
+  memory_efficient: true
+  cache_preprocessing: false  # Set to true if reprocessing frequently
+  
+# ==============================================================================
+# END OF CONFIGURATION
+# ==============================================================================
