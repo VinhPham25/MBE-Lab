@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
 **Last Updated:** January 19, 2026  
-**Current Week:** Week 0 (Setup)  
-**Current Stage:** Section 1 Complete - Ready for Stage A  
-**Next Milestone:** Stage A - Raw Quality Assessment (22 tasks)
+**Current Week:** Week 1-2 (Stage A)  
+**Current Stage:** Section 2.1 Complete - Data Loading Working  
+**Next Milestone:** Section 2.2 - SNR Calculation (4 tasks)
 
 ---
 
@@ -11,23 +11,23 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Section 1 Complete - Environment Setup Done
-- **Completion:** 8% (7/92 tasks)
+- **Active Stage:** Section 2.1 Complete - Data Loading Pipeline Working
+- **Completion:** 12% (11/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Config loader utility created, all setup tasks complete
+- **Latest Achievement:** Complete data loading pipeline tested on A1, all checks passed
 
 ### Recent Changes
+- [2026-01-19] ✅ Completed Section 2.1 - Data Loading & Metadata (4/4 tasks)
+- [2026-01-19] Created complete data loading pipeline (01-04 scripts in stage_a_raw_qa/)
+- [2026-01-19] Tested on A1: 66 channels, 25 Hz, 10 events (5 trials), mean duration 114s
+- [2026-01-19] All verification checks passed, outputs saved (metadata.csv, events.csv, pipeline_test.json)
 - [2026-01-19] ✅ Completed Section 1 - Environment Setup (7/7 tasks) - MILESTONE
-- [2026-01-19] Created code/utils.py with 9 utility functions (config loader, path helpers, validation)
-- [2026-01-19] All utility tests passing (config load, dataset access, path resolution)
-- [2026-01-19] ✅ Completed Section 1.2 - Data Access and Verification (3/3 tasks)
-- [2026-01-19] **Fixed:** Updated config.yaml sampling rate from 20 Hz → 25.0 Hz (verified from data)
-- [2026-01-19] Created comprehensive README.md with setup instructions
+- [2026-01-19] Created code/utils.py with 9 utility functions
 
 ### Next Steps
-1. Begin Section 2 - Stage A: Raw Quality Assessment (22 tasks)
-2. Start with Section 2.1 - Data Loading and Metadata Extraction (4 tasks)
-3. Then Section 2.2 - SNR Calculation on Raw Intensity (4 tasks)
+1. Begin Section 2.2 - SNR Calculation on Raw Intensity (4 tasks)
+2. Then Section 2.3 - Motion Ratio Calculation (3 tasks)
+3. Then Section 2.4 - QA Report Generation (5 tasks)
 
 ---
 
@@ -163,14 +163,14 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 0/22 tasks (0%)  
+**Completion:** 4/22 tasks (18%)  
 **Reference:** PRD Section 4
 
-#### 2.1 Data Loading and Metadata Extraction (Step A1)
-- [ ] **2.1.1** Implement .snirf file loading function with metadata extraction (sampling rate, channels, wavelengths)
-- [ ] **2.1.2** Create metadata verification function to check hardware specs match (20Hz, 690/830nm, 25+8 channels for Expert/Novice)
-- [ ] **2.1.3** Implement event marker extraction and verification (condition 1=start, condition 2=end)
-- [ ] **2.1.4** Test complete data loading pipeline on subject A1 and document any issues
+#### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
+- [x] **2.1.1** (2026-01-19) Implemented 01_load_data.py - loads .snirf, extracts metadata (sfreq, channels, wavelengths, events)
+- [x] **2.1.2** (2026-01-19) Created 02_verify_metadata.py - validates hardware specs, all checks passed for A1
+- [x] **2.1.3** (2026-01-19) Implemented 03_extract_events.py - extracts/verifies events, calculated trial durations
+- [x] **2.1.4** (2026-01-19) Created 04_test_pipeline.py - complete pipeline test passed, outputs saved (metadata.csv, events.csv, pipeline_test.json)
 
 #### 2.2 SNR Calculation on Raw Intensity (Step A2)
 - [ ] **2.2.1** Implement SNR calculation function (20*log10(mean/std)) on raw intensity data
@@ -370,10 +370,11 @@ When you encounter a blocker, add it here with this format:
 - [x] Config file created
 - [x] Utility functions implemented
 
-### Week 1-2: Stage A Implementation
+### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** Not started  
+**Status:** 4/22 tasks complete (18%)  
 **Key Deliverables:**
+- [x] Data loading pipeline implemented and tested
 - [ ] SNR calculation validated on raw data
 - [ ] Motion ratio calculation validated
 - [ ] QA reports generated for all 14 Expert/Novice subjects
@@ -528,14 +529,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 7 (8%)
+- **Completed:** 11 (12%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 85
+- **Remaining:** 81
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 0/22 (0%)
+- **Section 2 (Stage A):** 4/22 (18%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
@@ -551,6 +552,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** January 19, 2026  
-**Next update:** After completing task 2.1.1  
+**Next update:** After completing task 2.2.1  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)

@@ -1,0 +1,2 @@
+subject_id,dataset_name,file_path,file_size_mb,sfreq,n_channels,n_times,duration,n_annotations,wavelengths_str,n_event_types
+A1,expert_novice,/Users/vinhpham/Desktop/Local GitHub/MBE-Lab/data/BIDS/Expert-Novice/sub-A1/nirs/sub-A1_task-ExpNovPatternCutting_nirs.snirf,15.309624671936035,25.0,66,26500,1059.96,10,"[690, 830]",2
