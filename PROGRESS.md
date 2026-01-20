@@ -177,10 +177,12 @@ elif system == "NIRx":
 - [x] **2.2.2** (2026-01-19) Created save_snr_results() function - saves CSV with channel, wavelength, mean, std, snr_db
 - [x] **2.2.3** (2026-01-19) Verified on A1: Mean SNR=17.17 dB (range 2.50-37.30), matches paper's Figure 4 (~15-30 dB range)
 
-#### 2.3 Motion Ratio Calculation on Raw Intensity (Step A3)
-- [ ] **2.3.1** Implement motion artifact detection algorithm (derivative, amplitude threshold, std threshold)
-- [ ] **2.3.2** Implement motion ratio calculation (flagged_samples / total_samples per channel)
-- [ ] **2.3.3** Test motion detection on subject A1 and verify results are reasonable (~0.1-0.2 mean)
+#### 2.3 Motion Ratio Calculation on Optical Density (Step A3)
+- [ ] **2.3.1** Convert raw intensity to optical density using mne.preprocessing.nirs.optical_density()
+- [ ] **2.3.2** Implement motion artifact detection on OD data (derivative-based with hmrMotionArtifactByChannel parameters)
+- [ ] **2.3.3** Apply motion detection thresholds: tMotion=0.5, tMask=0.5, STDEVthresh=20, AMPthresh=5
+- [ ] **2.3.4** Calculate motion ratio as (flagged_samples / total_samples) per channel
+- [ ] **2.3.5** Test motion detection on subject A1 and verify results are reasonable (~0 median for A1 from Fig 4)
 
 #### 2.4 QA Report Generation (Step A4)
 - [ ] **2.4.1** Create comprehensive metrics DataFrame combining SNR, motion ratio, exclusion decisions
@@ -189,9 +191,11 @@ elif system == "NIRx":
 - [ ] **2.4.4** Create summary statistics calculator and console report generator
 - [ ] **2.4.5** Generate complete Stage A report for subject A1 and verify plots look similar to Figure 4
 
-#### 2.5 Exclusion List Management
-- [ ] **2.5.1** Create exclusion list JSON generator with format: {subject_id, bad_channels[], good_channels[], exclusion_reasons{}}
-- [ ] **2.5.2** Test exclusion list creation and verify JSON structure for subject A1
+#### 2.5 Exclusion List Creation (for Stabe B use)
+- [ ] **2.5.1** Identify channels that would fail 80-140 dB signal amplitude threshold (for documentation only)
+- [ ] **2.5.2** Create exclusion list JSON generator with format: {subject_id, bad_channels[], good_channels[], exclusion_reasons{}}
+- [ ] **2.5.3** Test exclusion list creation and verify JSON structure for subject A1
+- [ ] **2.5.4** Save exclusion lists to outputs/stage_a_qa/excluded_channels/ (will be used in Stage B)
 
 #### 2.6 Dataset-Level Operations
 - [ ] **2.6.1** Implement dataset aggregation function (combine all subjects, calculate channel-wise statistics)
@@ -207,9 +211,11 @@ elif system == "NIRx":
 **Reference:** PRD Section 5
 
 #### 3.1 Intensity to Optical Density (Step B1)
-- [ ] **3.1.1** Implement OD conversion function with bad channel exclusion from Stage A
-- [ ] **3.1.2** Add OD range verification (0.1-2.0) and flag anomalies
-- [ ] **3.1.3** Test OD conversion on subject A1 and visualize time series for sample channels
+- [ ] **3.1.1** Load exclusion list from Stage A (channels failing 80-140 dB signal amplitude threshold)
+- [ ] **3.1.2** Mark bad channels in raw.info['bads'] before any preprocessing
+- [ ] **3.1.3** Implement OD conversion function (mne.preprocessing.nirs.optical_density)
+- [ ] **3.1.4** Add OD range verification (0.1-2.0) and flag anomalies
+- [ ] **3.1.5** Test OD conversion on subject A1 and visualize time series for sample channels
 
 #### 3.2 Bandpass Filtering (Step B2)
 - [ ] **3.2.1** Implement bandpass filter application (0.01-0.5 Hz, IIR method)
@@ -515,8 +521,8 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ```
 
 ### Expected Ranges (for validation)
-- **SNR:** 90-120 dB (typical)
-- **Motion Ratio:** 0.05-0.25 (typical)
+- **SNR:** ~15-30 dB (typical)
+- **Motion Ratio:** ~0 median (typical)
 - **OD:** 0.1-2.0 (physiological)
 - **HbO/HbR:** ±50 μM (typical task response)
 - **HRF Peak Time:** 8-12 seconds post-stimulus
