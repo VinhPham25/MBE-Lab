@@ -1,6 +1,7 @@
 ### Motion Ratio Calculation - CRITICAL IMPLEMENTATION DETAILS
 
 **Source:** von Lühmann et al. (2020) - Front. Neurosci. 14:579353
+**Homer3 Function** https://github.com/BUNPC/Homer3/blob/master/FuncRegistry/UserFunctions/hmrR_MotionArtifactByChannel.m
 
 The motion ratio MUST be calculated on **optical density (OD)**, not raw intensity. The MATLAB code from the quality analysis script confirms this:
 

@@ -2,8 +2,8 @@
 
 **Last Updated:** January 19, 2026  
 **Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.2 Complete - SNR Calculation Working  
-**Next Milestone:** Section 2.3 - Motion Ratio Calculation (3 tasks)
+**Current Stage:** Section 2.3 Complete - Motion Ratio Calculation Working  
+**Next Milestone:** Section 2.4 - QA Report Generation (5 tasks)
 
 ---
 
@@ -11,23 +11,25 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Section 2.2 Complete - SNR Calculation Working
-- **Completion:** 15% (14/92 tasks)
+- **Active Stage:** Section 2.3 Complete - Motion Ratio Calculation Working
+- **Completion:** 21% (19/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** SNR calculation on raw intensity validated (mean: 17.17 dB, matches paper's ~15-30 dB range)
+- **Latest Achievement:** Motion ratio calculation on OD validated (median: 0.00%, mean: 0.11%, matches paper's ~0 median from Figure 4)
 
 ### Recent Changes
+- [2026-01-19] ✅ Completed Section 2.3 - Motion Ratio Calculation on OD (5/5 tasks)
+- [2026-01-19] Implemented 06_calculate_motion_ratio.py - calculates motion ratio on OD (NOT raw intensity)
+- [2026-01-19] Tested on A1: Median 0.00%, Mean 0.11% - matches paper's Figure 4 (~0 median for good data)
+- [2026-01-19] Uses Homer3 parameters: AMPthresh=5 OD, STDEVthresh=20x, tMotion=0.5s, tMask=0.5s
+- [2026-01-19] All 66 channels have <10% motion (100% pass rate) - confirms A1 is excellent quality
 - [2026-01-19] ✅ Completed Section 2.2 - SNR Calculation (3/3 tasks)
 - [2026-01-19] Implemented 05_calculate_snr.py - calculates SNR on raw intensity (20*log10(mean/std))
 - [2026-01-19] Tested on A1: Mean SNR 17.17 dB (range: 2.50-37.30 dB) - matches paper's Figure 4 (~15-30 dB)
-- [2026-01-19] SNR by wavelength: 690nm=15.58 dB, 830nm=18.76 dB
-- [2026-01-19] ✅ Completed Section 2.1 - Data Loading & Metadata (4/4 tasks)
-- [2026-01-19] Created complete data loading pipeline (01-04 scripts in stage_a_raw_qa/)
 
 ### Next Steps
-1. Begin Section 2.3 - Motion Ratio Calculation on Raw Intensity (3 tasks)
-2. Then Section 2.4 - QA Report Generation (5 tasks)
-3. Then Section 2.5 - Exclusion List Management (2 tasks)
+1. Begin Section 2.4 - QA Report Generation (5 tasks)
+2. Then Section 2.5 - Exclusion List Management (4 tasks)
+3. Then Section 2.6 - Dataset-Level Operations (5 tasks)
 
 ---
 
@@ -163,7 +165,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 7/22 tasks (32%)  
+**Completion:** 12/22 tasks (55%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -177,12 +179,12 @@ elif system == "NIRx":
 - [x] **2.2.2** (2026-01-19) Created save_snr_results() function - saves CSV with channel, wavelength, mean, std, snr_db
 - [x] **2.2.3** (2026-01-19) Verified on A1: Mean SNR=17.17 dB (range 2.50-37.30), matches paper's Figure 4 (~15-30 dB range)
 
-#### 2.3 Motion Ratio Calculation on Optical Density (Step A3)
-- [ ] **2.3.1** Convert raw intensity to optical density using mne.preprocessing.nirs.optical_density()
-- [ ] **2.3.2** Implement motion artifact detection on OD data (derivative-based with hmrMotionArtifactByChannel parameters)
-- [ ] **2.3.3** Apply motion detection thresholds: tMotion=0.5, tMask=0.5, STDEVthresh=20, AMPthresh=5
-- [ ] **2.3.4** Calculate motion ratio as (flagged_samples / total_samples) per channel
-- [ ] **2.3.5** Test motion detection on subject A1 and verify results are reasonable (~0 median for A1 from Fig 4)
+#### 2.3 Motion Ratio Calculation on Optical Density (Step A3) ✅ COMPLETE
+- [x] **2.3.1** (2026-01-19) Convert raw intensity to optical density using mne.preprocessing.nirs.optical_density()
+- [x] **2.3.2** (2026-01-19) Implement motion artifact detection on OD data (derivative-based with hmrMotionArtifactByChannel parameters)
+- [x] **2.3.3** (2026-01-19) Apply motion detection thresholds: tMotion=0.5, tMask=0.5, STDEVthresh=20, AMPthresh=5
+- [x] **2.3.4** (2026-01-19) Calculate motion ratio as (flagged_samples / total_samples) per channel
+- [x] **2.3.5** (2026-01-19) Test motion detection on subject A1 and verify results are reasonable (~0 median for A1 from Fig 4)
 
 #### 2.4 QA Report Generation (Step A4)
 - [ ] **2.4.1** Create comprehensive metrics DataFrame combining SNR, motion ratio, exclusion decisions
@@ -377,11 +379,11 @@ When you encounter a blocker, add it here with this format:
 
 ### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** 7/22 tasks complete (32%)  
+**Status:** 12/22 tasks complete (55%)  
 **Key Deliverables:**
 - [x] Data loading pipeline implemented and tested
 - [x] SNR calculation validated on raw data
-- [ ] Motion ratio calculation validated
+- [x] Motion ratio calculation validated on OD data
 - [ ] QA reports generated for all 14 Expert/Novice subjects
 - [ ] Exclusion lists created for Stage B
 
@@ -534,14 +536,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 14 (15%)
+- **Completed:** 19 (21%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 78
+- **Remaining:** 73
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 7/22 (32%)
+- **Section 2 (Stage A):** 12/22 (55%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
