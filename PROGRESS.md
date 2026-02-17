@@ -188,16 +188,16 @@ elif system == "NIRx":
 
 #### 2.4 QA Report Generation (Step A4)
 - [ ] **2.4.1** Create comprehensive metrics DataFrame combining SNR, motion ratio, exclusion decisions
-- [ ] **2.4.2** Implement SNR bar plot visualization (white bars, red for bad channels, threshold lines at 80/140 dB)
+- [ ] **2.4.2** Implement SNR bar plot visualization (white bars, red for bad channels, threshold lines at ~10 dB low quality, ~25 dB high quality)
 - [ ] **2.4.3** Implement motion ratio bar plot visualization
 - [ ] **2.4.4** Create summary statistics calculator and console report generator
 - [ ] **2.4.5** Generate complete Stage A report for subject A1 and verify plots look similar to Figure 4
 
-#### 2.5 Exclusion List Creation (for Stabe B use)
-- [ ] **2.5.1** Identify channels that would fail 80-140 dB signal amplitude threshold (for documentation only)
-- [ ] **2.5.2** Create exclusion list JSON generator with format: {subject_id, bad_channels[], good_channels[], exclusion_reasons{}}
-- [ ] **2.5.3** Test exclusion list creation and verify JSON structure for subject A1
-- [ ] **2.5.4** Save exclusion lists to outputs/stage_a_qa/excluded_channels/ (will be used in Stage B)
+#### 2.5 Signal Amplitude Assessment (for Stage B exclusion)
+- [ ] **2.5.1** Calculate signal amplitude in dB for all channels (this is separate from SNR)
+- [ ] **2.5.2** Identify channels outside 80-140 dB signal amplitude range (for Stage B exclusion)
+- [ ] **2.5.3** Create exclusion list JSON: {subject_id, bad_channels[], good_channels[], exclusion_reasons{}}
+- [ ] **2.5.4** Save to outputs/stage_a_qa/excluded_channels/ (NOTE: channels NOT excluded yet, just documented)
 
 #### 2.6 Dataset-Level Operations
 - [ ] **2.6.1** Implement dataset aggregation function (combine all subjects, calculate channel-wise statistics)
@@ -205,6 +205,12 @@ elif system == "NIRx":
 - [ ] **2.6.3** Process all 14 Expert/Novice subjects through Stage A pipeline
 - [ ] **2.6.4** Generate dataset-level QA report and compare to paper's Figure 4
 - [ ] **2.6.5** Document any problematic subjects and verify completion (14/14 processed)
+
+#### 2.7 Stage A Validation Checkpoint (Optional)
+- [ ] **2.7.1** Verify NO channels have been excluded (all channels should be in output files)
+- [ ] **2.7.2** Confirm SNR values are in 10-30 dB range (NOT 80-140 dB)
+- [ ] **2.7.3** Confirm Motion Ratios are in 0.01-0.10 range (1-10%, NOT 10-25%)
+- [ ] **2.7.4** Compare Stage A outputs to paper's Figure 4 and verify visual similarity
 
 ---
 
@@ -231,7 +237,7 @@ elif system == "NIRx":
 - [ ] **3.3.3** Visualize detected motion artifacts on OD traces for subject A1
 
 #### 3.4 Recursive PCA Motion Correction (Step B4)
-- [ ] **3.4.1** Implement rPCA algorithm with sliding window approach (window_size=50, n_components=0.97)
+- [ ] **3.4.1** Implement rPCA algorithm: Apply PCA to motion-corrupted segments only, remove high-variance components (motion), keep low-variance (neural signal), n_components=0.97
 - [ ] **3.4.2** Create before/after motion correction comparison visualization
 - [ ] **3.4.3** Verify motion reduction by recalculating motion ratio after correction
 - [ ] **3.4.4** Test rPCA on subject A1 and document effectiveness
@@ -244,11 +250,18 @@ elif system == "NIRx":
 - [ ] **3.5.4** Test Beer-Lambert conversion on subject A1
 
 #### 3.6 Short-Channel Regression (Step B6)
-- [ ] **3.6.1** Implement short-channel identification and OLS regression using mne-nirs
+- [ ] **3.6.1** Implement short-channel regression: Find most correlated short channel for each long channel, apply OLS regression to remove shared variance (scalp noise)
 - [ ] **3.6.2** Verify expected channel counts (25 long + 8 short for Expert/Novice)
 - [ ] **3.6.3** Create before/after regression comparison plots
 - [ ] **3.6.4** Calculate correlation reduction to verify regression effectiveness
 - [ ] **3.6.5** Test short-channel regression on subject A1
+
+#### 3.6.6 Verify Stage B Output Format (Optional)
+- [ ] **3.6.6** Confirm output is continuous time series (not epoched)
+- [ ] **3.6.7** Verify output contains both HbO₂ and HbR channels
+- [ ] **3.6.8** Confirm output includes both long-separation (brain) and short-separation (scalp) channels
+- [ ] **3.6.9** Verify event markers are preserved in processed data
+- [ ] **3.6.10** Check that rest periods and task periods are still mixed (not segmented)
 
 #### 3.7 Pipeline Integration and Testing
 - [ ] **3.7.1** Create end-to-end preprocessing pipeline script (chains Steps B1-B6)
