@@ -77,11 +77,12 @@ project/
 ├── code/
 │   ├── stage_a_raw_qa/
 │   │   ├── 01_load_data.py
-│   │   ├── 02_calculate_snr_raw.py
-│   │   ├── 03_calculate_motion_ratio_raw.py
-│   │   └── 04_generate_qa_report.py
+│   │   ├── 02_calculate_snr.py
+│   │   ├── 03_calculate_motion_ratio.py
+│   │   ├── 04_calculate_signal_amplitude.py
+│   │   └── 05_generate_qa_report.py
 │   ├── stage_b_preprocessing/
-│   │   ├── 01_intensity_to_od.py
+│   │   ├── 01_exclude_and_convert_to_od.py
 │   │   ├── 02_bandpass_filter.py
 │   │   ├── 03_motion_detection.py
 │   │   ├── 04_rpca_correction.py
@@ -94,7 +95,7 @@ project/
 ├── outputs/
 │   ├── stage_a_qa/
 │   │   ├── figures/
-│   │   ├── excluded_channels/
+│   │   ├── exclusion_lists/
 │   │   └── qa_reports/
 │   ├── stage_b_processed/
 │   │   └── data/
@@ -112,22 +113,23 @@ project/
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ STAGE A: RAW QUALITY ASSESSMENT (Gating)           │
-│ Purpose: Verify data collection quality            │
+│ STAGE A: RAW QUALITY ASSESSMENT (Documentation)    │
+│ Purpose: Document data collection quality          │
 │ Input: Raw .snirf intensity data                   │
-│ Output: Channel exclusion lists, QA reports        │
+│ Output: Quality metrics, exclusion lists           │
+│ Note: NO channels excluded in this stage           │
 └─────────────────────────────────────────────────────┘
                          ↓
           ┌──────────────────────────┐
           │ DECISION POINT:          │
-          │ Proceed with good        │
-          │ channels only            │
+          │ Identify which channels  │
+          │ to exclude in Stage B    │
           └──────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────┐
 │ STAGE B: PREPROCESSING PIPELINE (6 Steps)          │
 │ Purpose: Clean and process neural signals          │
-│ Input: Raw data (good channels only)               │
+│ Step 1: Exclude bad channels, then convert to OD   │
 │ Output: HbO₂ and HbR concentration time series     │
 └─────────────────────────────────────────────────────┘
                          ↓
@@ -145,10 +147,12 @@ project/
 > "To give an accurate assessment of the quality of the data, no channels have been excluded from the analysis provided here and no denoising methods have been used prior to analysis."
 
 **Interpretation:**
-- The paper calculated SNR and Motion Ratio on **raw intensity data** for Figure 4
+- The paper calculated SNR and Motion Ratio on **all channels** (no exclusions) for Figure 4
 - This was for **transparency and documentation** purposes
-- For actual scientific analysis, they applied the 80-140 dB threshold to exclude bad channels
-- **We replicate this approach:** Calculate metrics on raw data, but exclude bad channels before preprocessing
+- For actual preprocessing, they excluded channels based on **signal amplitude** (80-140 dB)
+- **We replicate this approach:** 
+  - Stage A: Calculate metrics on ALL channels, document quality
+  - Stage B: Exclude bad channels FIRST, then preprocess
 
 ---
 
@@ -158,11 +162,11 @@ project/
 
 **Objectives:**
 1. Verify hardware functionality - Did the fNIRS device collect data properly?
-2. Identify dead/saturated channels - Which channels should be excluded?
+2. Calculate quality metrics on ALL channels (for transparency)
 3. Document data quality - Create transparency reports like paper's Figure 4
-4. Create exclusion lists - Gate the preprocessing pipeline
+4. Identify which channels to exclude in Stage B
 
-**Critical Requirement:** All metrics calculated on **unprocessed raw intensity data** before any filtering or denoising.
+**Critical Requirement:** All metrics calculated on **unprocessed raw data** with **NO channel exclusions**.
 
 ---
 
@@ -190,72 +194,120 @@ project/
 
 ### 4.3 Step A2: Calculate SNR on Raw Intensity
 
-**Objective:** Calculate Signal-to-Noise Ratio on unprocessed intensity data
+**Objective:** Calculate Signal-to-Noise Ratio on unprocessed intensity data for quality documentation
 
 **Formula (from paper):**
 $$SNR = 20 \times \log_{10}\left(\frac{\mu}{\sigma}\right)$$
 
 where μ = mean, σ = standard deviation of raw intensity signal
 
-**Apply 80-140 dB Threshold:**
-- Channels with SNR < 80 dB → Exclude (too noisy)
-- Channels with SNR > 140 dB → Exclude (likely saturated)
-- Channels within 80-140 dB → Keep for preprocessing
+**Important Note:** SNR is for **documentation only** (Figure 4a,c,e,g). Channel exclusion uses **signal amplitude** (calculated in A4), not SNR.
+
+**Expected SNR Values:**
+- Good quality: 15-30 dB
+- Excellent quality: > 25 dB  
+- Poor quality: < 10 dB
 
 **Deliverables:**
 - [ ] SNR calculation function for raw intensity
-- [ ] Channel exclusion identification (80-140 dB threshold)
-- [ ] CSV file: `{subject_id}_channel_exclusions.csv`
-- [ ] Bar plot replicating Figure 4a, c, e, g from paper
+- [ ] CSV file: `{subject_id}_snr_metrics.csv`
+- [ ] Bar plot replicating Figure 4a, c, e, g from paper (show SNR values ~10-30 dB range)
 
 **Example Output:**
 ```
 Subject: A1, Dataset: Expert_Novice
 Total Channels: 33 (25 long + 8 short)
-Good Channels: 31
-Excluded Channels: 2 (ch_12: SNR=75.3 dB, ch_24: SNR=145.2 dB)
+Median SNR: 17.2 dB
+SNR Range: 2.5 - 37.3 dB
+NOTE: All channels included (no exclusions in Stage A)
 ```
 
 ---
 
-### 4.4 Step A3: Calculate Motion Ratio on Raw Intensity
+### 4.4 Step A3: Calculate Motion Ratio on Optical Density
 
-**Objective:** Calculate Motion Ratio on raw intensity using paper's MATLAB parameters
+**Objective:** Calculate Motion Ratio on OD data using paper's MATLAB parameters
+
+**Important:** Motion Ratio is calculated on **Optical Density**, not raw intensity
 
 **Formula:**
-$$Motion\ Ratio = \frac{\text{Duration of motion artifacts}}{\text{Total acquisition time}}$$
+$$Motion\ Ratio = \frac{\text{Number of motion-corrupted samples}}{\text{Total samples}}$$
 
 **Motion Detection Parameters (from MATLAB code):**
-- `tMotion`: 0.5 (amplitude threshold)
+- `tMotion`: 0.5 (amplitude change threshold)
 - `tStdev`: 20 (standard deviation multiplier)
-- `AMPThresh`: 0.5
-- `STDEVthresh`: 5
+- `AMPThresh`: 0.5 (absolute amplitude threshold)
+- `STDEVthresh`: 5 (statistical outlier threshold)
 
 **Algorithm:**
-1. Calculate derivative (rate of change) of raw intensity
-2. Flag samples where |derivative| > 0.5 (amplitude threshold)
-3. Flag samples where |derivative - mean| > 20×std (outlier detection)
-4. Combine both masks (logical OR)
-5. Calculate ratio: flagged_samples / total_samples
+1. Convert raw intensity to optical density (for ALL channels)
+2. Calculate derivative (rate of change) of OD signal
+3. Flag samples where |derivative| > 0.5 (amplitude threshold)
+4. Flag samples where |derivative - mean| > 20×std (outlier detection)
+5. Combine both masks (logical OR) - a sample is flagged if EITHER method detects it
+6. Calculate ratio: flagged_samples / total_samples
+
+**Expected Motion Ratio Values:**
+- Excellent: < 0.05 (< 5%)
+- Good: 0.05-0.10 (5-10%)
+- Marginal: 0.10-0.20 (10-20%)
+- Poor: > 0.20 (> 20%)
 
 **Deliverables:**
-- [ ] Motion detection function on raw intensity
+- [ ] OD conversion function (for motion detection only)
+- [ ] Motion detection function using BOTH amplitude AND statistical thresholds
 - [ ] Motion ratio calculation per channel
 - [ ] CSV file: `{subject_id}_motion_ratios.csv`
 - [ ] Bar plot replicating Figure 4b, d, f, h from paper
 
 ---
 
-### 4.5 Step A4: Generate Stage A QA Report
+### 4.5 Step A4: Calculate Signal Amplitude and Create Exclusion List
+
+**Objective:** Identify channels outside 80-140 dB signal amplitude range for Stage B exclusion
+
+**Important Distinction:**
+- **Signal Amplitude:** Detector reading level (80-140 dB threshold) - **USED FOR EXCLUSION**
+- **SNR:** Signal quality metric (10-30 dB range) - **DOCUMENTATION ONLY**
+
+**Exclusion Criteria (applied in Stage B, not here):**
+- Signal amplitude < 80 dB → Will exclude (too weak, poor contact)
+- Signal amplitude > 140 dB → Will exclude (saturated detector)
+- Signal amplitude 80-140 dB → Will keep for preprocessing
+
+**Deliverables:**
+- [ ] Signal amplitude calculation function
+- [ ] Exclusion list creation (channels to exclude in Stage B)
+- [ ] JSON file: `{subject_id}_exclusions.json`
+
+**Example Exclusion List:**
+```json
+{
+  "subject_id": "A1",
+  "dataset": "Expert_Novice",
+  "total_channels": 33,
+  "good_channels": ["S1_D2 690", "S1_D2 830", ...],
+  "bad_channels": ["S1_D1 690", "S5_D3 830"],
+  "exclusion_reasons": {
+    "S1_D1 690": "Signal amplitude too low: 75.3 dB",
+    "S5_D3 830": "Signal amplitude too high: 145.2 dB"
+  },
+  "note": "Channels NOT excluded yet - exclusion happens in Stage B"
+}
+```
+
+---
+
+### 4.6 Step A5: Generate Stage A QA Report
 
 **Objective:** Create comprehensive quality assessment report matching paper's Figure 4
 
 **Report Components:**
 
 1. **Individual Subject Reports:**
-   - SNR box plot visualization
-   - Motion ratio box plot
-   - Bad channels highlighted in red
+   - SNR bar plot (threshold lines at ~10 dB low, ~25 dB high)
+   - Motion ratio bar plot (threshold lines at 0.10 marginal, 0.20 poor)
+   - Channels to be excluded highlighted in red
    - Summary statistics table
 
 2. **Dataset-Level Aggregation:**
@@ -265,7 +317,7 @@ $$Motion\ Ratio = \frac{\text{Duration of motion artifacts}}{\text{Total acquisi
 
 3. **Exclusion Decision Log:**
    - JSON/CSV with bad channels per subject
-   - Reason for exclusion (SNR too low/high)
+   - Reason for exclusion (signal amplitude outside 80-140 dB)
    - Pass to Stage B as exclusion list
 
 **Deliverables:**
@@ -275,31 +327,19 @@ $$Motion\ Ratio = \frac{\text{Duration of motion artifacts}}{\text{Total acquisi
 - [ ] Summary CSV files
 - [ ] Channel exclusion lists for Stage B (JSON format)
 
-**Example Exclusion List:**
-```json
-{
-  "subject_id": "A1",
-  "dataset": "Expert_Novice",
-  "bad_channels": ["S1_D1 690", "S5_D3 830"],
-  "good_channels": ["S1_D2 690", "S1_D2 830", ...],
-  "total_excluded": 2,
-  "exclusion_reasons": {
-    "S1_D1 690": "SNR too low: 75.3 dB",
-    "S5_D3 830": "SNR too high: 145.2 dB"
-  }
-}
-```
-
 ---
 
-### 4.6 Stage A Decision Point
+### 4.7 Stage A Critical Reminder
 
-**Gate to Stage B:** Only proceed with preprocessing if:
-- [ ] At least 70% of channels pass SNR threshold
-- [ ] Motion ratio < 0.5 (less than 50% motion artifacts)
-- [ ] Event markers are valid
+**NO CHANNELS ARE EXCLUDED IN STAGE A**
 
-If subject fails these criteria, flag for review but still document in Stage A report (for transparency like paper).
+Stage A only:
+- ✓ Calculates quality metrics
+- ✓ Documents which channels will be excluded
+- ✓ Creates exclusion lists for Stage B
+- ✗ Does NOT actually exclude any channels
+
+All exclusion happens at the start of Stage B.
 
 ---
 
@@ -309,26 +349,42 @@ If subject fails these criteria, flag for review but still document in Stage A r
 
 **Input:** Raw .snirf files + Channel Exclusion Lists from Stage A  
 **Output:** Clean HbO₂ and HbR concentration time series  
-**Apply to:** Good channels only (bad channels excluded before Step B1)
 
-**Critical Note:** All preprocessing operates only on channels that passed Stage A quality checks.
+**Critical Note from Paper:**
+> "First, channels with signal quality outside 80 dB to 140 dB were excluded. Next, the remaining raw optical signals (wavelengths at 690 nm and 830 nm) were converted into optical density."
+
+**Correct Order:** Exclude channels FIRST, then convert to OD
 
 ---
 
-### 5.2 Step B1: Intensity to Optical Density Conversion
+### 5.2 Step B1: Channel Exclusion and Optical Density Conversion
 
-**Objective:** Convert raw light intensity to optical density
+**Objective:** Exclude bad channels, then convert remaining channels to optical density
 
 **Formula:**
 $$OD = -\log_{10}\left(\frac{I}{I_0}\right)$$
 
-**Implementation Notes:**
-- Use `mne.preprocessing.nirs.optical_density()`
-- Mark bad channels (from Stage A) in `raw.info['bads']` before conversion
-- Verify OD values are in physiological range (typically 0.1 to 2.0)
+**Implementation Order (from paper):**
+```python
+# Step 1: Load raw intensity data (ALL channels)
+raw = mne.io.read_raw_snirf(filepath, preload=True)
+
+# Step 2: Load exclusion list from Stage A
+exclusion_list = load_exclusion_list(subject_id)
+
+# Step 3: Mark bad channels BEFORE any processing
+raw.info['bads'] = exclusion_list['bad_channels']
+
+# Step 4: NOW convert to OD (MNE will automatically skip bad channels)
+raw_od = mne.preprocessing.nirs.optical_density(raw)
+
+# Step 5: Verify OD values are in physiological range
+verify_od_range(raw_od, expected_range=(0.1, 2.0))
+```
 
 **Deliverables:**
-- [ ] Intensity to OD conversion function
+- [ ] Channel exclusion application function
+- [ ] OD conversion function
 - [ ] OD range verification (flag if outside 0.1-2.0)
 - [ ] Visualization of OD time series for sample channels
 
@@ -336,17 +392,23 @@ $$OD = -\log_{10}\left(\frac{I}{I_0}\right)$$
 
 ### 5.3 Step B2: Bandpass Filtering
 
-**Objective:** Apply bandpass filter to remove noise
+**Objective:** Apply bandpass filter to remove drift and high-frequency noise
 
 **Parameters (from paper):**
-- **Filter range:** 0-0.50 Hz (this is effectively a low-pass filter)
-- **Low cutoff:** 0.01 Hz (remove very slow drift)
-- **High cutoff:** 0.5 Hz (remove high-frequency noise)
+- **Filter range:** "0-0.50 Hz" 
+- **Actual implementation:** 0.01-0.5 Hz
+  - Low cutoff: 0.01 Hz (removes DC offset and ultra-slow drift)
+  - High cutoff: 0.5 Hz (removes cardiac ~1 Hz, respiratory ~0.3 Hz)
 - **Method:** IIR filter
 
+**Why 0.01 Hz instead of 0 Hz?**
+- 0 Hz is technically impossible to implement (would be infinite DC)
+- 0.01 Hz is the practical equivalent that removes baseline drift
+- Preserves all hemodynamic frequencies (HRF peaks at ~0.08-0.12 Hz)
+
 **Implementation Notes:**
-- Use `raw.filter(l_freq=0.01, h_freq=0.5, method='iir')`
-- Apply to all good channels
+- Use `raw_od.filter(l_freq=0.01, h_freq=0.5, method='iir')`
+- Apply to good channels only (bad channels already marked in info['bads'])
 
 **Deliverables:**
 - [ ] Bandpass filtering function
@@ -355,20 +417,22 @@ $$OD = -\log_{10}\left(\frac{I}{I_0}\right)$$
 
 ---
 
-### 5.4 Step B3: Motion Artifact Detection
+### 5.4 Step B3: Motion Artifact Detection on Filtered OD
 
 **Objective:** Detect motion artifacts on filtered OD data
 
-**Same algorithm as Stage A3, but applied to OD instead of intensity:**
-- Use same thresholds: tMotion=0.5, tStdev=20
-- Detect on derivative of OD signal
+**Same algorithm as Stage A3, but applied to filtered OD:**
+- Use same thresholds: tMotion=0.5, tStdev=20, AMPthresh=0.5
+- Detect using derivative of OD signal
+- Apply BOTH amplitude AND statistical methods (logical OR)
 - Output: Boolean mask of motion-corrupted timepoints
 
 **Purpose:** This mask is used for rPCA correction in next step
 
 **Deliverables:**
-- [ ] Motion detection function for OD data
+- [ ] Motion detection function for filtered OD data
 - [ ] Motion artifact visualization (marked on OD traces)
+- [ ] Motion mask for rPCA input
 
 ---
 
@@ -380,17 +444,20 @@ $$OD = -\log_{10}\left(\frac{I}{I_0}\right)$$
 > "Motion artifacts and systemic physiology interference were corrected using recursive principal component analysis"
 
 **Algorithm Overview:**
-1. Identify motion artifact segments (from B3)
+1. Identify motion artifact segments (from B3 motion mask)
 2. For each corrupted segment:
-   - Apply PCA to decompose signal
-   - Remove high-variance components (likely motion)
-   - Reconstruct signal without motion artifacts
+   - Apply PCA to decompose signal into components
+   - High-variance components = motion artifacts (large spikes)
+   - Low-variance components = neural signal (small changes)
+   - Remove high-variance components
+   - Reconstruct signal from low-variance components only
 3. Iterate until motion is sufficiently reduced
 
 **Implementation Notes:**
 - Use `sklearn.decomposition.PCA`
 - Typical n_components: 0.97 (retain 97% variance)
-- Process in sliding windows around motion artifacts
+- Process segments containing motion artifacts (not entire signal)
+- Motion removal targets HIGH variance (spikes), preserves LOW variance (neural)
 
 **Alternative Methods (DO NOT USE):**
 Although mne-nirs provides Temporal Derivative Distribution Repair (TDDR), **do not use this method**. Your task is to replicate the paper's rPCA approach exactly.
@@ -421,6 +488,17 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 - Verify hemoglobin values are physiological (typically ±50 μM)
 - Separate HbO₂ (oxygenated) and HbR (deoxygenated) channels
 
+**Output Structure:**
+```
+raw_haemo.ch_names = [
+    'S1_D1 hbo',  # Oxygenated hemoglobin
+    'S1_D1 hbr',  # Deoxygenated hemoglobin
+    'S1_D2 hbo',
+    'S1_D2 hbr',
+    ...
+]
+```
+
 **Deliverables:**
 - [ ] Beer-Lambert conversion function (TechEn system with custom PPF)
 - [ ] Beer-Lambert conversion function (NIRx system with defaults)
@@ -436,15 +514,17 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 **Paper Quote:**
 > "The most correlated short-distance channels are regressed from the long-distance channels to remove any interference from superficial layers using a consecutive sequence of Gaussian basis functions via ordinary least squares"
 
+**Mechanism:**
+- Long channels (30-40mm): Brain signal + Scalp noise
+- Short channels (~8mm): Only scalp noise (too shallow for brain)
+- **OLS Regression:** For each long channel, find most correlated short channel
+- Remove shared variance (scalp noise) using regression coefficient
+- Result: Long channels contain only deep brain signal
+
 **Implementation Notes:**
 - Use `mne_nirs.signal_enhancement.short_channel_regression(method='OLS')`
-- Short channels (~8mm) capture scalp blood flow, not brain activity
-- OLS regression removes this systemic noise from long channels (30-40mm)
-
-**What This Does:**
-- Identifies most correlated short channel for each long channel
-- Regresses out the shared variance (superficial noise)
-- Leaves only deep cortical signals in long channels
+- Automatically pairs each long channel with most correlated short channel
+- Regression removes systemic noise (heart rate, blood pressure, respiration)
 
 **Deliverables:**
 - [ ] Short-channel regression function
@@ -462,6 +542,14 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 - Location: `outputs/stage_b_processed/data/`
 - Naming: `{subject_id}_{dataset}_{session}_processed_raw.fif`
 
+**Output Characteristics:**
+- **Still continuous** (not epoched - that happens in Stage C)
+- Contains HbO₂ and HbR for both long and short channels
+- Spans entire recording session (rest + task periods mixed)
+- Event markers preserved
+- Motion artifacts reduced
+- Scalp noise regressed out
+
 **Include Metadata:**
 - Processing parameters used
 - Excluded channels list
@@ -476,9 +564,9 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 
 **Input:** Processed HbO₂ and HbR time series from Stage B  
 **Output:** Validation metrics proving preprocessing was successful  
-**Purpose:** Demonstrate that neural signals are detectable and group differences exist
+**Purpose:** Extract HRF and demonstrate that neural signals are detectable
 
-**This stage replicates paper's Figure 3c, 3d (HRF plots) and validates CNR.**
+**This stage replicates paper's Figure 3c, 3d (HRF plots) and Figure 4i (CNR).**
 
 ---
 
@@ -486,13 +574,22 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 
 **Objective:** Extract task-evoked hemodynamic responses using block averaging
 
+**Why This Step?**
+- Stage B output is continuous time series (rest + task mixed together)
+- Need to extract task-related responses (HRF)
+- Averaging improves signal-to-noise ratio
+
 **Algorithm:**
-1. Load processed hemoglobin data
+1. Load processed continuous hemoglobin data
 2. Extract event markers (condition 1 = trial start)
-3. Create epochs: -5 to +30 seconds around each trial
-4. Apply baseline correction (-5 to 0 seconds)
-5. Average across trials within subject
-6. Grand average across subjects within group
+3. Create epochs: -5 to +30 seconds around each trial start
+4. Apply baseline correction (-5 to 0 seconds as baseline reference)
+   - Subtract mean of baseline period from entire trial
+   - Centers each trial at 0 (removes baseline shifts)
+5. Average across trials within subject (subject-level HRF)
+   - Improves SNR by √n_trials
+6. Grand average across subjects within group (group-level HRF)
+   - Further improves SNR by √n_subjects
 
 **Implementation Notes:**
 - Use `mne.Epochs(tmin=-5, tmax=30, baseline=(-5, 0))`
@@ -501,13 +598,15 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 
 **Deliverables:**
 - [ ] HRF extraction function (epoching + averaging)
+- [ ] Subject-level HRF calculation
 - [ ] Grand average HRF calculation
 - [ ] HRF plots by region (PFC, M1, SMA) - replicate Figure 3c, 3d
 - [ ] Separate plots for each dataset
 
 **Expected HRF Shape:**
-- HbO₂: Increases 5-10 seconds post-stimulus, peaks ~8-12s, returns to baseline by 20-25s
+- HbO₂: Increases 2-3s post-stimulus, peaks ~8-12s, returns to baseline ~20-25s
 - HbR: Decreases (inverse relationship), smaller amplitude than HbO₂
+- Peak amplitude: 5-15 μM for HbO₂, 2-8 μM for HbR
 
 ---
 
@@ -519,6 +618,11 @@ $$\Delta C = \frac{\Delta OD}{\epsilon \cdot L \cdot PPF}$$
 $$CNR = \frac{|\mu_1 - \mu_2|}{\sqrt{\sigma_1^2 + \sigma_2^2}}$$
 
 where μ₁, μ₂ are mean HRF peak amplitudes for two groups
+
+**What CNR Measures:**
+- **Group separation:** How different are Expert vs Novice brain patterns?
+- **Effect size:** Magnitude of the difference
+- **Preprocessing quality:** Higher CNR suggests better signal extraction
 
 **Group Comparisons Required:**
 1. Expert vs. Novice (Expert/Novice study)
@@ -631,16 +735,18 @@ where μ₁, μ₂ are mean HRF peak amplitudes for two groups
 ## 8. VALIDATION CHECKLIST
 
 ### 8.1 Stage A Validation
-- [ ] SNR values fall within ranges shown in paper's Figure 4a, c, e, g
-- [ ] Motion ratios comparable to Figure 4b, d, f, h
+- [ ] SNR values in 10-30 dB range (matches paper's Figure 4a, c, e, g)
+- [ ] Motion ratios 0.02-0.10 range (matches Figure 4b, d, f, h)
 - [ ] Number of excluded channels is reasonable (< 30%)
 - [ ] Exclusion lists created successfully
+- [ ] NO channels actually excluded in Stage A (only documented)
 
 ### 8.2 Stage B Validation
 - [ ] All preprocessing steps complete without errors
 - [ ] Hemoglobin values are physiologically plausible (±50 μM)
 - [ ] Motion artifacts reduced after rPCA
 - [ ] Short-channel regression decreased scalp signal correlation
+- [ ] Output is continuous time series (not epoched)
 
 ### 8.3 Stage C Validation
 - [ ] HRF morphology matches Figure 3c, 3d
@@ -667,7 +773,7 @@ outputs/stage_a_qa/
 │   ├── {dataset}_snr_aggregated.png
 │   ├── {dataset}_motion_ratio_aggregated.png
 │   └── {subject}_individual_qa_plots.png
-├── excluded_channels/
+├── exclusion_lists/
 │   └── {subject}_exclusions.json
 └── qa_reports/
     ├── {subject}_stage_a_metrics.csv
@@ -700,17 +806,17 @@ outputs/stage_c_validation/
 
 ### Week 1-2: Stage A - Raw Quality Assessment
 - [ ] Implement data loading and metadata extraction
-- [ ] Calculate SNR on raw intensity
-- [ ] Calculate Motion Ratio on raw intensity
+- [ ] Calculate SNR on raw intensity (10-30 dB range)
+- [ ] Calculate Motion Ratio on optical density (0.02-0.10 range)
+- [ ] Calculate signal amplitude and create exclusion lists (80-140 dB)
 - [ ] Generate QA reports for all datasets
-- [ ] Create channel exclusion lists
 
 **Milestone:** Stage A QA reports match paper's Figure 4
 
 ### Week 3-4: Stage B - Core Preprocessing (Steps 1-3)
-- [ ] Implement OD conversion
-- [ ] Apply bandpass filtering
-- [ ] Detect motion artifacts on OD
+- [ ] Exclude bad channels and convert to OD
+- [ ] Apply bandpass filtering (0.01-0.5 Hz)
+- [ ] Detect motion artifacts on filtered OD
 - [ ] Test on single subject from each dataset
 
 **Milestone:** Successfully process 1 subject per dataset
@@ -718,13 +824,13 @@ outputs/stage_c_validation/
 ### Week 5-6: Stage B - Advanced Processing (Steps 4-6)
 - [ ] Implement rPCA motion correction
 - [ ] Apply Beer-Lambert Law conversion
-- [ ] Perform short-channel regression
+- [ ] Perform short-channel regression (OLS)
 - [ ] Process all subjects across all datasets
 
 **Milestone:** All subjects processed, saved as .fif files
 
 ### Week 7-8: Stage C - Validation
-- [ ] Extract HRFs and create visualizations
+- [ ] Extract HRFs (epoch, baseline correct, average)
 - [ ] Calculate CNR for all group comparisons
 - [ ] Perform statistical tests
 - [ ] Generate final validation report
@@ -745,16 +851,20 @@ outputs/stage_c_validation/
 
 | Processing Step | Parameter | TechEn CW6 | NIRx NIRScout | Source |
 |----------------|-----------|------------|---------------|---------|
-| **Stage A Quality** |
-| SNR Range | threshold_low | 80 dB | 80 dB | Paper Methods |
-| SNR Range | threshold_high | 140 dB | 140 dB | Paper Methods |
+| **Stage A Quality (Documentation)** |
+| SNR | Formula | 20×log₁₀(μ/σ) | 20×log₁₀(μ/σ) | Paper Methods |
+| SNR | Expected Range | 10-30 dB | 10-30 dB | Paper Figure 4 |
+| Signal Amplitude | Exclusion Low | 80 dB | 80 dB | Paper Methods |
+| Signal Amplitude | Exclusion High | 140 dB | 140 dB | Paper Methods |
 | Motion Detection | tMotion | 0.5 | 0.5 | MATLAB Code |
 | Motion Detection | tStdev | 20 | 20 | MATLAB Code |
 | Motion Detection | AMPThresh | 0.5 | 0.5 | MATLAB Code |
 | Motion Detection | STDEVthresh | 5 | 5 | MATLAB Code |
+| Motion Ratio | Expected Range | 0.02-0.10 | 0.02-0.10 | Paper Figure 4 |
 | **Stage B Preprocessing** |
 | Bandpass Filter | l_freq | 0.01 Hz | 0.01 Hz | Paper Methods |
 | Bandpass Filter | h_freq | 0.5 Hz | 0.5 Hz | Paper Methods |
+| Bandpass Filter | method | IIR | IIR | Paper Methods |
 | rPCA | n_components | 0.97 | 0.97 | Standard |
 | Beer-Lambert | PPF (λ₁) | 6.4 (690nm) | Default | Paper Methods |
 | Beer-Lambert | PPF (λ₂) | 5.8 (830nm) | Default | Paper Methods |
@@ -773,9 +883,9 @@ outputs/stage_c_validation/
 
 ### Common Issues and Solutions
 
-**Issue:** SNR values too low across many channels
-- **Check:** Raw data quality, hardware connection issues
-- **Solution:** Document in Stage A report, may indicate bad recording session
+**Issue:** SNR values appear too high (80-140 dB)
+- **Check:** You may be calculating signal amplitude, not SNR
+- **Solution:** SNR = 20×log₁₀(μ/σ) should give ~10-30 dB, not 80-140 dB
 
 **Issue:** Motion artifacts remain after rPCA
 - **Check:** rPCA parameters (n_components, window size)
@@ -830,18 +940,21 @@ Kamat, A., Eastmond, C., Gao, Y. et al. Assessment of Surgical Tasks Using Neuro
 ### Phase 1 is considered successful when:
 
 1. **Stage A Replication:**
-   - [ ] SNR and Motion Ratio plots visually match paper's Figure 4
+   - [ ] SNR values in 10-30 dB range (matches Figure 4a,c,e,g)
+   - [ ] Motion Ratio values in 0.02-0.10 range (matches Figure 4b,d,f,h)
    - [ ] Channel exclusion rates are comparable to paper
    - [ ] QA metrics calculated for all 4 datasets
+   - [ ] All channels documented (no exclusions in Stage A)
 
 2. **Stage B Processing:**
    - [ ] All subjects successfully processed without errors
-   - [ ] Hemoglobin values are physiologically plausible
+   - [ ] Bad channels excluded BEFORE OD conversion (correct order)
+   - [ ] Hemoglobin values are physiologically plausible (±50 μM)
    - [ ] Processing pipeline uses exact parameters from paper
 
 3. **Stage C Validation:**
    - [ ] HRF plots match paper's Figure 3c, 3d morphology
-   - [ ] CNR values show expected group differences
+   - [ ] CNR values show expected group differences (Figure 4i)
    - [ ] Statistical tests confirm significance where expected
    - [ ] Expert vs Novice comparison shows expertise effects
 
@@ -904,14 +1017,19 @@ datasets:
     ppf: {690: 6.4, 830: 5.8}
   
 stage_a:
-  snr_threshold_low: 80
-  snr_threshold_high: 140
+  snr_expected_range: [10, 30]  # dB
+  motion_ratio_expected_range: [0.02, 0.10]
+  signal_amplitude_low: 80  # dB
+  signal_amplitude_high: 140  # dB
   motion_tMotion: 0.5
   motion_tStdev: 20
+  motion_AMPthresh: 0.5
+  motion_STDEVthresh: 5
 
 stage_b:
   filter_low: 0.01
   filter_high: 0.5
+  filter_method: 'iir'
   rpca_n_components: 0.97
   
 stage_c:
@@ -928,19 +1046,19 @@ stage_c:
 ### Stage A Expected Results:
 
 **SNR Values (from Figure 4):**
-- Expert/Novice: Mean ~100-110 dB, SD ~10-15 dB
-- Learning Curve: Mean ~95-105 dB, SD ~10-20 dB
-- Short-term tES: Mean ~90-100 dB, SD ~15-20 dB
-- Long-term tES: Mean ~95-105 dB, SD ~10-15 dB
+- Expert/Novice: Median ~15-25 dB
+- Learning Curve: Median ~10-20 dB
+- Short-term tES: Median ~15-25 dB
+- Long-term tES: Median ~10-20 dB
 
 **Motion Ratio Values (from Figure 4):**
-- Expert/Novice: Mean ~0.1-0.2 (10-20% of data)
-- Learning Curve: Mean ~0.15-0.25
-- Short-term tES: Mean ~0.1-0.2
-- Long-term tES: Mean ~0.15-0.25
+- Expert/Novice: Median ~0.03 (range 0.01-0.08)
+- Learning Curve: Median ~0.04 (range 0.02-0.10)
+- Short-term tES: Median ~0.03 (range 0.01-0.06)
+- Long-term tES: Median ~0.05 (range 0.02-0.12)
 
 **Channel Exclusions:**
-- Typically 0-5 channels per subject excluded
+- Typically 0-5 channels per subject excluded (based on signal amplitude 80-140 dB)
 - Short-separation channels may have higher exclusion rates
 
 ### Stage B Expected Results:
@@ -985,8 +1103,8 @@ stage_c:
    - Document any necessary deviations
 
 2. **Stage A is Critical:**
-   - Sets the quality bar for entire pipeline
-   - Bad channels must be excluded early
+   - Documents quality for ALL channels (no exclusions)
+   - Creates exclusion lists for Stage B
    - Transparency in reporting (like paper's Figure 4)
 
 3. **Validate at Each Stage:**
@@ -1008,6 +1126,7 @@ stage_c:
 
 **END OF PRD**
 
-*Version: 2.0: Restructured with 3-Stage Workflow*  
-*Last Updated: January 18, 2026*  
-*Authored By: Vinh Pham*
+*Version: 3.0: Corrected SNR vs Signal Amplitude, Motion Detection, Stage B Ordering*  
+*Last Updated: February 17, 2026*  
+*Authored By: Vinh Pham*  
+*Corrections Based On: Detailed technical review with Claude*
