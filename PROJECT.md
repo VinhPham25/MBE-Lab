@@ -702,6 +702,7 @@ where μ₁, μ₂ are mean HRF peak amplitudes for two groups
 ### 7.1 Expert/Novice Dataset
 - **Special handling:** Subject reordering may be needed (see MATLAB code)
 - **Known issues:** R9 has split recordings with missing Trial 3
+- **Stage A replication note:** R9 SNR distribution may not visually match paper Figure 4a in local reproduction (paper-like lower Q1/whisker vs locally higher quartiles with only two negative outliers); treat this as a documented dataset-level discrepancy to track during validation. Additionally several subjects, including subejcts R1, R9, R10, and R12, display negative MR values on the boxplot. Double check this output to see if a negative MR is viable. 
 - **Channel count:** 25 long + 8 short
 - **Expected result:** Experts should show more efficient cortical activation (lower HbO₂ amplitude)
 
