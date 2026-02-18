@@ -28,7 +28,7 @@ from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import get_output_path
+from utils import get_output_path, load_config
 
 
 # ==============================================================================
@@ -733,6 +733,162 @@ def generate_stage_a_report(
         'motion_fig':        motion_fig,
         'metrics_csv_path':  metrics_csv_path,
         'summary_json_path': summary_json_path,
+    }
+
+
+# ==============================================================================
+# TASK 2.6.1 - Dataset Aggregation (all available subjects)
+# ==============================================================================
+
+def aggregate_dataset_metrics(
+    dataset: str = 'expert_novice',
+    subject_ids: list | None = None,
+    output_subdir: str = 'qa_reports',
+    verbose: bool = True,
+) -> dict:
+    """
+    Aggregate Stage A QA metrics across subjects and compute channel-wise stats.
+
+    Parameters
+    ----------
+    dataset : str
+        Dataset key from config.yaml (default: 'expert_novice')
+    subject_ids : list | None
+        Explicit subject IDs to aggregate. If None, use config order.
+    output_subdir : str
+        Stage A output subdirectory containing per-subject QA metrics CSVs.
+    verbose : bool
+        Print progress and summary.
+
+    Returns
+    -------
+    results : dict
+        {
+          'dataset': str,
+          'subject_ids_expected': list[str],
+          'subject_ids_found': list[str],
+          'subject_ids_missing': list[str],
+          'all_metrics_df': pd.DataFrame,
+          'channel_stats_df': pd.DataFrame,
+          'subject_stats_df': pd.DataFrame,
+          'all_metrics_csv_path': Path,
+          'channel_stats_csv_path': Path,
+          'subject_stats_csv_path': Path,
+        }
+    """
+    config = load_config()
+    ds_cfg = config['datasets'][dataset]
+
+    if subject_ids is None:
+        subject_ids = list(ds_cfg['subjects'])
+
+    output_dir = get_output_path('stage_a', output_subdir)
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print(f"TASK 2.6.1 — DATASET AGGREGATION ({dataset})")
+        print("=" * 70)
+        print(f"Expected subjects: {len(subject_ids)}")
+        print(f"Metrics directory: {output_dir}")
+
+    metrics_frames = []
+    found_subjects = []
+    missing_subjects = []
+
+    for sid in subject_ids:
+        metrics_path = output_dir / f"{sid}_qa_metrics.csv"
+        if metrics_path.exists():
+            df = pd.read_csv(metrics_path)
+            # Ensure subject_id column exists and is consistent.
+            df['subject_id'] = sid
+            metrics_frames.append(df)
+            found_subjects.append(sid)
+            if verbose:
+                print(f"  ✓ loaded {sid}: {len(df)} rows")
+        else:
+            missing_subjects.append(sid)
+            if verbose:
+                print(f"  - missing {sid}: {metrics_path.name}")
+
+    if not metrics_frames:
+        raise FileNotFoundError(
+            "No subject QA metrics found for aggregation. "
+            "Run per-subject Stage A QA generation first."
+        )
+
+    all_metrics_df = pd.concat(metrics_frames, ignore_index=True)
+
+    # Keep only intensity channels (wavelength > 0) for dataset stats.
+    agg_df = all_metrics_df[all_metrics_df['wavelength'] > 0].copy()
+
+    # Subject-level summary for quick dataset checks.
+    subject_stats_df = (
+        agg_df.groupby('subject_id', as_index=False)
+        .agg(
+            n_channels=('channel', 'count'),
+            snr_mean=('snr_db', 'mean'),
+            snr_median=('snr_db', 'median'),
+            snr_std=('snr_db', 'std'),
+            motion_mean=('motion_ratio', 'mean'),
+            motion_median=('motion_ratio', 'median'),
+            motion_std=('motion_ratio', 'std'),
+        )
+    )
+
+    # Channel-wise statistics across subjects.
+    channel_stats_df = (
+        agg_df.groupby(['channel', 'wavelength'], as_index=False)
+        .agg(
+            n_subjects=('subject_id', 'nunique'),
+            snr_mean=('snr_db', 'mean'),
+            snr_median=('snr_db', 'median'),
+            snr_std=('snr_db', 'std'),
+            snr_q25=('snr_db', lambda x: float(x.quantile(0.25))),
+            snr_q75=('snr_db', lambda x: float(x.quantile(0.75))),
+            snr_min=('snr_db', 'min'),
+            snr_max=('snr_db', 'max'),
+            motion_mean=('motion_ratio', 'mean'),
+            motion_median=('motion_ratio', 'median'),
+            motion_std=('motion_ratio', 'std'),
+            motion_q25=('motion_ratio', lambda x: float(x.quantile(0.25))),
+            motion_q75=('motion_ratio', lambda x: float(x.quantile(0.75))),
+            motion_min=('motion_ratio', 'min'),
+            motion_max=('motion_ratio', 'max'),
+        )
+    )
+
+    # Save aggregation outputs.
+    all_metrics_csv_path = output_dir / f"{dataset}_all_subjects_qa_metrics.csv"
+    channel_stats_csv_path = output_dir / f"{dataset}_channel_stats.csv"
+    subject_stats_csv_path = output_dir / f"{dataset}_subject_stats.csv"
+
+    all_metrics_df.to_csv(all_metrics_csv_path, index=False)
+    channel_stats_df.to_csv(channel_stats_csv_path, index=False)
+    subject_stats_df.to_csv(subject_stats_csv_path, index=False)
+
+    if verbose:
+        print("\nAggregation summary:")
+        print(f"  Subjects found: {len(found_subjects)}/{len(subject_ids)}")
+        print(f"  Combined rows: {len(all_metrics_df)}")
+        print(f"  Channel stats rows: {len(channel_stats_df)}")
+        print(f"  Subject stats rows: {len(subject_stats_df)}")
+        print(f"  Saved: {all_metrics_csv_path.name}")
+        print(f"  Saved: {channel_stats_csv_path.name}")
+        print(f"  Saved: {subject_stats_csv_path.name}")
+        if missing_subjects:
+            print(f"  Missing subjects ({len(missing_subjects)}): {missing_subjects}")
+
+    return {
+        'dataset': dataset,
+        'subject_ids_expected': subject_ids,
+        'subject_ids_found': found_subjects,
+        'subject_ids_missing': missing_subjects,
+        'all_metrics_df': all_metrics_df,
+        'channel_stats_df': channel_stats_df,
+        'subject_stats_df': subject_stats_df,
+        'all_metrics_csv_path': all_metrics_csv_path,
+        'channel_stats_csv_path': channel_stats_csv_path,
+        'subject_stats_csv_path': subject_stats_csv_path,
     }
 
 
