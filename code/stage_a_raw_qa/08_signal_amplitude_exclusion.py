@@ -4,7 +4,9 @@ Purpose: Calculate raw signal amplitude in dB for all channels.
 
 Task coverage in this file:
   2.5.1 - Calculate signal amplitude in dB for all channels (implemented)
-  2.5.2 - 2.5.4 will be implemented in subsequent subtasks.
+  2.5.2 - Identify channels outside 80-140 dB range (implemented)
+  2.5.3 - Create exclusion-list JSON structure (implemented)
+  2.5.4 - Save final exclusion JSON to excluded_channels/ (next subtask)
 
 Reference: PROJECT.md Section 4, Stage A/B handoff notes
 
@@ -17,6 +19,7 @@ IMPORTANT:
 import numpy as np
 import pandas as pd
 import sys
+import json
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -63,9 +66,6 @@ def calculate_signal_amplitude_db(raw, verbose: bool = True) -> pd.DataFrame:
       amplitude_db = 20 * log10(RMS(raw_intensity))
 
     where RMS (root mean square) is calculated per channel over time.
-
-    Note: consider replace RMS with mean
-    amplitude_db = 20 * np.log10(np.mean(raw_intensity))
 
     Parameters
     ----------
@@ -122,6 +122,77 @@ def calculate_signal_amplitude_db(raw, verbose: bool = True) -> pd.DataFrame:
         print(f"✓ Calculated amplitude for {len(amplitude_df)} channels")
 
     return amplitude_df
+
+
+def identify_amplitude_out_of_range(
+    amplitude_df: pd.DataFrame,
+    low_db: float = 80.0,
+    high_db: float = 140.0,
+    verbose: bool = True,
+) -> pd.DataFrame:
+    """
+    Task 2.5.2: Identify channels outside the 80-140 dB amplitude range.
+
+    IMPORTANT:
+    - This only tags candidate channels for Stage B exclusion.
+    - No channels are excluded in Stage A.
+
+    Parameters
+    ----------
+    amplitude_df : pd.DataFrame
+        Output of calculate_signal_amplitude_db()
+    low_db : float
+        Lower threshold (inclusive pass boundary)
+    high_db : float
+        Upper threshold (inclusive pass boundary)
+    verbose : bool
+        Print summary to console
+
+    Returns
+    -------
+    flagged_df : pd.DataFrame
+        Original DataFrame with added columns:
+        - within_80_140_db (bool)
+        - exclusion_candidate (bool)
+        - exclusion_reason (str)
+    """
+    flagged_df = amplitude_df.copy()
+
+    low_mask = flagged_df['amplitude_db'] < low_db
+    high_mask = flagged_df['amplitude_db'] > high_db
+    invalid_mask = flagged_df['amplitude_db'].isna()
+
+    flagged_df['within_80_140_db'] = ~(low_mask | high_mask | invalid_mask)
+    flagged_df['exclusion_candidate'] = ~flagged_df['within_80_140_db']
+
+    flagged_df['exclusion_reason'] = 'within_range'
+    flagged_df.loc[low_mask, 'exclusion_reason'] = f'below_{int(low_db)}db'
+    flagged_df.loc[high_mask, 'exclusion_reason'] = f'above_{int(high_db)}db'
+    flagged_df.loc[invalid_mask, 'exclusion_reason'] = 'invalid_amplitude'
+
+    if verbose:
+        n_total = len(flagged_df)
+        n_bad = int(flagged_df['exclusion_candidate'].sum())
+        n_good = n_total - n_bad
+        n_low = int(low_mask.sum())
+        n_high = int(high_mask.sum())
+        n_invalid = int(invalid_mask.sum())
+
+        print("\n" + "=" * 70)
+        print("AMPLITUDE RANGE ASSESSMENT (TASK 2.5.2)")
+        print("=" * 70)
+        print(f"Threshold range: [{low_db:.0f}, {high_db:.0f}] dB")
+        print(f"Total channels: {n_total}")
+        print(f"Within range (good): {n_good}")
+        print(f"Outside range (candidate bad): {n_bad}")
+        print(f"  - Below {low_db:.0f} dB: {n_low}")
+        print(f"  - Above {high_db:.0f} dB: {n_high}")
+        if n_invalid > 0:
+            print(f"  - Invalid amplitude: {n_invalid}")
+        print("NOTE: Stage A documents candidates only; no exclusion applied yet.")
+        print("=" * 70 + "\n")
+
+    return flagged_df
 
 
 def calculate_amplitude_statistics(amplitude_df: pd.DataFrame, by_wavelength: bool = True) -> dict:
@@ -223,9 +294,98 @@ def save_signal_amplitude_results(amplitude_df: pd.DataFrame, subject_id: str, o
     return output_path
 
 
+def save_flagged_amplitude_results(flagged_df: pd.DataFrame, subject_id: str, output_dir: Path) -> Path:
+    """
+    Save Task 2.5.2 flagged amplitude results to CSV.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{subject_id}_signal_amplitude_flagged.csv"
+    flagged_df.to_csv(output_path, index=False)
+    print(f"💾 Flagged amplitude results saved: {output_path}")
+    return output_path
+
+
+def create_exclusion_list_json(
+    flagged_df: pd.DataFrame,
+    subject_id: str,
+    low_db: float = 80.0,
+    high_db: float = 140.0,
+    verbose: bool = True,
+) -> dict:
+    """
+    Task 2.5.3: Build exclusion-list JSON payload for Stage B handoff.
+
+    Required structure:
+      {
+        "subject_id": ...,
+        "bad_channels": [...],
+        "good_channels": [...],
+        "exclusion_reasons": {...}
+      }
+    """
+    required_cols = {'channel', 'exclusion_candidate', 'exclusion_reason'}
+    missing = required_cols - set(flagged_df.columns)
+    if missing:
+        raise ValueError(f"flagged_df missing required columns: {sorted(missing)}")
+
+    bad_df = flagged_df[flagged_df['exclusion_candidate']].copy()
+    good_df = flagged_df[~flagged_df['exclusion_candidate']].copy()
+
+    bad_channels = sorted(bad_df['channel'].tolist())
+    good_channels = sorted(good_df['channel'].tolist())
+    exclusion_reasons = {
+        row['channel']: row['exclusion_reason']
+        for _, row in bad_df[['channel', 'exclusion_reason']].iterrows()
+    }
+
+    exclusion_json = {
+        'subject_id': subject_id,
+        'bad_channels': bad_channels,
+        'good_channels': good_channels,
+        'exclusion_reasons': exclusion_reasons,
+        'thresholds_db': {
+            'low': low_db,
+            'high': high_db,
+        },
+        'stage_a_note': (
+            "Stage A documentation only: channels listed as exclusion candidates "
+            "for Stage B. No channels excluded from Stage A QA analysis."
+        ),
+    }
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print("EXCLUSION LIST JSON (TASK 2.5.3)")
+        print("=" * 70)
+        print(f"subject_id: {subject_id}")
+        print(f"bad_channels: {len(bad_channels)}")
+        print(f"good_channels: {len(good_channels)}")
+        if bad_channels:
+            print("candidate bad channels:")
+            for ch in bad_channels:
+                print(f"  - {ch} ({exclusion_reasons[ch]})")
+        print("=" * 70 + "\n")
+
+    return exclusion_json
+
+
+def save_exclusion_list_preview(exclusion_json: dict, subject_id: str, output_dir: Path) -> Path:
+    """
+    Save Task 2.5.3 JSON preview to signal_quality_exclusion directory.
+
+    Final Stage B handoff save location is handled in Task 2.5.4.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / f"{subject_id}_exclusion_list_preview.json"
+    with open(output_path, 'w') as f:
+        json.dump(exclusion_json, f, indent=2)
+    print(f"💾 Exclusion-list preview saved: {output_path}")
+    return output_path
+
+
 def test_calculate_signal_amplitude():
     """
-    Test task 2.5.1 on subject A1.
+    Test tasks 2.5.1-2.5.3 on subject A1.
     """
     print("=" * 70)
     print("TESTING SIGNAL AMPLITUDE CALCULATION - Subject A1")
@@ -239,11 +399,27 @@ def test_calculate_signal_amplitude():
     stats = calculate_amplitude_statistics(amplitude_df, by_wavelength=True)
     print_amplitude_summary(amplitude_df, stats)
 
-    output_dir = get_output_path('stage_a', 'qa_reports')
-    save_signal_amplitude_results(amplitude_df, 'A1', output_dir)
+    flagged_df = identify_amplitude_out_of_range(
+        amplitude_df,
+        low_db=80.0,
+        high_db=140.0,
+        verbose=True,
+    )
 
-    print("✅ Task 2.5.1 test complete!")
-    return amplitude_df, stats
+    output_dir = get_output_path('stage_a', 'signal_quality_exclusion')
+    save_signal_amplitude_results(amplitude_df, 'A1', output_dir)
+    save_flagged_amplitude_results(flagged_df, 'A1', output_dir)
+    exclusion_json = create_exclusion_list_json(
+        flagged_df,
+        subject_id='A1',
+        low_db=80.0,
+        high_db=140.0,
+        verbose=True,
+    )
+    save_exclusion_list_preview(exclusion_json, 'A1', output_dir)
+
+    print("✅ Tasks 2.5.1-2.5.3 test complete!")
+    return exclusion_json, stats
 
 
 if __name__ == '__main__':
