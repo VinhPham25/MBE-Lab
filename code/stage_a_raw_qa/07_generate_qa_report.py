@@ -449,7 +449,8 @@ def plot_motion_boxplot(
         ax.set_xlabel('Subject Label')
         ax.set_ylabel('Motion Ratio')
         ax.set_title(f'Motion Ratio — {subject_id} ({wl} nm)')
-        ax.legend(fontsize=8, loc='upper right')
+        if len(elev) > 0:
+            ax.legend(fontsize=8, loc='upper right')
 
         if verbose:
             n_total = len(wl_df)
@@ -609,8 +610,22 @@ def save_summary_statistics(
     """Save summary statistics dict as JSON."""
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{subject_id}_qa_summary.json"
+
+    def _make_serializable(obj):
+        """Recursively convert numpy scalar keys/values to native Python types."""
+        if isinstance(obj, dict):
+            return {
+                (int(k) if hasattr(k, 'item') else k): _make_serializable(v)
+                for k, v in obj.items()
+            }
+        if isinstance(obj, list):
+            return [_make_serializable(v) for v in obj]
+        if hasattr(obj, 'item'):   # numpy scalar
+            return obj.item()
+        return obj
+
     with open(out_path, 'w') as f:
-        json.dump(summary, f, indent=2)
+        json.dump(_make_serializable(summary), f, indent=2)
     print(f"  Summary statistics saved: {out_path}")
     return out_path
 

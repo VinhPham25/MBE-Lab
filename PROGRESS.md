@@ -186,12 +186,12 @@ elif system == "NIRx":
 - [x] **2.3.4** (2026-01-19) Calculate motion ratio as (flagged_samples / total_samples) per channel
 - [x] **2.3.5** (2026-01-19) Test motion detection on subject A1 and verify results are reasonable (~0 median for A1 from Fig 4)
 
-#### 2.4 QA Report Generation (Step A4)
+#### 2.4 QA Report Generation (Step A4) ✅ COMPLETE
 - [x] **2.4.1** (2026-02-17) Create comprehensive metrics DataFrame combining SNR, motion ratio, QA quality flags — saved A1_qa_metrics.csv (66 channels, 13 cols: snr_db, motion_ratio, snr_quality_flag, motion_quality_flag, qa_note; 33 acceptable / 24 low / 9 high SNR; 0 excluded — all channels retained for QA transparency)
-- [ ] **2.4.2** Implement SNR box plot visualization (white bars, red for bad channels, lower expected threshold lines at ~10 dB low quality, higher expected threshold lines at ~30 dB high quality)
-- [ ] **2.4.3** Implement motion ratio box plot visualization
-- [ ] **2.4.4** Create summary statistics calculator and console report generator
-- [ ] **2.4.5** Generate complete Stage A report for subject A1 and verify plots look similar to Figure 4
+- [x] **2.4.2** (2026-02-17) Implement SNR box plot visualization — white boxes, blue median line, red + outliers, dashed threshold lines at 10 dB (low) and 30 dB (high); saved A1_snr_boxplot.png; 690 nm median=11.2 dB range=[4.1,36.1], 830 nm median=17.6 dB range=[2.5,37.3]
+- [x] **2.4.3** (2026-02-17) Implement motion ratio box plot visualization — white boxes, blue median, red + outliers; saved A1_motion_boxplot.png; 690 nm median=0.000 range=[0.000,0.017], 830 nm median=0.000 range=[0.000,0.011]; 0 elevated channels (all motion ~0 as expected for A1)
+- [x] **2.4.4** (2026-02-17) Summary statistics calculator and console report generator — saved A1_qa_summary.json; SNR mean=17.17 dB median=16.01 dB range=[2.50,37.30]; MR median=0.000 (0%); fixed numpy int64 JSON serialization and empty-legend warning
+- [x] **2.4.5** (2026-02-17) Generate complete Stage A report for subject A1 — generate_stage_a_report() orchestrates all sub-tasks end-to-end; all 4 output files confirmed (A1_qa_metrics.csv, A1_snr_boxplot.png, A1_motion_boxplot.png, A1_qa_summary.json); verified vs Figure 4: SNR median=16.01 dB range=[2.50,37.30] IQR=[7.11,26.71] ✓ matches A1 box in Fig 4a; MR median=0.000 max=0.017 ✓ matches A1 ~0 in Fig 4b
 
 #### 2.5 Signal Amplitude Assessment (for Stage B exclusion)
 - [ ] **2.5.1** Calculate signal amplitude in dB for all channels (this is separate from SNR)
