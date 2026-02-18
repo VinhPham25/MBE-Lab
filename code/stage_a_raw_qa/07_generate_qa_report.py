@@ -24,11 +24,33 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import sys
 import json
+import argparse
+import importlib.util
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import get_output_path, load_config
+
+# Dynamically import Stage A dependencies used for dataset batch processing.
+_spec_load = importlib.util.spec_from_file_location(
+    "load_data", Path(__file__).parent / "01_load_data.py"
+)
+load_data = importlib.util.module_from_spec(_spec_load)
+_spec_load.loader.exec_module(load_data)
+load_raw_snirf = load_data.load_raw_snirf
+
+_spec_snr = importlib.util.spec_from_file_location(
+    "calculate_snr", Path(__file__).parent / "05_calculate_snr.py"
+)
+calculate_snr = importlib.util.module_from_spec(_spec_snr)
+_spec_snr.loader.exec_module(calculate_snr)
+
+_spec_motion = importlib.util.spec_from_file_location(
+    "calculate_motion", Path(__file__).parent / "06_calculate_motion_ratio.py"
+)
+calculate_motion = importlib.util.module_from_spec(_spec_motion)
+_spec_motion.loader.exec_module(calculate_motion)
 
 
 # ==============================================================================
@@ -1039,20 +1061,338 @@ def plot_dataset_level_boxplots(
         'motion_plot_path': mr_path,
     }
 
+
+def build_cumulative_dataset_outputs(
+    dataset: str = 'expert_novice',
+    output_subdir: str = 'qa_reports',
+    verbose: bool = True,
+) -> dict:
+    """
+    Build cumulative CSV/JSON/PNG outputs from subject-level Stage A artifacts.
+
+    This aggregates per-subject files into study-level files under:
+      outputs/stage_a_qa/qa_reports/{dataset}_full_report/
+
+    Aggregated artifacts include:
+      - {dataset}_all_subjects_snr_raw.csv
+      - {dataset}_all_subjects_motion_od.csv
+      - {dataset}_all_subjects_qa_metrics.csv
+      - {dataset}_all_subjects_qa_summary.json
+      - {dataset}_snr_boxplot.png
+      - {dataset}_motion_boxplot.png
+
+    Parameters
+    ----------
+    dataset : str
+        Dataset key from config.yaml
+    output_subdir : str
+        Stage A output subdirectory containing per-subject artifacts
+    verbose : bool
+        Print progress logs
+
+    Returns
+    -------
+    dict
+        Aggregation summary with output paths and any missing subjects.
+    """
+    config = load_config()
+    subject_ids = list(config['datasets'][dataset]['subjects'])
+
+    qa_dir = get_output_path('stage_a', output_subdir)
+    full_report_dir = qa_dir / f"{dataset}_full_report"
+    full_report_dir.mkdir(parents=True, exist_ok=True)
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print(f"CUMULATIVE DATASET OUTPUTS ({dataset})")
+        print("=" * 70)
+        print(f"Source directory: {qa_dir}")
+        print(f"Target directory: {full_report_dir}")
+
+    snr_frames = []
+    motion_frames = []
+    metrics_frames = []
+    summary_by_subject = {}
+    missing_subjects = []
+
+    for sid in subject_ids:
+        snr_path = qa_dir / f"{sid}_snr_raw.csv"
+        motion_path = qa_dir / f"{sid}_motion_od.csv"
+        metrics_path = qa_dir / f"{sid}_qa_metrics.csv"
+        summary_path = qa_dir / f"{sid}_qa_summary.json"
+
+        required = [snr_path, motion_path, metrics_path, summary_path]
+        if not all(p.exists() for p in required):
+            missing_subjects.append(sid)
+            if verbose:
+                missing_files = [p.name for p in required if not p.exists()]
+                print(f"  - missing {sid}: {missing_files}")
+            continue
+
+        snr_df = pd.read_csv(snr_path)
+        snr_df.insert(0, 'subject_id', sid)
+        snr_frames.append(snr_df)
+
+        motion_df = pd.read_csv(motion_path)
+        motion_df.insert(0, 'subject_id', sid)
+        motion_frames.append(motion_df)
+
+        metrics_df = pd.read_csv(metrics_path)
+        metrics_df['subject_id'] = sid
+        metrics_frames.append(metrics_df)
+
+        with open(summary_path, 'r') as f:
+            summary_by_subject[sid] = json.load(f)
+
+        if verbose:
+            print(f"  ✓ aggregated {sid}")
+
+    if not metrics_frames:
+        raise FileNotFoundError(
+            "No complete subject artifact sets found to aggregate. "
+            "Run Stage A subject processing first."
+        )
+
+    all_snr_df = pd.concat(snr_frames, ignore_index=True)
+    all_motion_df = pd.concat(motion_frames, ignore_index=True)
+    all_metrics_df = pd.concat(metrics_frames, ignore_index=True)
+
+    # Save cumulative CSVs.
+    all_snr_csv_path = full_report_dir / f"{dataset}_all_subjects_snr_raw.csv"
+    all_motion_csv_path = full_report_dir / f"{dataset}_all_subjects_motion_od.csv"
+    all_metrics_csv_path = full_report_dir / f"{dataset}_all_subjects_qa_metrics.csv"
+    all_snr_df.to_csv(all_snr_csv_path, index=False)
+    all_motion_df.to_csv(all_motion_csv_path, index=False)
+    all_metrics_df.to_csv(all_metrics_csv_path, index=False)
+
+    # Save cumulative summary JSON.
+    cumulative_summary = {
+        'dataset': dataset,
+        'n_subjects_expected': len(subject_ids),
+        'n_subjects_aggregated': len(summary_by_subject),
+        'subjects_aggregated': sorted(summary_by_subject.keys()),
+        'subjects_missing': missing_subjects,
+        'subject_summaries': summary_by_subject,
+    }
+    cumulative_summary_json_path = full_report_dir / f"{dataset}_all_subjects_qa_summary.json"
+    with open(cumulative_summary_json_path, 'w') as f:
+        json.dump(cumulative_summary, f, indent=2)
+
+    # Refresh channel/subject stats from cumulative metrics and save in full report dir.
+    agg_results = aggregate_dataset_metrics(
+        dataset=dataset,
+        subject_ids=sorted(summary_by_subject.keys()),
+        output_subdir=output_subdir,
+        verbose=False,
+    )
+
+    # Regenerate cumulative paper-style box plots.
+    plot_results = plot_dataset_level_boxplots(
+        all_metrics_df=all_metrics_df,
+        dataset=dataset,
+        output_dir=full_report_dir,
+        show_errorbars=True,
+        verbose=False,
+    )
+    plt.close(plot_results['snr_fig'])
+    plt.close(plot_results['motion_fig'])
+
+    if verbose:
+        print("\nCumulative outputs written:")
+        print(f"  - {all_snr_csv_path}")
+        print(f"  - {all_motion_csv_path}")
+        print(f"  - {all_metrics_csv_path}")
+        print(f"  - {cumulative_summary_json_path}")
+        print(f"  - {plot_results['snr_plot_path']}")
+        print(f"  - {plot_results['motion_plot_path']}")
+        print(f"Aggregated subjects: {len(summary_by_subject)}/{len(subject_ids)}")
+        if missing_subjects:
+            print(f"Missing subjects: {missing_subjects}")
+
+    return {
+        'dataset': dataset,
+        'full_report_dir': full_report_dir,
+        'missing_subjects': missing_subjects,
+        'all_snr_csv_path': all_snr_csv_path,
+        'all_motion_csv_path': all_motion_csv_path,
+        'all_metrics_csv_path': all_metrics_csv_path,
+        'all_summary_json_path': cumulative_summary_json_path,
+        'snr_plot_path': plot_results['snr_plot_path'],
+        'motion_plot_path': plot_results['motion_plot_path'],
+        'channel_stats_csv_path': agg_results['channel_stats_csv_path'],
+        'subject_stats_csv_path': agg_results['subject_stats_csv_path'],
+    }
+
+
 # ==============================================================================
-# Entry point — runs 2.4.5 which orchestrates all sub-tasks
+# TASK 2.6.3 - Process all subjects through Stage A pipeline
+# ==============================================================================
+
+def process_dataset_stage_a_reports(
+    dataset: str = 'expert_novice',
+    output_subdir: str = 'qa_reports',
+    verbose: bool = True,
+) -> dict:
+    """
+    Run Stage A QA report generation for all subjects in a dataset.
+
+    This ensures each subject has:
+      - {subject}_snr_raw.csv
+      - {subject}_motion_od.csv
+      - {subject}_qa_metrics.csv
+      - {subject}_qa_summary.json
+      - {subject}_snr_boxplot.png
+      - {subject}_motion_boxplot.png
+
+    Parameters
+    ----------
+    dataset : str
+        Dataset key in config.yaml (default: expert_novice)
+    output_subdir : str
+        Stage A output subdirectory where QA artifacts are stored.
+    verbose : bool
+        Print progress for each subject.
+
+    Returns
+    -------
+    dict
+        Batch processing summary including success/failure lists.
+    """
+    config = load_config()
+    subject_ids = list(config['datasets'][dataset]['subjects'])
+    output_dir = get_output_path('stage_a', output_subdir)
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print(f"TASK 2.6.3 — BATCH STAGE A PROCESSING ({dataset})")
+        print("=" * 70)
+        print(f"Subjects to process: {len(subject_ids)}")
+        print(f"Output directory: {output_dir}")
+
+    succeeded = []
+    failed = []
+    errors = {}
+
+    for idx, subject_id in enumerate(subject_ids, start=1):
+        try:
+            if verbose:
+                print(f"\n[{idx}/{len(subject_ids)}] Processing subject {subject_id}")
+
+            # Load raw once and compute Stage A prerequisite inputs.
+            raw, _ = load_raw_snirf(dataset, subject_id, preload=True, verbose=False)
+
+            snr_df = calculate_snr.calculate_snr_raw(raw, verbose=False)
+            calculate_snr.save_snr_results(snr_df, subject_id, output_dir)
+
+            raw_od = calculate_motion.convert_to_optical_density(raw, verbose=False)
+            motion_df = calculate_motion.calculate_motion_ratio_od(raw_od, verbose=False)
+            calculate_motion.save_motion_results(motion_df, subject_id, output_dir)
+
+            # Generate full per-subject Stage A QA report.
+            report_results = generate_stage_a_report(
+                subject_id=subject_id, dataset=dataset, verbose=False
+            )
+            # Prevent figure accumulation during long batch runs.
+            plt.close(report_results['snr_fig'])
+            plt.close(report_results['motion_fig'])
+
+            succeeded.append(subject_id)
+            if verbose:
+                print(f"  ✓ Completed {subject_id}")
+
+        except Exception as exc:
+            failed.append(subject_id)
+            errors[subject_id] = str(exc)
+            if verbose:
+                print(f"  ✗ Failed {subject_id}: {exc}")
+
+    summary = {
+        'dataset': dataset,
+        'n_subjects_expected': len(subject_ids),
+        'n_subjects_succeeded': len(succeeded),
+        'n_subjects_failed': len(failed),
+        'subjects_succeeded': succeeded,
+        'subjects_failed': failed,
+        'errors': errors,
+        'output_dir': str(output_dir),
+    }
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print("BATCH PROCESSING SUMMARY")
+        print("=" * 70)
+        print(f"Succeeded: {len(succeeded)}/{len(subject_ids)}")
+        if failed:
+            print(f"Failed: {len(failed)} -> {failed}")
+        else:
+            print("Failed: 0")
+        print("=" * 70 + "\n")
+
+    return summary
+
+# ==============================================================================
+# Entry point — dataset-level Stage A processing
 # ==============================================================================
 
 if __name__ == '__main__':
-    results = generate_stage_a_report(subject_id='A1', verbose=True)
+    parser = argparse.ArgumentParser(
+        description=(
+            "Run Stage A QA for an entire dataset and build cumulative "
+            "study-level outputs."
+        )
+    )
+    parser.add_argument(
+        '--dataset',
+        type=str,
+        default='expert_novice',
+        help=(
+            "Dataset key from config.yaml "
+            "(e.g., expert_novice, learning_curve, short_term_tes, long_term_tes)."
+        ),
+    )
+    parser.add_argument(
+        '--output-subdir',
+        type=str,
+        default='qa_reports',
+        help="Stage A output subdirectory under outputs/stage_a_qa/.",
+    )
+    parser.add_argument(
+        '--skip-batch',
+        action='store_true',
+        help=(
+            "Skip per-subject processing and only build cumulative outputs "
+            "from existing subject artifacts."
+        ),
+    )
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help="Reduce console logging.",
+    )
+    args = parser.parse_args()
 
-    snr_s = results['summary']['snr']['overall']
-    mr_s  = results['summary']['motion']['overall']
+    verbose = not args.quiet
 
-    print("\n  VERIFICATION vs PAPER FIGURE 4:")
-    print(f"  SNR  — median {snr_s['median']:.1f} dB  "
-          f"(paper: ~15–30 dB; "
-          f"{'PASS' if 10 < snr_s['median'] < 40 else 'REVIEW'})")
-    print(f"  MR   — median {mr_s['median']:.4f}  "
-          f"(paper: ~0;  "
-          f"{'PASS' if mr_s['median'] < 0.05 else 'REVIEW'})")
+    if not args.skip_batch:
+        batch_summary = process_dataset_stage_a_reports(
+            dataset=args.dataset,
+            output_subdir=args.output_subdir,
+            verbose=verbose,
+        )
+        if batch_summary['n_subjects_failed'] > 0:
+            print(
+                f"\nWARNING: {batch_summary['n_subjects_failed']} subject(s) failed. "
+                "Cumulative outputs will include successful subjects only."
+            )
+
+    cumulative = build_cumulative_dataset_outputs(
+        dataset=args.dataset,
+        output_subdir=args.output_subdir,
+        verbose=verbose,
+    )
+
+    print("\nStage A dataset run complete.")
+    print(f"Dataset: {args.dataset}")
+    print(f"Study folder: {cumulative['full_report_dir']}")
+    print(f"SNR plot: {cumulative['snr_plot_path']}")
+    print(f"MR plot: {cumulative['motion_plot_path']}")

@@ -2,8 +2,8 @@
 
 **Last Updated:** February 18, 2026  
 **Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.6 In Progress - Tasks 2.6.1-2.6.2 Complete  
-**Next Milestone:** Section 2.6.3 - Process all 14 Expert/Novice subjects
+**Current Stage:** Section 2.6 In Progress - Tasks 2.6.1-2.6.3 Complete  
+**Next Milestone:** Section 2.6.4 - Generate dataset-level QA report
 
 ---
 
@@ -11,12 +11,15 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage A — Section 2.6 in progress (2.6.1-2.6.2 complete)
-- **Completion:** 33% (30/92 tasks)
+- **Active Stage:** Stage A — Section 2.6 in progress (2.6.1-2.6.3 complete)
+- **Completion:** 34% (31/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Task 2.6.2 complete — dataset-level SNR/MR box plots implemented and generated in `qa_reports/expert_novice_full_report/` (Figure 4-style layout)
+- **Latest Achievement:** Task 2.6.3 complete — all 14 Expert/Novice subjects processed through Stage A with per-subject SNR, motion, metrics, plots, and summaries saved successfully
 
 ### Recent Changes
+- [2026-02-18] ✅ Completed Task 2.6.3 - Processed all 14 Expert/Novice subjects through Stage A pipeline via new `process_dataset_stage_a_reports()` in `07_generate_qa_report.py`
+- [2026-02-18] Batch processing verification: 14/14 succeeded (`A1`, `A2`, `R1`-`R12`), 0 failed; per-subject `*_snr_raw.csv`, `*_motion_od.csv`, `*_qa_metrics.csv`, and `*_qa_summary.json` generated in `outputs/stage_a_qa/qa_reports/`
+- [2026-02-18] Improved batch robustness: closes generated matplotlib figures after each subject to avoid figure accumulation during multi-subject processing
 - [2026-02-18] ✅ Completed Task 2.6.2 - Added dataset-level SNR/MR box plot generation (`plot_dataset_level_boxplots`) in `07_generate_qa_report.py`, with Figure 4-style formatting and optional mean±std error bars
 - [2026-02-18] Generated dataset-level plots in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`: `expert_novice_snr_boxplot.png`, `expert_novice_motion_boxplot.png`
 - [2026-02-18] Updated aggregation output organization: `aggregate_dataset_metrics()` now saves grouped CSVs into `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`
@@ -45,9 +48,9 @@
 - [2026-01-19] ✅ Completed Section 2.2 - SNR Calculation (3/3 tasks)
 
 ### Next Steps
-1. Section 2.6.3 - Process all 14 Expert/Novice subjects through Stage A pipeline to populate aggregation inputs
-2. Section 2.6.4 - Generate dataset-level QA report and compare visualization plots to paper's Figure 4
-3. Section 2.6.5 - Document problematic subjects and verify completion (14/14 processed)
+1. Section 2.6.4 - Generate dataset-level QA report and compare visualization plots to paper's Figure 4
+2. Section 2.6.5 - Document problematic subjects and verify completion (14/14 processed)
+3. Section 2.7 - Stage A validation checkpoint
 
 ---
 
@@ -184,7 +187,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 23/30 tasks (77%)  
+**Completion:** 24/30 tasks (80%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -221,7 +224,7 @@ elif system == "NIRx":
 #### 2.6 Dataset-Level Operations
 - [x] **2.6.1** (2026-02-18) Implement dataset aggregation function (combine all subjects, calculate channel-wise statistics) — added `aggregate_dataset_metrics()` in `07_generate_qa_report.py`; combines available subject QA metrics and computes channel-wise + per-subject SNR/MR stats; outputs saved to `expert_novice_all_subjects_qa_metrics.csv`, `expert_novice_channel_stats.csv`, `expert_novice_subject_stats.csv` in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`
 - [x] **2.6.2** (2026-02-18) Create aggregated visualization plots with error bars (replicate Figure 4 style) — added `plot_dataset_level_boxplots()` in `07_generate_qa_report.py`; generates dataset-level `expert_novice_snr_boxplot.png` and `expert_novice_motion_boxplot.png` with subject-level box plots and optional mean±std error bars in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`
-- [ ] **2.6.3** Process all 14 Expert/Novice subjects through Stage A pipeline
+- [x] **2.6.3** (2026-02-18) Process all 14 Expert/Novice subjects through Stage A pipeline — implemented `process_dataset_stage_a_reports()` in `07_generate_qa_report.py` and executed batch run; success 14/14, failure 0/14; generated per-subject SNR, motion, metrics, summary JSON, and QA box plots for all subjects
 - [ ] **2.6.4** Generate dataset-level QA report and compare visualization plots to paper's Figure 4
 - [ ] **2.6.5** Document any problematic subjects and verify completion (14/14 processed)
 
@@ -411,7 +414,7 @@ When you encounter a blocker, add it here with this format:
 
 ### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** 18/22 tasks complete (82%)  
+**Status:** 19/22 tasks complete (86%)  
 **Key Deliverables:**
 - [x] Data loading pipeline implemented and tested
 - [x] SNR calculation validated on raw data
@@ -568,14 +571,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 25 (27%)
+- **Completed:** 26 (28%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 67
+- **Remaining:** 66
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 18/22 (82%)
+- **Section 2 (Stage A):** 19/22 (86%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
@@ -591,6 +594,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 18, 2026  
-**Next update:** After completing task 2.6.3  
+**Next update:** After completing task 2.6.4  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
