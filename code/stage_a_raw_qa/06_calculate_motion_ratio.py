@@ -38,6 +38,47 @@ spec.loader.exec_module(load_data)
 load_raw_snirf = load_data.load_raw_snirf
 
 
+def _sanitize_intensity_data(raw, epsilon: float = 1e-6, verbose: bool = False):
+    """
+    Sanitize raw intensity data before OD conversion.
+
+    Ensures data are finite and strictly positive to avoid warnings/errors in
+    optical density conversion (division by zero, log of non-positive values).
+    """
+    raw_clean = raw.copy().load_data()
+    data = raw_clean.get_data()
+
+    # Replace non-finite values with per-channel median (or epsilon fallback).
+    nonfinite_mask = ~np.isfinite(data)
+    n_nonfinite = int(nonfinite_mask.sum())
+    if n_nonfinite > 0:
+        for ch_idx in range(data.shape[0]):
+            ch = data[ch_idx]
+            finite = ch[np.isfinite(ch)]
+            fill = float(np.median(finite)) if finite.size > 0 else epsilon
+            ch[~np.isfinite(ch)] = fill
+            data[ch_idx] = ch
+
+    # Convert negative values to absolute magnitude, then floor to epsilon.
+    n_negative = int((data < 0).sum())
+    if n_negative > 0:
+        data = np.abs(data)
+    n_nonpositive = int((data <= epsilon).sum())
+    if n_nonpositive > 0:
+        data[data <= epsilon] = epsilon
+
+    raw_clean._data = data
+
+    if verbose and (n_nonfinite > 0 or n_negative > 0 or n_nonpositive > 0):
+        print(
+            "   Sanitized intensity data before OD conversion: "
+            f"nonfinite={n_nonfinite}, negative={n_negative}, "
+            f"nonpositive_floored={n_nonpositive}"
+        )
+
+    return raw_clean
+
+
 def convert_to_optical_density(raw, verbose: bool = True):
     """
     Convert raw intensity to optical density.
@@ -65,8 +106,19 @@ def convert_to_optical_density(raw, verbose: bool = True):
         print("🔄 Converting raw intensity to optical density...")
         print("   Formula: OD = -log10(I / I₀)")
     
-    # Convert to optical density using mne-nirs
-    raw_od = mne.preprocessing.nirs.optical_density(raw)
+    # Sanitize intensity to avoid divide-by-zero and log issues in OD conversion.
+    raw_clean = _sanitize_intensity_data(raw, epsilon=1e-6, verbose=verbose)
+
+    # Convert to optical density using mne-nirs.
+    raw_od = mne.preprocessing.nirs.optical_density(raw_clean)
+
+    # Guard against non-finite values propagating into motion detection.
+    od_data = raw_od.get_data()
+    if not np.isfinite(od_data).all():
+        n_bad = int((~np.isfinite(od_data)).sum())
+        raw_od._data = np.nan_to_num(od_data, nan=0.0, posinf=0.0, neginf=0.0)
+        if verbose:
+            print(f"   Replaced {n_bad} non-finite OD samples with 0.0")
     
     if verbose:
         # Verify OD range is physiological (typically 0.1-2.0)
@@ -138,7 +190,17 @@ def detect_motion_homer3(od_signal, amp_thresh: float = 5.0,
     bad_inds = max( [ max_diff > std_diff*std_thresh, max_diff > amp_thresh ], [], 2);
     ```
     """
+    od_signal = np.asarray(od_signal, dtype=float)
+
+    # Replace non-finite values to prevent invalid arithmetic in derivatives.
+    if not np.isfinite(od_signal).all():
+        finite = od_signal[np.isfinite(od_signal)]
+        fill = float(np.median(finite)) if finite.size > 0 else 0.0
+        od_signal = np.nan_to_num(od_signal, nan=fill, posinf=fill, neginf=fill)
+
     n_samples = len(od_signal)
+    if n_samples < 2:
+        return np.zeros(max(n_samples - 1, 0), dtype=bool)
     
     # Step 1: Calculate temporal derivative
     # d(2:end) - d(1:end-1) in MATLAB = diff in Python
@@ -303,7 +365,11 @@ def calculate_motion_ratio_od(raw_od, amp_thresh: float = 5.0,
     
     for i, ch_name in enumerate(raw_od.ch_names):
         # Get channel data
-        ch_data = od_data[i, :]
+        ch_data = np.asarray(od_data[i, :], dtype=float)
+        if not np.isfinite(ch_data).all():
+            finite = ch_data[np.isfinite(ch_data)]
+            fill = float(np.median(finite)) if finite.size > 0 else 0.0
+            ch_data = np.nan_to_num(ch_data, nan=fill, posinf=fill, neginf=fill)
         
         # Detect motion using Homer3 algorithm
         # Returns motion_mask on derivative indices (length n_times - 1)

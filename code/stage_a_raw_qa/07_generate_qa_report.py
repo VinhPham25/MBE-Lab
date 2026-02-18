@@ -1330,6 +1330,64 @@ def process_dataset_stage_a_reports(
 
     return summary
 
+
+def cleanup_subject_level_outputs(
+    dataset: str,
+    output_subdir: str = 'qa_reports',
+    verbose: bool = True,
+) -> dict:
+    """
+    Delete per-subject Stage A QA artifacts after cumulative aggregation.
+
+    This keeps only study-level outputs in {dataset}_full_report.
+    """
+    config = load_config()
+    subject_ids = list(config['datasets'][dataset]['subjects'])
+    qa_dir = get_output_path('stage_a', output_subdir)
+
+    suffixes = [
+        '_snr_raw.csv',
+        '_motion_od.csv',
+        '_qa_metrics.csv',
+        '_qa_summary.json',
+        '_snr_boxplot.png',
+        '_motion_boxplot.png',
+    ]
+
+    deleted = []
+    missing = []
+    errors = {}
+
+    for sid in subject_ids:
+        for suffix in suffixes:
+            path = qa_dir / f"{sid}{suffix}"
+            if path.exists():
+                try:
+                    path.unlink()
+                    deleted.append(str(path))
+                except Exception as exc:
+                    errors[str(path)] = str(exc)
+            else:
+                missing.append(str(path))
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print("SUBJECT-LEVEL CLEANUP")
+        print("=" * 70)
+        print(f"Deleted files: {len(deleted)}")
+        print(f"Already missing: {len(missing)}")
+        if errors:
+            print(f"Delete errors: {len(errors)}")
+        print("=" * 70 + "\n")
+
+    return {
+        'dataset': dataset,
+        'deleted_count': len(deleted),
+        'missing_count': len(missing),
+        'error_count': len(errors),
+        'errors': errors,
+    }
+
 # ==============================================================================
 # Entry point — dataset-level Stage A processing
 # ==============================================================================
@@ -1341,6 +1399,7 @@ if __name__ == '__main__':
             "study-level outputs."
         )
     )
+    #specifies which dataset to process
     parser.add_argument(
         '--dataset',
         type=str,
@@ -1350,12 +1409,16 @@ if __name__ == '__main__':
             "(e.g., expert_novice, learning_curve, short_term_tes, long_term_tes)."
         ),
     )
+
+    #specifies the output subdirectory for the stage a reports
     parser.add_argument(
         '--output-subdir',
         type=str,
         default='qa_reports',
         help="Stage A output subdirectory under outputs/stage_a_qa/.",
     )
+
+    #if present, skips the per-subject processing and only builds the cumulative outputs from existing subject artifacts
     parser.add_argument(
         '--skip-batch',
         action='store_true',
@@ -1364,12 +1427,27 @@ if __name__ == '__main__':
             "from existing subject artifacts."
         ),
     )
+
+    #if present, reduces the console logging
     parser.add_argument(
         '--quiet',
         action='store_true',
         help="Reduce console logging.",
     )
+
+    #if present, deletes the per-subject CSV/JSON/PNG artifacts from the outputs/stage_a_qa/qa_reports/ directory
+    parser.add_argument(
+        '--cleanup-subject-files',
+        action='store_true',
+        help=(
+            "After cumulative outputs are built, delete per-subject CSV/JSON/PNG "
+            "artifacts from outputs/stage_a_qa/qa_reports/."
+        ),
+    )
     args = parser.parse_args()
+
+    # To run expert-novice dataset and delete per-subject artifacts, run: 
+    # python code/stage_a_raw_qa/07_generate_qa_report.py --dataset expert_novice --cleanup-subject-files
 
     verbose = not args.quiet
 
@@ -1390,6 +1468,13 @@ if __name__ == '__main__':
         output_subdir=args.output_subdir,
         verbose=verbose,
     )
+
+    if args.cleanup_subject_files:
+        cleanup_subject_level_outputs(
+            dataset=args.dataset,
+            output_subdir=args.output_subdir,
+            verbose=verbose,
+        )
 
     print("\nStage A dataset run complete.")
     print(f"Dataset: {args.dataset}")
