@@ -113,11 +113,11 @@ project/
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ STAGE A: RAW QUALITY ASSESSMENT (Documentation)    │
-│ Purpose: Document data collection quality          │
-│ Input: Raw .snirf intensity data                   │
-│ Output: Quality metrics, exclusion lists           │
-│ Note: NO channels excluded in this stage           │
+│ STAGE A: RAW QUALITY ASSESSMENT (Documentation)     │
+│ Purpose: Document data collection quality           │
+│ Input: Raw .snirf intensity data                    │
+│ Output: Quality metrics, exclusion lists            │
+│ Note: NO channels excluded in this stage            │
 └─────────────────────────────────────────────────────┘
                          ↓
           ┌──────────────────────────┐
@@ -127,17 +127,17 @@ project/
           └──────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────┐
-│ STAGE B: PREPROCESSING PIPELINE (6 Steps)          │
-│ Purpose: Clean and process neural signals          │
-│ Step 1: Exclude bad channels, then convert to OD   │
-│ Output: HbO₂ and HbR concentration time series     │
+│ STAGE B: PREPROCESSING PIPELINE (6 Steps)           │
+│ Purpose: Clean and process neural signals           │
+│ Step 1: Exclude bad channels, then convert to OD    │
+│ Output: HbO₂ and HbR concentration time series      │
 └─────────────────────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────┐
-│ STAGE C: POST-PROCESSING VALIDATION (Success)      │
-│ Purpose: Validate preprocessing effectiveness      │
-│ Input: Processed hemoglobin data                   │
-│ Output: CNR, HRF plots, statistical comparisons    │
+│ STAGE C: POST-PROCESSING VALIDATION (Success)       │
+│ Purpose: Validate preprocessing effectiveness       │
+│ Input: Processed hemoglobin data                    │
+│ Output: CNR, HRF plots, statistical comparisons     │
 └─────────────────────────────────────────────────────┘
 ```
 

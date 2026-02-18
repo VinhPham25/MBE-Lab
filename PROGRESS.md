@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
-**Last Updated:** January 19, 2026  
+**Last Updated:** February 18, 2026  
 **Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.3 Complete - Motion Ratio Calculation Working  
-**Next Milestone:** Section 2.4 - QA Report Generation (5 tasks)
+**Current Stage:** Section 2.5 In Progress - Task 2.5.1 Complete  
+**Next Milestone:** Section 2.5.2 - Identify channels outside 80-140 dB range
 
 ---
 
@@ -11,32 +11,36 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Section 2.3 Complete - Motion Ratio Calculation Working
-- **Completion:** 21% (19/92 tasks)
+- **Active Stage:** Stage A — Section 2.5 in progress (2.5.1 complete)
+- **Completion:** 27% (25/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Motion ratio calculation on OD validated (median: 0.00%, mean: 0.11%, matches paper's ~0 median from Figure 4)
+- **Latest Achievement:** Task 2.5.1 complete — channel-level raw signal amplitude computed in dB for all 66 channels (A1), ready for Stage B exclusion-list documentation
 
 ### Recent Changes
-- [2026-01-19] ✅ Completed Section 2.3 - Motion Ratio Calculation on OD (5/5 tasks)
-- [2026-01-19] Implemented 06_calculate_motion_ratio.py - calculates motion ratio on OD (NOT raw intensity)
-- [2026-01-19] Tested on A1: Median 0.00%, Mean 0.11% - matches paper's Figure 4 (~0 median for good data)
-- [2026-01-19] Uses Homer3 parameters: AMPthresh=5 OD, STDEVthresh=20x, tMotion=0.5s, tMask=0.5s
-- [2026-01-19] All 66 channels have <10% motion (100% pass rate) - confirms A1 is excellent quality
+- [2026-02-18] ✅ Completed Task 2.5.1 - Signal amplitude in dB calculation for all channels
+- [2026-02-18] Created 08_signal_amplitude_exclusion.py — calculates channel RMS-based amplitude dB on raw intensity (separate from SNR)
+- [2026-02-18] A1 validation: 66/66 valid amplitudes; overall median 99.54 dB (range 47.62-123.83 dB); outputs saved to A1_signal_amplitude_raw.csv
+- [2026-02-17] ✅ Completed Section 2.4 - QA Report Generation (5/5 tasks)
+- [2026-02-17] Created 07_generate_qa_report.py — orchestrates full Stage A QA pipeline for any subject
+- [2026-02-17] 2.4.1: Combined metrics DataFrame (66 ch × 13 cols) — SNR + MR merged with QA flags; saved A1_qa_metrics.csv
+- [2026-02-17] 2.4.2: SNR box plot — white boxes, blue median, red outliers, dashed thresholds at 10/30 dB; saved A1_snr_boxplot.png
+- [2026-02-17] 2.4.3: Motion ratio box plot — same style; median=0.000, max=0.017; saved A1_motion_boxplot.png
+- [2026-02-17] 2.4.4: Summary stats + console report — full SNR/MR breakdown by wavelength; saved A1_qa_summary.json
+- [2026-02-17] 2.4.5: End-to-end report verified vs Figure 4 — SNR median 16.0 dB ✓, MR median 0.000 ✓, all 66 ch retained ✓
+- [2026-01-19] ✅ Completed Section 2.3 - Motion Ratio on OD (5/5 tasks)
 - [2026-01-19] ✅ Completed Section 2.2 - SNR Calculation (3/3 tasks)
-- [2026-01-19] Implemented 05_calculate_snr.py - calculates SNR on raw intensity (20*log10(mean/std))
-- [2026-01-19] Tested on A1: Mean SNR 17.17 dB (range: 2.50-37.30 dB) - matches paper's Figure 4 (~15-30 dB)
 
 ### Next Steps
-1. Begin Section 2.4 - QA Report Generation (5 tasks)
-2. Then Section 2.5 - Exclusion List Management (4 tasks)
-3. Then Section 2.6 - Dataset-Level Operations (5 tasks)
+1. Section 2.5 - Signal Amplitude Assessment (4 tasks) — calculate amplitude in dB, flag channels outside 80–140 dB, build exclusion list JSON (channels documented but NOT yet excluded)
+2. Section 2.6 - Dataset-Level Operations (5 tasks) — aggregate all 14 Expert/Novice subjects, replicate Figure 4
+3. Section 2.7 - Stage A Validation Checkpoint (4 tasks)
 
 ---
 
 ## 📋 DESIGN REQUIREMENTS SUMMARY
 
 ### Critical Parameters (Must Match Paper Exactly)
-- **SNR Threshold:** 80-140 dB
+- **Signal Amplitude Exclusion List:** 80-140 dB
 - **Motion Detection:** tMotion=0.5, tStdev=20, AMPThresh=0.5, STDEVthresh=5
 - **Bandpass Filter:** 0.01-0.5 Hz
 - **PPF Values (TechEn):** 6.4 (690nm), 5.8 (830nm)
@@ -49,7 +53,7 @@ Stage A (Raw QA) → Decision Point → Stage B (Preprocessing) → Stage C (Val
 ```
 
 ### Success Criteria
-- [ ] Stage A plots match paper's Figure 4 (SNR + Motion Ratio)
+- [x] Stage A plots match paper's Figure 4 (SNR + Motion Ratio) — A1 verified: SNR median 16.0 dB, MR median 0.000
 - [ ] Stage B produces physiologically plausible HbO₂/HbR (±50 μM)
 - [ ] Stage C HRF plots match paper's Figure 3c, 3d
 - [ ] CNR values show expected group differences (Figure 4i)
@@ -79,6 +83,7 @@ After completing ANY task:
 4. Update completion percentage
 5. Document any issues in "Roadblocks Encountered"
 6. Update "Notes for Next Session" before stopping
+7. Ensure "Recent Changes" and "Current Status" is fully updated at the end of each section
 
 ---
 
@@ -165,7 +170,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 12/22 tasks (55%)  
+**Completion:** 18/30 tasks (60%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -194,7 +199,7 @@ elif system == "NIRx":
 - [x] **2.4.5** (2026-02-17) Generate complete Stage A report for subject A1 — generate_stage_a_report() orchestrates all sub-tasks end-to-end; all 4 output files confirmed (A1_qa_metrics.csv, A1_snr_boxplot.png, A1_motion_boxplot.png, A1_qa_summary.json); verified vs Figure 4: SNR median=16.01 dB range=[2.50,37.30] IQR=[7.11,26.71] ✓ matches A1 box in Fig 4a; MR median=0.000 max=0.017 ✓ matches A1 ~0 in Fig 4b
 
 #### 2.5 Signal Amplitude Assessment (for Stage B exclusion)
-- [ ] **2.5.1** Calculate signal amplitude in dB for all channels (this is separate from SNR)
+- [x] **2.5.1** (2026-02-18) Calculate signal amplitude in dB for all channels (separate from SNR) — implemented in `08_signal_amplitude_exclusion.py` using `amplitude_db = 20*log10(RMS(raw_intensity))`; tested on A1 (66 channels), saved `A1_signal_amplitude_raw.csv`
 - [ ] **2.5.2** Identify channels outside 80-140 dB signal amplitude range (for Stage B exclusion)
 - [ ] **2.5.3** Create exclusion list JSON: {subject_id, bad_channels[], good_channels[], exclusion_reasons{}}
 - [ ] **2.5.4** Save to outputs/stage_a_qa/excluded_channels/ (NOTE: channels NOT excluded yet, just documented)
@@ -392,7 +397,7 @@ When you encounter a blocker, add it here with this format:
 
 ### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** 12/22 tasks complete (55%)  
+**Status:** 13/22 tasks complete (59%)  
 **Key Deliverables:**
 - [x] Data loading pipeline implemented and tested
 - [x] SNR calculation validated on raw data
@@ -549,14 +554,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 19 (21%)
+- **Completed:** 20 (22%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 73
+- **Remaining:** 72
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 12/22 (55%)
+- **Section 2 (Stage A):** 13/22 (59%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
@@ -571,7 +576,7 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ---
 
-**Last saved:** January 19, 2026  
-**Next update:** After completing task 2.3.1  
+**Last saved:** February 18, 2026  
+**Next update:** After completing task 2.5.2  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
