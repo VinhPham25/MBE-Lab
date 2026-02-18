@@ -2,8 +2,8 @@
 
 **Last Updated:** February 18, 2026  
 **Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.6 In Progress - Task 2.6.1 Complete  
-**Next Milestone:** Section 2.6.2 - Aggregated SNR/MR visualization plots
+**Current Stage:** Section 2.6 In Progress - Tasks 2.6.1-2.6.2 Complete  
+**Next Milestone:** Section 2.6.3 - Process all 14 Expert/Novice subjects
 
 ---
 
@@ -11,15 +11,18 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage A — Section 2.6 in progress (2.6.1 complete)
-- **Completion:** 32% (29/92 tasks)
+- **Active Stage:** Stage A — Section 2.6 in progress (2.6.1-2.6.2 complete)
+- **Completion:** 33% (30/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Task 2.6.1 complete — dataset aggregation function implemented and validated, producing combined metrics plus channel-wise and subject-wise statistics outputs
+- **Latest Achievement:** Task 2.6.2 complete — dataset-level SNR/MR box plots implemented and generated in `qa_reports/expert_novice_full_report/` (Figure 4-style layout)
 
 ### Recent Changes
+- [2026-02-18] ✅ Completed Task 2.6.2 - Added dataset-level SNR/MR box plot generation (`plot_dataset_level_boxplots`) in `07_generate_qa_report.py`, with Figure 4-style formatting and optional mean±std error bars
+- [2026-02-18] Generated dataset-level plots in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`: `expert_novice_snr_boxplot.png`, `expert_novice_motion_boxplot.png`
+- [2026-02-18] Updated aggregation output organization: `aggregate_dataset_metrics()` now saves grouped CSVs into `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`
 - [2026-02-18] ✅ Completed Task 2.6.1 - Implemented dataset aggregation for Stage A QA metrics in `07_generate_qa_report.py`
 - [2026-02-18] Added `aggregate_dataset_metrics()` to combine available subjects and compute channel-wise SNR/MR statistics (`n_subjects`, mean/median/std, quartiles, min/max) and per-subject summary stats
-- [2026-02-18] Aggregation outputs saved: `expert_novice_all_subjects_qa_metrics.csv`, `expert_novice_channel_stats.csv`, `expert_novice_subject_stats.csv` in `outputs/stage_a_qa/qa_reports/` (currently 1/14 subjects found: A1; remaining 13 will be produced in task 2.6.3)
+- [2026-02-18] Aggregation outputs saved: `expert_novice_all_subjects_qa_metrics.csv`, `expert_novice_channel_stats.csv`, `expert_novice_subject_stats.csv` in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/` (currently 1/14 subjects found: A1; remaining 13 will be produced in task 2.6.3)
 - [2026-02-18] ✅ Completed Task 2.5.4 - Saved Stage A signal-amplitude and exclusion-list outputs to `outputs/stage_a_qa/channel_signal_quality_exclusion/` (documented for Stage B handoff only)
 - [2026-02-18] Completed Section 2.5 (4/4 tasks) — Stage A now has amplitude dB metrics, threshold flagging, exclusion JSON schema, and finalized output location
 - [2026-02-18] ✅ Completed Task 2.5.3 - Created exclusion-list JSON payload with required schema: `subject_id`, `bad_channels`, `good_channels`, `exclusion_reasons`
@@ -42,9 +45,9 @@
 - [2026-01-19] ✅ Completed Section 2.2 - SNR Calculation (3/3 tasks)
 
 ### Next Steps
-1. Section 2.6.2 - Create aggregated SNR/MR box plots for all Expert/Novice subjects and compare visually to paper Figure 4
-2. Section 2.6.3 - Process all 14 Expert/Novice subjects through Stage A pipeline to populate aggregation inputs
-3. Section 2.6.4-2.6.5 - Generate dataset-level QA report, document problematic subjects, and verify 14/14 completion
+1. Section 2.6.3 - Process all 14 Expert/Novice subjects through Stage A pipeline to populate aggregation inputs
+2. Section 2.6.4 - Generate dataset-level QA report and compare visualization plots to paper's Figure 4
+3. Section 2.6.5 - Document problematic subjects and verify completion (14/14 processed)
 
 ---
 
@@ -181,7 +184,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 22/30 tasks (73%)  
+**Completion:** 23/30 tasks (77%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -216,8 +219,8 @@ elif system == "NIRx":
 - [x] **2.5.4** (2026-02-18) Save to outputs/stage_a_qa/channel_signal_quality_exclusion/ (NOTE: channels NOT excluded yet, just documented) — verified final Stage A artifacts are stored in the updated directory for Stage B handoff
 
 #### 2.6 Dataset-Level Operations
-- [x] **2.6.1** (2026-02-18) Implement dataset aggregation function (combine all subjects, calculate channel-wise statistics) — added `aggregate_dataset_metrics()` in `07_generate_qa_report.py`; combines available subject QA metrics and computes channel-wise + per-subject SNR/MR stats; outputs saved to `expert_novice_all_subjects_qa_metrics.csv`, `expert_novice_channel_stats.csv`, `expert_novice_subject_stats.csv`
-- [ ] **2.6.2** Create aggregated visualization plots with error bars (replicate Figure 4 style)
+- [x] **2.6.1** (2026-02-18) Implement dataset aggregation function (combine all subjects, calculate channel-wise statistics) — added `aggregate_dataset_metrics()` in `07_generate_qa_report.py`; combines available subject QA metrics and computes channel-wise + per-subject SNR/MR stats; outputs saved to `expert_novice_all_subjects_qa_metrics.csv`, `expert_novice_channel_stats.csv`, `expert_novice_subject_stats.csv` in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`
+- [x] **2.6.2** (2026-02-18) Create aggregated visualization plots with error bars (replicate Figure 4 style) — added `plot_dataset_level_boxplots()` in `07_generate_qa_report.py`; generates dataset-level `expert_novice_snr_boxplot.png` and `expert_novice_motion_boxplot.png` with subject-level box plots and optional mean±std error bars in `outputs/stage_a_qa/qa_reports/expert_novice_full_report/`
 - [ ] **2.6.3** Process all 14 Expert/Novice subjects through Stage A pipeline
 - [ ] **2.6.4** Generate dataset-level QA report and compare visualization plots to paper's Figure 4
 - [ ] **2.6.5** Document any problematic subjects and verify completion (14/14 processed)
@@ -408,7 +411,7 @@ When you encounter a blocker, add it here with this format:
 
 ### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** 17/22 tasks complete (77%)  
+**Status:** 18/22 tasks complete (82%)  
 **Key Deliverables:**
 - [x] Data loading pipeline implemented and tested
 - [x] SNR calculation validated on raw data
@@ -565,14 +568,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 24 (26%)
+- **Completed:** 25 (27%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 68
+- **Remaining:** 67
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 17/22 (77%)
+- **Section 2 (Stage A):** 18/22 (82%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
@@ -588,6 +591,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 18, 2026  
-**Next update:** After completing task 2.6.2  
+**Next update:** After completing task 2.6.3  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)

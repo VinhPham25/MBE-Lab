@@ -783,6 +783,8 @@ def aggregate_dataset_metrics(
         subject_ids = list(ds_cfg['subjects'])
 
     output_dir = get_output_path('stage_a', output_subdir)
+    full_report_dir = output_dir / f"{dataset}_full_report"
+    full_report_dir.mkdir(parents=True, exist_ok=True)
 
     if verbose:
         print("\n" + "=" * 70)
@@ -790,6 +792,7 @@ def aggregate_dataset_metrics(
         print("=" * 70)
         print(f"Expected subjects: {len(subject_ids)}")
         print(f"Metrics directory: {output_dir}")
+        print(f"Full report directory: {full_report_dir}")
 
     metrics_frames = []
     found_subjects = []
@@ -858,9 +861,9 @@ def aggregate_dataset_metrics(
     )
 
     # Save aggregation outputs.
-    all_metrics_csv_path = output_dir / f"{dataset}_all_subjects_qa_metrics.csv"
-    channel_stats_csv_path = output_dir / f"{dataset}_channel_stats.csv"
-    subject_stats_csv_path = output_dir / f"{dataset}_subject_stats.csv"
+    all_metrics_csv_path = full_report_dir / f"{dataset}_all_subjects_qa_metrics.csv"
+    channel_stats_csv_path = full_report_dir / f"{dataset}_channel_stats.csv"
+    subject_stats_csv_path = full_report_dir / f"{dataset}_subject_stats.csv"
 
     all_metrics_df.to_csv(all_metrics_csv_path, index=False)
     channel_stats_df.to_csv(channel_stats_csv_path, index=False)
@@ -880,6 +883,7 @@ def aggregate_dataset_metrics(
 
     return {
         'dataset': dataset,
+        'full_report_dir': full_report_dir,
         'subject_ids_expected': subject_ids,
         'subject_ids_found': found_subjects,
         'subject_ids_missing': missing_subjects,
@@ -891,6 +895,149 @@ def aggregate_dataset_metrics(
         'subject_stats_csv_path': subject_stats_csv_path,
     }
 
+
+# ==============================================================================
+# TASK 2.6.2 - Dataset-level SNR/MR visualizations (Figure 4 style)
+# ==============================================================================
+
+def _subject_order_for_dataset(dataset: str, subject_ids: list[str]) -> list[str]:
+    """Return plotting order. Expert/Novice uses R1..R12, A1, A2."""
+    unique_ids = list(dict.fromkeys(subject_ids))
+    if dataset != 'expert_novice':
+        return unique_ids
+
+    r_ids = sorted(
+        [sid for sid in unique_ids if sid.startswith('R')],
+        key=lambda x: int(x[1:]) if x[1:].isdigit() else x,
+    )
+    a_ids = sorted(
+        [sid for sid in unique_ids if sid.startswith('A')],
+        key=lambda x: int(x[1:]) if x[1:].isdigit() else x,
+    )
+    others = [sid for sid in unique_ids if sid not in r_ids + a_ids]
+    return r_ids + a_ids + others
+
+
+def plot_dataset_level_boxplots(
+    all_metrics_df: pd.DataFrame,
+    dataset: str,
+    output_dir: Path,
+    show_errorbars: bool = True,
+    verbose: bool = True,
+) -> dict:
+    """
+    Create dataset-level SNR and motion-ratio box plots across subjects.
+
+    Parameters
+    ----------
+    all_metrics_df : pd.DataFrame
+        Aggregated QA metrics from aggregate_dataset_metrics()
+    dataset : str
+        Dataset key (e.g., 'expert_novice')
+    output_dir : Path
+        Output directory where figures are saved
+    show_errorbars : bool
+        Overlay mean ± std marker on each subject box
+    verbose : bool
+        Print plotting summary
+
+    Returns
+    -------
+    dict
+        Paths and figure objects for SNR and motion plots
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plot_df = all_metrics_df[all_metrics_df['wavelength'] > 0].copy()
+    subject_order = _subject_order_for_dataset(dataset, plot_df['subject_id'].tolist())
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print(f"TASK 2.6.2 — DATASET VISUALIZATION ({dataset})")
+        print("=" * 70)
+        print(f"Subjects in plot: {subject_order}")
+
+    # Shared style
+    box_kwargs = dict(
+        widths=0.55,
+        patch_artist=True,
+        medianprops=dict(color='blue', linewidth=1.8),
+        boxprops=dict(facecolor='white', color='black'),
+        whiskerprops=dict(color='black', linestyle='--', linewidth=1.0),
+        capprops=dict(color='black', linewidth=1.0),
+        flierprops=dict(marker='+', markeredgecolor='red', markersize=6, linestyle='none'),
+    )
+
+    # -----------------------------
+    # SNR plot
+    # -----------------------------
+    snr_data = [
+        plot_df.loc[plot_df['subject_id'] == sid, 'snr_db'].dropna().values
+        for sid in subject_order
+    ]
+    snr_positions = np.arange(1, len(subject_order) + 1)
+
+    snr_fig, snr_ax = plt.subplots(figsize=(12, 7))
+    snr_ax.boxplot(snr_data, positions=snr_positions, **box_kwargs)
+    snr_ax.set_title('Expert/Novice SNR' if dataset == 'expert_novice' else f'{dataset} SNR')
+    snr_ax.set_xlabel('Subject Label')
+    snr_ax.set_ylabel('SNR')
+    snr_ax.set_xticks(snr_positions)
+    snr_ax.set_xticklabels(subject_order, rotation=35, ha='right')
+    snr_ax.axhline(y=10, color='gray', linestyle='--', linewidth=1.0)
+    snr_ax.axhline(y=30, color='gray', linestyle='--', linewidth=1.0)
+
+    if show_errorbars:
+        snr_means = [np.mean(vals) if len(vals) > 0 else np.nan for vals in snr_data]
+        snr_stds = [np.std(vals) if len(vals) > 0 else np.nan for vals in snr_data]
+        snr_ax.errorbar(
+            snr_positions, snr_means, yerr=snr_stds, fmt='o',
+            color='black', markersize=3, linewidth=1.0, capsize=2, alpha=0.65
+        )
+
+    snr_fig.tight_layout()
+    snr_path = output_dir / f"{dataset}_snr_boxplot.png"
+    snr_fig.savefig(snr_path, dpi=150, bbox_inches='tight')
+
+    # -----------------------------
+    # Motion plot
+    # -----------------------------
+    mr_data = [
+        plot_df.loc[plot_df['subject_id'] == sid, 'motion_ratio'].dropna().values
+        for sid in subject_order
+    ]
+    mr_positions = np.arange(1, len(subject_order) + 1)
+
+    mr_fig, mr_ax = plt.subplots(figsize=(12, 7))
+    mr_ax.boxplot(mr_data, positions=mr_positions, **box_kwargs)
+    mr_ax.set_title('Expert/Novice MR' if dataset == 'expert_novice' else f'{dataset} Motion Ratio')
+    mr_ax.set_xlabel('Subject Label')
+    mr_ax.set_ylabel('Motion Ratio')
+    mr_ax.set_xticks(mr_positions)
+    mr_ax.set_xticklabels(subject_order, rotation=35, ha='right')
+
+    if show_errorbars:
+        mr_means = [np.mean(vals) if len(vals) > 0 else np.nan for vals in mr_data]
+        mr_stds = [np.std(vals) if len(vals) > 0 else np.nan for vals in mr_data]
+        mr_ax.errorbar(
+            mr_positions, mr_means, yerr=mr_stds, fmt='o',
+            color='black', markersize=3, linewidth=1.0, capsize=2, alpha=0.65
+        )
+
+    mr_fig.tight_layout()
+    mr_path = output_dir / f"{dataset}_motion_boxplot.png"
+    mr_fig.savefig(mr_path, dpi=150, bbox_inches='tight')
+
+    if verbose:
+        print(f"  Saved: {snr_path}")
+        print(f"  Saved: {mr_path}")
+
+    return {
+        'subject_order': subject_order,
+        'snr_fig': snr_fig,
+        'motion_fig': mr_fig,
+        'snr_plot_path': snr_path,
+        'motion_plot_path': mr_path,
+    }
 
 # ==============================================================================
 # Entry point — runs 2.4.5 which orchestrates all sub-tasks
