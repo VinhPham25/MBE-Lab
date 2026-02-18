@@ -187,9 +187,9 @@ elif system == "NIRx":
 - [x] **2.3.5** (2026-01-19) Test motion detection on subject A1 and verify results are reasonable (~0 median for A1 from Fig 4)
 
 #### 2.4 QA Report Generation (Step A4)
-- [ ] **2.4.1** Create comprehensive metrics DataFrame combining SNR, motion ratio, exclusion decisions
-- [ ] **2.4.2** Implement SNR bar plot visualization (white bars, red for bad channels, threshold lines at ~10 dB low quality, ~25 dB high quality)
-- [ ] **2.4.3** Implement motion ratio bar plot visualization
+- [x] **2.4.1** (2026-02-17) Create comprehensive metrics DataFrame combining SNR, motion ratio, QA quality flags — saved A1_qa_metrics.csv (66 channels, 13 cols: snr_db, motion_ratio, snr_quality_flag, motion_quality_flag, qa_note; 33 acceptable / 24 low / 9 high SNR; 0 excluded — all channels retained for QA transparency)
+- [ ] **2.4.2** Implement SNR box plot visualization (white bars, red for bad channels, lower expected threshold lines at ~10 dB low quality, higher expected threshold lines at ~30 dB high quality)
+- [ ] **2.4.3** Implement motion ratio box plot visualization
 - [ ] **2.4.4** Create summary statistics calculator and console report generator
 - [ ] **2.4.5** Generate complete Stage A report for subject A1 and verify plots look similar to Figure 4
 

@@ -253,8 +253,8 @@ $$Motion\ Ratio = \frac{\text{Duration of motion artifacts}}{\text{Total acquisi
 **Report Components:**
 
 1. **Individual Subject Reports:**
-   - SNR bar plot with 80-140 dB threshold lines
-   - Motion ratio bar plot
+   - SNR box plot visualization
+   - Motion ratio box plot
    - Bad channels highlighted in red
    - Summary statistics table
 

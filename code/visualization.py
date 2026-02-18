@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Visualize raw SNIRF time series for Subject A1 (Expert-Novice study)."""
+"""Visualize raw SNIRF time series for Subject A1 (Expert-Novice study).
+   This is independent of the preprocessing pipeline, and was utilized as a figure
+   in the Week 0b report.
+"""
 
 import argparse
 import csv
