@@ -406,7 +406,7 @@ def test_calculate_signal_amplitude():
         verbose=True,
     )
 
-    output_dir = get_output_path('stage_a', 'signal_quality_exclusion')
+    output_dir = get_output_path('stage_a', 'channel_signal_quality_exclusion')
     save_signal_amplitude_results(amplitude_df, 'A1', output_dir)
     save_flagged_amplitude_results(flagged_df, 'A1', output_dir)
     exclusion_json = create_exclusion_list_json(

@@ -2,8 +2,8 @@
 
 **Last Updated:** February 18, 2026  
 **Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.5 In Progress - Tasks 2.5.1-2.5.3 Complete  
-**Next Milestone:** Section 2.5.4 - Save exclusion list JSON to excluded_channels/
+**Current Stage:** Section 2.5 Complete - Moving to Section 2.6  
+**Next Milestone:** Section 2.6.1 - Dataset aggregation function
 
 ---
 
@@ -11,15 +11,17 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage A — Section 2.5 in progress (2.5.1-2.5.3 complete)
-- **Completion:** 29% (27/92 tasks)
+- **Active Stage:** Stage A — Section 2.5 complete, beginning 2.6
+- **Completion:** 30% (28/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Task 2.5.3 complete — exclusion-list JSON payload created for Stage B handoff ({subject_id, bad_channels, good_channels, exclusion_reasons})
+- **Latest Achievement:** Task 2.5.4 complete — Stage A signal-quality outputs and exclusion-list artifacts finalized in `outputs/stage_a_qa/channel_signal_quality_exclusion/` (documentation only, no channel exclusion applied yet)
 
 ### Recent Changes
+- [2026-02-18] ✅ Completed Task 2.5.4 - Saved Stage A signal-amplitude and exclusion-list outputs to `outputs/stage_a_qa/channel_signal_quality_exclusion/` (documented for Stage B handoff only)
+- [2026-02-18] Completed Section 2.5 (4/4 tasks) — Stage A now has amplitude dB metrics, threshold flagging, exclusion JSON schema, and finalized output location
 - [2026-02-18] ✅ Completed Task 2.5.3 - Created exclusion-list JSON payload with required schema: `subject_id`, `bad_channels`, `good_channels`, `exclusion_reasons`
 - [2026-02-18] Added Task 2.5.3 functions in 08_signal_amplitude_exclusion.py (`create_exclusion_list_json`, `save_exclusion_list_preview`)
-- [2026-02-18] A1 exclusion JSON preview generated in `outputs/stage_a_qa/signal_quality_exclusion/A1_exclusion_list_preview.json` (6 candidate bad channels, 60 good channels)
+- [2026-02-18] A1 exclusion JSON preview generated in `outputs/stage_a_qa/channel_signal_quality_exclusion/A1_exclusion_list_preview.json` (6 candidate bad channels, 60 good channels)
 - [2026-02-18] ✅ Completed Task 2.5.2 - Identified channels outside 80-140 dB amplitude range (Stage B exclusion candidates only; no Stage A exclusion)
 - [2026-02-18] Added amplitude range flagging in 08_signal_amplitude_exclusion.py — outputs `within_80_140_db`, `exclusion_candidate`, `exclusion_reason`
 - [2026-02-18] A1 range assessment: 60/66 within range, 6/66 candidate bad channels (all below 80 dB); saved A1_signal_amplitude_flagged.csv
@@ -37,9 +39,9 @@
 - [2026-01-19] ✅ Completed Section 2.2 - SNR Calculation (3/3 tasks)
 
 ### Next Steps
-1. Section 2.5 - Signal Amplitude Assessment (4 tasks) — calculate amplitude in dB, flag channels outside 80–140 dB, build exclusion list JSON (channels documented but NOT yet excluded)
-2. Section 2.6 - Dataset-Level Operations (5 tasks) — aggregate all 14 Expert/Novice subjects, replicate Figure 4
-3. Section 2.7 - Stage A Validation Checkpoint (4 tasks)
+1. Section 2.6 - Dataset-Level Operations (5 tasks) — aggregate all 14 Expert/Novice subjects, replicate Figure 4
+2. Section 2.7 - Stage A Validation Checkpoint (4 tasks)
+3. Section 3.1 - Begin Stage B preprocessing with documented exclusion list handoff
 
 ---
 
@@ -176,7 +178,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 20/30 tasks (67%)  
+**Completion:** 21/30 tasks (70%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -207,8 +209,8 @@ elif system == "NIRx":
 #### 2.5 Signal Amplitude Assessment (for Stage B exclusion)
 - [x] **2.5.1** (2026-02-18) Calculate signal amplitude in dB for all channels (separate from SNR) — implemented in `08_signal_amplitude_exclusion.py` using `amplitude_db = 20*log10(RMS(raw_intensity))`; tested on A1 (66 channels), saved `A1_signal_amplitude_raw.csv`
 - [x] **2.5.2** (2026-02-18) Identify channels outside 80-140 dB signal amplitude range (for Stage B exclusion candidates) — added threshold logic and flags (`within_80_140_db`, `exclusion_candidate`, `exclusion_reason`) in `08_signal_amplitude_exclusion.py`; A1 result: 6 below 80 dB, 0 above 140 dB, 60 within range; saved `A1_signal_amplitude_flagged.csv`
-- [x] **2.5.3** (2026-02-18) Create exclusion list JSON: `{subject_id, bad_channels[], good_channels[], exclusion_reasons{}}` — implemented in `create_exclusion_list_json()` and validated on A1; preview saved as `A1_exclusion_list_preview.json` in `outputs/stage_a_qa/signal_quality_exclusion/`
-- [ ] **2.5.4** Save to outputs/stage_a_qa/excluded_channels/ (NOTE: channels NOT excluded yet, just documented)
+- [x] **2.5.3** (2026-02-18) Create exclusion list JSON: `{subject_id, bad_channels[], good_channels[], exclusion_reasons{}}` — implemented in `create_exclusion_list_json()` and validated on A1; preview saved as `A1_exclusion_list_preview.json` in `outputs/stage_a_qa/channel_signal_quality_exclusion/`
+- [x] **2.5.4** (2026-02-18) Save to outputs/stage_a_qa/channel_signal_quality_exclusion/ (NOTE: channels NOT excluded yet, just documented) — verified final Stage A artifacts are stored in the updated directory for Stage B handoff
 
 #### 2.6 Dataset-Level Operations
 - [ ] **2.6.1** Implement dataset aggregation function (combine all subjects, calculate channel-wise statistics)
@@ -403,7 +405,7 @@ When you encounter a blocker, add it here with this format:
 
 ### Week 1-2: Stage A Implementation (Current Week)
 **Target Completion:** Section 2 (22 tasks)  
-**Status:** 15/22 tasks complete (68%)  
+**Status:** 16/22 tasks complete (73%)  
 **Key Deliverables:**
 - [x] Data loading pipeline implemented and tested
 - [x] SNR calculation validated on raw data
@@ -560,14 +562,14 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 22 (24%)
+- **Completed:** 23 (25%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 70
+- **Remaining:** 69
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 15/22 (68%)
+- **Section 2 (Stage A):** 16/22 (73%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
@@ -583,6 +585,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 18, 2026  
-**Next update:** After completing task 2.5.4  
+**Next update:** After completing task 2.6.1  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
