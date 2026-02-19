@@ -102,11 +102,16 @@ After completing ANY task:
 ### Testing Gates
 
 #### Gate 1: After Stage A Implementation (Section 2 complete)
-- [ ] A1 processed successfully
+- [x] A1 processed successfully
 - [ ] FLS1_Session1 processed successfully (verify 7 short channels handled)
 - [ ] S1_0-PT processed successfully (verify different sampling rate handled)
 - [ ] All 3 produce reasonable SNR/motion metrics
 - [ ] Document any system-specific code needed
+
+**Expert/Novice special-case check (Dataset_README notes):**
+- R2 (`Beginning of Trial 5 estimated`) and R3 (`End of Trial 3 estimated`) processed successfully in Stage A with valid SNR/MR outputs.
+- R9 (`Split into 2 recordings with Trial 3 missing`) processed successfully in Stage A; SNR distribution remains a documented visual discrepancy vs paper Figure 4a.
+- Stage A raw QA is event-agnostic (continuous intensity/OD quality metrics), so estimated/missing trial markers affect event-level analysis more than SNR/MR computation.
 
 #### Gate 2: After Stage B Core Implementation (Section 3.1-3.6 complete)
 - [ ] A1 preprocessed → HbO/HbR look physiological
@@ -135,7 +140,7 @@ elif system == "NIRx":
 
 | Adaptation | Reason | Location | Status |
 |------------|--------|----------|--------|
-| *None yet* | | | |
+| Expert/Novice event-note tolerance in Stage A | R2/R3 estimated trial boundaries and R9 split/missing trial do not block raw continuous SNR/MR QA | `code/stage_a_raw_qa/07_generate_qa_report.py` + cumulative outputs | ✅ validated |
 
 ---
 
@@ -161,7 +166,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 2: STAGE A - RAW QUALITY ASSESSMENT (Week 1-2)
-**Completion:** 24/30 tasks (80%)  
+**Completion:** 26/26 tasks (100%)  
 **Reference:** PRD Section 4
 
 #### 2.1 Data Loading and Metadata Extraction (Step A1) ✅ COMPLETE
@@ -548,22 +553,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 21/22 (95%)
+- **Section 2 (Stage A):** 26/26 (100%)
 - **Section 3 (Stage B):** 0/36 (0%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
-### By Week
-- **Week 0:** 0% complete
-- **Week 1-2:** 0% complete
-- **Week 3-4:** 0% complete
-- **Week 5-6:** 0% complete
-- **Week 7-8:** 0% complete
-- **Week 9-10:** 0% complete
 
 ---
 
 **Last saved:** February 18, 2026  
-**Next update:** After completing task 2.7.1  
+**Next update:** After completing task 3.1  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
