@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
-**Last Updated:** February 18, 2026  
-**Current Week:** Week 1-2 (Stage A)  
-**Current Stage:** Section 2.6 Complete - Transitioning to Stage B
-**Next Milestone:** Begin Stage B: Preprocessing Pipeline; Section 3.1 Intensity to Optical Density (Step B1)
+**Last Updated:** February 19, 2026  
+**Current Week:** Week 3-4 (Stage B)  
+**Current Stage:** Section 3.1 In Progress — Tasks 3.1.1–3.1.2 Complete
+**Next Milestone:** Section 3.1.3 — OD Conversion (pending review approval)
 
 ---
 
@@ -11,20 +11,20 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage A Complete
-- **Completion:** 36% (33/92 tasks)
+- **Active Stage:** Stage B — Section 3.1 In Progress
+- **Completion:** 36% (33/92 tasks) → 2 new tasks completed this session
 - **Blockers:** None
-- **Latest Achievement:** Section 2.6 complete — Expert/Novice study processed end-to-end with cumulative QA outputs and dataset-level SNR/MR plots generated in `expert_novice_full_report/`
+- **Latest Achievement:** Tasks 3.1.1–3.1.2 complete — Stage A exclusion list loaded (6 bad channels for A1) and marked in `raw.info['bads']` prior to preprocessing; `code/stage_b_preprocessing/01_intensity_to_od.py` created.
 
 ### Recent Changes
-- [2026-01-19] ✅ Section 2.3 complete — implemented OD conversion and Homer3-style motion detection with channel-wise motion ratio outputs validated on A1.
-- [2026-02-17] ✅ Section 2.4 complete — built single-subject Stage A QA reporting (combined metrics, SNR/MR boxplots, and summary JSON) aligned with Figure 4 expectations.
-- [2026-02-18] ✅ Section 2.5 complete — computed signal-amplitude thresholds (80-140 dB), generated exclusion-candidate JSONs, and documented Stage B handoff artifacts.
 - [2026-02-18] ✅ Section 2.6 complete — processed all 14 Expert/Novice subjects, generated study-level cumulative CSV/JSON/PNG outputs in `expert_novice_full_report/`, and documented the R9 visual discrepancy note.
+- [2026-02-19] ✅ Task 3.1.1 complete — `load_exclusion_list()` loads Stage A JSON; A1 result: 6 bad channels (S5_D21, S6_D22, S8_D24 at 690/830 nm, all below 80 dB).
+- [2026-02-19] ✅ Task 3.1.2 complete — `mark_bad_channels()` sets `raw.info['bads']` from exclusion list; all 6 candidates found and marked before OD conversion.
 
 ### Next Steps
-1. Section 3.1.1-3.1.5 — start Stage B preprocessing using Stage A exclusion lists (load JSONs, mark bads, OD conversion verification).
-2. Section 3.2+ — continue Stage B core pipeline after B1 validation.
+1. Task 3.1.3 — OD conversion (mne.preprocessing.nirs.optical_density) — pending approval.
+2. Task 3.1.4 — OD range verification — pending approval (note: MNE's normalized OD has mean ≈ 0; range check threshold needs discussion).
+3. Task 3.1.5 — visualize OD time series on A1 — pending approval.
 
 ---
 
@@ -216,7 +216,7 @@ elif system == "NIRx":
 **Reference:** PRD Section 5
 
 #### 3.1 Intensity to Optical Density (Step B1)
-- [ ] **3.1.1** Load exclusion list from Stage A (channels failing 80-140 dB signal amplitude threshold)
+- [x] **3.1.1** Load exclusion list from Stage A (channels failing 80-140 dB signal amplitude threshold)
 - [ ] **3.1.2** Mark bad channels in raw.info['bads'] before any preprocessing
 - [ ] **3.1.3** Implement OD conversion function (mne.preprocessing.nirs.optical_density)
 - [ ] **3.1.4** Add OD range verification (0.1-2.0) and flag anomalies
