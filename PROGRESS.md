@@ -2,8 +2,8 @@
 
 **Last Updated:** February 19, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.1 Complete — Beginning Section 3.2
-**Next Milestone:** Section 3.2 — Bandpass Filtering (Step B2)
+**Current Stage:** Section 3.2 Complete — Beginning Section 3.3
+**Next Milestone:** Section 3.3 — Motion Artifact Detection on OD (Step B3)
 
 ---
 
@@ -11,18 +11,18 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.1 Complete
-- **Completion:** 38% (38/92 tasks)
+- **Active Stage:** Stage B — Section 3.2 Complete
+- **Completion:** 42% (39/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Section 3.1 complete — `01_intensity_to_od.py` implements full Step B1 pipeline: exclusion list load, bad channel marking, OD conversion, quality verification (std/NaN/Inf checks), and OD time series visualization; validated on A1 (60 ok, 6 bad_channel, 0 anomalies).
+- **Latest Achievement:** Section 3.2 complete — `02_bandpass_filtering.py` implements 0.01–0.5 Hz IIR zero-phase filter; PSD verification confirms >99% attenuation above 0.5 Hz (ratio=0.0075); before/after time-series and PSD plots saved for A1.
 
 ### Recent Changes
-- [2026-02-18] ✅ Section 2.6 complete — processed all 14 Expert/Novice subjects, generated study-level cumulative CSV/JSON/PNG outputs in `expert_novice_full_report/`, and documented the R9 visual discrepancy note.
 - [2026-02-19] ✅ Section 3.1 complete (tasks 3.1.1–3.1.5) — built `code/stage_b_preprocessing/01_intensity_to_od.py`; load/mark exclusion channels, MNE OD conversion, std/NaN/Inf quality verification (replaced invalid mean-OD range check), and OD time series plot for A1.
+- [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD high-frequency attenuation ratio 0.0075 ✓; before/after comparison and PSD plots saved.
 
 ### Next Steps
-1. Section 3.2 — Bandpass filtering (0.01–0.5 Hz, IIR) in `02_bandpass_filter.py`.
-2. Section 3.3+ — continue Stage B core pipeline.
+1. Section 3.3 — Motion artifact detection on OD in `03_motion_detection.py`.
+2. Section 3.4+ — continue Stage B core pipeline.
 
 ---
 
@@ -210,7 +210,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 3: STAGE B - PREPROCESSING PIPELINE (Week 3-6)
-**Completion:** 5/36 tasks (14%)  
+**Completion:** 9/36 tasks (25%)  
 **Reference:** PRD Section 5
 
 #### 3.1 Intensity to Optical Density (Step B1) ✅ COMPLETE
@@ -222,11 +222,11 @@ elif system == "NIRx":
 
 Important Note: a mean OD_std of 0.259 is quite high. The expected range of std FNIRS is ideally ~0.02. This difference has been noted and could be revisited later. Currently, a threshold of 1e-5 is the minimum (if any std is less than 1e-5, it's classified as a disconnected channel). It could be beneficial to add an upper threshold as well to remove noisy channels with high std.
 
-#### 3.2 Bandpass Filtering (Step B2)
-- [ ] **3.2.1** Implement bandpass filter application (0.01-0.5 Hz, IIR method)
-- [ ] **3.2.2** Create before/after filtering comparison visualization
-- [ ] **3.2.3** Verify filtering effectiveness with power spectral density plots
-- [ ] **3.2.4** Test filtering on subject A1
+#### 3.2 Bandpass Filtering (Step B2) ✅ COMPLETE
+- [x] **3.2.1** (2026-02-19) Implement bandpass filter application (0.01-0.5 Hz, IIR method) — `apply_bandpass_filter()` wraps `raw_od.filter()`; zero-phase IIR Butterworth; 60 channels filtered, 6 bad skipped
+- [x] **3.2.2** (2026-02-19) Created before/after filtering comparison visualisation — 4-channel time-series subplot saved as `A1_filter_comparison.png`
+- [x] **3.2.3** (2026-02-19) Verified filtering effectiveness with PSD plots — Welch PSD overlay (linear + log dB) saved as `A1_psd_comparison.png`; HF power ratio (>0.5 Hz) = 0.0075 ✓
+- [x] **3.2.4** (2026-02-19) Tested filtering on subject A1 — full pipeline runs end-to-end via `run_bandpass_filter()`; outputs in `outputs/stage_b_processed/bandpass_filter/A1/`
 
 #### 3.3 Motion Artifact Detection on OD (Step B3)
 - [ ] **3.3.1** Adapt motion detection algorithm for OD data (reuse Stage A logic)
@@ -546,15 +546,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 38 (41%)
+- **Completed:** 42 (46%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 54
+- **Remaining:** 50
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 5/36 (14%)
+- **Section 3 (Stage B):** 9/36 (25%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
