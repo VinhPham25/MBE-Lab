@@ -2,8 +2,8 @@
 
 **Last Updated:** February 19, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.1 In Progress — Tasks 3.1.1–3.1.2 Complete
-**Next Milestone:** Section 3.1.3 — OD Conversion (pending review approval)
+**Current Stage:** Section 3.1 Complete — Beginning Section 3.2
+**Next Milestone:** Section 3.2 — Bandpass Filtering (Step B2)
 
 ---
 
@@ -11,20 +11,18 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.1 In Progress
-- **Completion:** 36% (33/92 tasks) → 2 new tasks completed this session
+- **Active Stage:** Stage B — Section 3.1 Complete
+- **Completion:** 38% (38/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Tasks 3.1.1–3.1.2 complete — Stage A exclusion list loaded (6 bad channels for A1) and marked in `raw.info['bads']` prior to preprocessing; `code/stage_b_preprocessing/01_intensity_to_od.py` created.
+- **Latest Achievement:** Section 3.1 complete — `01_intensity_to_od.py` implements full Step B1 pipeline: exclusion list load, bad channel marking, OD conversion, quality verification (std/NaN/Inf checks), and OD time series visualization; validated on A1 (60 ok, 6 bad_channel, 0 anomalies).
 
 ### Recent Changes
 - [2026-02-18] ✅ Section 2.6 complete — processed all 14 Expert/Novice subjects, generated study-level cumulative CSV/JSON/PNG outputs in `expert_novice_full_report/`, and documented the R9 visual discrepancy note.
-- [2026-02-19] ✅ Task 3.1.1 complete — `load_exclusion_list()` loads Stage A JSON; A1 result: 6 bad channels (S5_D21, S6_D22, S8_D24 at 690/830 nm, all below 80 dB).
-- [2026-02-19] ✅ Task 3.1.2 complete — `mark_bad_channels()` sets `raw.info['bads']` from exclusion list; all 6 candidates found and marked before OD conversion.
+- [2026-02-19] ✅ Section 3.1 complete (tasks 3.1.1–3.1.5) — built `code/stage_b_preprocessing/01_intensity_to_od.py`; load/mark exclusion channels, MNE OD conversion, std/NaN/Inf quality verification (replaced invalid mean-OD range check), and OD time series plot for A1.
 
 ### Next Steps
-1. Task 3.1.3 — OD conversion (mne.preprocessing.nirs.optical_density) — pending approval.
-2. Task 3.1.4 — OD range verification — pending approval (note: MNE's normalized OD has mean ≈ 0; range check threshold needs discussion).
-3. Task 3.1.5 — visualize OD time series on A1 — pending approval.
+1. Section 3.2 — Bandpass filtering (0.01–0.5 Hz, IIR) in `02_bandpass_filter.py`.
+2. Section 3.3+ — continue Stage B core pipeline.
 
 ---
 
@@ -212,15 +210,17 @@ elif system == "NIRx":
 ---
 
 ### SECTION 3: STAGE B - PREPROCESSING PIPELINE (Week 3-6)
-**Completion:** 0/36 tasks (0%)  
+**Completion:** 5/36 tasks (14%)  
 **Reference:** PRD Section 5
 
-#### 3.1 Intensity to Optical Density (Step B1)
-- [x] **3.1.1** Load exclusion list from Stage A (channels failing 80-140 dB signal amplitude threshold)
-- [ ] **3.1.2** Mark bad channels in raw.info['bads'] before any preprocessing
-- [ ] **3.1.3** Implement OD conversion function (mne.preprocessing.nirs.optical_density)
-- [ ] **3.1.4** Add OD range verification (0.1-2.0) and flag anomalies
-- [ ] **3.1.5** Test OD conversion on subject A1 and visualize time series for sample channels
+#### 3.1 Intensity to Optical Density (Step B1) ✅ COMPLETE
+- [x] **3.1.1** (2026-02-19) Load exclusion list from Stage A (channels failing 80-140 dB signal amplitude threshold)
+- [x] **3.1.2** (2026-02-19) Mark bad channels in raw.info['bads'] before any preprocessing
+- [x] **3.1.3** (2026-02-19) Implement OD conversion function (mne.preprocessing.nirs.optical_density) — `convert_to_optical_density()` wraps MNE; bad channels preserved; output shape (66, 26500), type fnirs_od
+- [x] **3.1.4** (2026-02-19) OD quality verification — replaced mean-based [0.1–2.0] range check with: (1) NaN/Inf detection, (2) flat-signal via std < 1e-5, (3) Stage A bad-channel pass-through; A1: 60 ok, 6 bad_channel, 0 nan_or_inf, 0 flat_signal; OK std mean=0.259 range=[0.014, 0.760]
+- [x] **3.1.5** (2026-02-19) Tested on A1, visualized OD time series — saved `A1_od_time_series.png` and `A1_od_range_verification.csv` in `outputs/stage_b_processed/od_conversion/A1/`
+
+Important Note: a mean OD_std of 0.259 is quite high. The expected range of std FNIRS is ideally ~0.02. This difference has been noted and could be revisited later. Currently, a threshold of 1e-5 is the minimum (if any std is less than 1e-5, it's classified as a disconnected channel). It could be beneficial to add an upper threshold as well to remove noisy channels with high std.
 
 #### 3.2 Bandpass Filtering (Step B2)
 - [ ] **3.2.1** Implement bandpass filter application (0.01-0.5 Hz, IIR method)
@@ -546,15 +546,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 33 (36%)
+- **Completed:** 38 (41%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 59
+- **Remaining:** 54
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
-- **Section 2 (Stage A):** 26/26 (100%)
-- **Section 3 (Stage B):** 0/36 (0%)
+- **Section 2 (Stage A):** 26/26 (100%) ✅
+- **Section 3 (Stage B):** 5/36 (14%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 

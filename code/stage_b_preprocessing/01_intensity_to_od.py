@@ -183,7 +183,7 @@ def convert_to_optical_density(raw, verbose: bool = True):
 
     Uses mne.preprocessing.nirs.optical_density(), which applies the
     Beer-Lambert-compatible transform:
-        OD = -log(I / I₀)
+        OD = -ln(I / mean(I₀))
     where I₀ is the mean intensity per channel.
 
     Channels listed in raw.info['bads'] are retained in the OD object
@@ -220,30 +220,40 @@ def convert_to_optical_density(raw, verbose: bool = True):
 
 
 # ---------------------------------------------------------------------------
-# Task 3.1.4 — OD range verification
+# Task 3.1.4 — OD quality verification
 # ---------------------------------------------------------------------------
 
 def verify_od_range(
     raw_od,
-    od_min: float = 0.1,
-    od_max: float = 2.0,
+    flat_std_threshold: float = 1e-5,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
-    Task 3.1.4: Verify that per-channel mean OD values fall within the
-    physiological range [od_min, od_max].
+    Task 3.1.4: Verify OD data quality per channel using three checks.
 
-    Channels outside this range are flagged for review; channels already
-    in raw_od.info['bads'] are noted separately.
+    MNE's optical_density() computes OD = -log(I / mean(I)), which
+    normalises each channel by its own time-mean.  As a result the
+    per-channel mean OD is always approximately 0, and three quality checks
+    are applied:
+
+    1. NaN / Inf detection  → flag 'nan_or_inf'
+    2. Flat-signal detection via OD std  → flag 'flat_signal'
+       (std < flat_std_threshold means essentially zero temporal variation,
+        indicating a dead/disconnected channel or hardware dropout)
+    3. Stage A bad-channel pass-through  → flag 'bad_channel'
+
+    All other channels receive flag 'ok'.
+
+    Note: a potential upper limit for OD std could also be applied to remove noisy fNIRS data.
 
     Parameters
     ----------
     raw_od : mne.io.Raw
         Optical density data (output of convert_to_optical_density)
-    od_min : float
-        Minimum acceptable mean OD (default 0.1)
-    od_max : float
-        Maximum acceptable mean OD (default 2.0)
+    flat_std_threshold : float
+        Channels whose OD std is below this value are flagged as flat.
+        Default 1e-5 catches truly dead channels while leaving noisy
+        short-separation channels untouched.
     verbose : bool
         Print summary
 
@@ -251,9 +261,12 @@ def verify_od_range(
     -------
     od_df : pd.DataFrame
         Per-channel OD statistics with columns:
-        - channel, mean_od, std_od, min_od, max_od
-        - within_range (bool)
-        - od_anomaly_flag (str): 'ok', 'below_min', 'above_max', or 'bad_channel'
+        - channel
+        - mean_od      (should be ≈ 0 for all channels)
+        - std_od       (proxy for signal amplitude; used for flat-channel detection)
+        - max_abs_od   (peak absolute OD excursion; informational)
+        - has_nan_inf  (bool)
+        - od_quality_flag : 'ok' | 'bad_channel' | 'nan_or_inf' | 'flat_signal'
     """
     data = raw_od.get_data()  # (n_channels, n_times)
     bad_set = set(raw_od.info['bads'])
@@ -261,66 +274,71 @@ def verify_od_range(
     records = []
     for i, ch_name in enumerate(raw_od.ch_names):
         ch_data = data[i, :]
-        mean_od = float(np.mean(ch_data))
-        std_od = float(np.std(ch_data))
-        min_od = float(np.min(ch_data))
-        max_od_val = float(np.max(ch_data))
 
+        has_nan_inf = bool(np.any(~np.isfinite(ch_data)))
+        finite_data = ch_data[np.isfinite(ch_data)]
+
+        mean_od = float(np.mean(finite_data)) if len(finite_data) > 0 else np.nan
+        std_od = float(np.std(finite_data)) if len(finite_data) > 0 else np.nan
+        max_abs_od = float(np.max(np.abs(finite_data))) if len(finite_data) > 0 else np.nan
+
+        # Assign quality flag (priority: bad_channel > nan_or_inf > flat_signal > ok)
         if ch_name in bad_set:
             flag = 'bad_channel'
-            within = False
-        elif mean_od < od_min:
-            flag = 'below_min'
-            within = False
-        elif mean_od > od_max:
-            flag = 'above_max'
-            within = False
+        elif has_nan_inf:
+            flag = 'nan_or_inf'
+        elif np.isnan(std_od) or std_od < flat_std_threshold:
+            flag = 'flat_signal'
         else:
             flag = 'ok'
-            within = True
 
         records.append({
             'channel': ch_name,
             'mean_od': mean_od,
             'std_od': std_od,
-            'min_od': min_od,
-            'max_od': max_od_val,
-            'within_range': within,
-            'od_anomaly_flag': flag,
+            'max_abs_od': max_abs_od,
+            'has_nan_inf': has_nan_inf,
+            'od_quality_flag': flag,
         })
 
     od_df = pd.DataFrame(records)
 
     if verbose:
         n_total = len(od_df)
-        n_ok = int((od_df['od_anomaly_flag'] == 'ok').sum())
-        n_bad_ch = int((od_df['od_anomaly_flag'] == 'bad_channel').sum())
-        n_below = int((od_df['od_anomaly_flag'] == 'below_min').sum())
-        n_above = int((od_df['od_anomaly_flag'] == 'above_max').sum())
+        n_ok = int((od_df['od_quality_flag'] == 'ok').sum())
+        n_bad_ch = int((od_df['od_quality_flag'] == 'bad_channel').sum())
+        n_nan_inf = int((od_df['od_quality_flag'] == 'nan_or_inf').sum())
+        n_flat = int((od_df['od_quality_flag'] == 'flat_signal').sum())
+
+        ok_df = od_df[od_df['od_quality_flag'] == 'ok']
 
         print("\n" + "=" * 70)
-        print("OD RANGE VERIFICATION (TASK 3.1.4)")
+        print("OD QUALITY VERIFICATION (TASK 3.1.4)")
         print("=" * 70)
-        print(f"Valid OD range:        [{od_min}, {od_max}]")
-        print(f"Total channels:        {n_total}")
-        print(f"Within range (ok):     {n_ok}")
-        print(f"Already bad (Stage A): {n_bad_ch}")
-        print(f"Below {od_min} (anomaly): {n_below}")
-        print(f"Above {od_max} (anomaly): {n_above}")
+        print(f"Note: MNE OD = -log(I / mean(I)) → mean OD ≈ 0 per channel")
+        print(f"Flat-signal threshold (std):  < {flat_std_threshold:.0e}")
+        print(f"\nTotal channels:         {n_total}")
+        print(f"  ok:                   {n_ok}")
+        print(f"  bad_channel (Stg A):  {n_bad_ch}")
+        print(f"  nan_or_inf:           {n_nan_inf}")
+        print(f"  flat_signal:          {n_flat}")
 
-        non_ok = od_df[od_df['od_anomaly_flag'] != 'ok']
-        if len(non_ok) > 0:
-            print("\nFlagged channels:")
-            for _, row in non_ok.iterrows():
-                print(f"  {row['channel']:30s}  mean={row['mean_od']:.4f}  "
-                      f"flag={row['od_anomaly_flag']}")
+        flagged = od_df[od_df['od_quality_flag'] != 'ok']
+        if len(flagged) > 0:
+            print(f"\nFlagged channels ({len(flagged)}):")
+            for _, row in flagged.iterrows():
+                print(f"  {row['channel']:30s}  std={row['std_od']:.2e}  "
+                      f"max|OD|={row['max_abs_od']:.4f}  "
+                      f"flag={row['od_quality_flag']}")
 
-        print(f"\nOverall OD statistics (all channels):")
-        valid = od_df[od_df['od_anomaly_flag'] == 'ok']
-        if len(valid) > 0:
-            print(f"  Mean of means: {valid['mean_od'].mean():.4f}")
-            print(f"  Range of means: [{valid['mean_od'].min():.4f}, "
-                  f"{valid['mean_od'].max():.4f}]")
+        if len(ok_df) > 0:
+            print(f"\nOK channel OD statistics:")
+            print(f"  std  — mean={ok_df['std_od'].mean():.4f}  "
+                  f"range=[{ok_df['std_od'].min():.4f}, {ok_df['std_od'].max():.4f}]")
+            print(f"  max|OD| — mean={ok_df['max_abs_od'].mean():.4f}  "
+                  f"range=[{ok_df['max_abs_od'].min():.4f}, "
+                  f"{ok_df['max_abs_od'].max():.4f}]")
+
         print("=" * 70 + "\n")
 
     return od_df
@@ -391,8 +409,8 @@ def plot_od_time_series(
     n_samples_plot = int(t_max_seconds * sfreq)
 
     # Select sample channels
-    good_channels = od_df[od_df['od_anomaly_flag'] == 'ok']['channel'].tolist()
-    flagged_channels = od_df[od_df['od_anomaly_flag'] != 'ok']['channel'].tolist()
+    good_channels = od_df[od_df['od_quality_flag'] == 'ok']['channel'].tolist()
+    flagged_channels = od_df[od_df['od_quality_flag'] != 'ok']['channel'].tolist()
 
     # Pick representative channels: spread across indices for variety
     step = max(1, len(good_channels) // n_good)
@@ -425,27 +443,27 @@ def plot_od_time_series(
         ch_idx = ch_names_list.index(ch_name)
         ch_data = data[ch_idx, :plot_end]
 
-        flag = od_df.loc[od_df['channel'] == ch_name, 'od_anomaly_flag'].values[0]
-        mean_od = od_df.loc[od_df['channel'] == ch_name, 'mean_od'].values[0]
+        flag = od_df.loc[od_df['channel'] == ch_name, 'od_quality_flag'].values[0]
+        std_od = od_df.loc[od_df['channel'] == ch_name, 'std_od'].values[0]
+        max_abs = od_df.loc[od_df['channel'] == ch_name, 'max_abs_od'].values[0]
 
         if flag == 'ok':
             color = '#1f77b4'
-            label_suffix = f'[ok | mean={mean_od:.3f}]'
+            label_suffix = f'[ok | std={std_od:.4f}  max|OD|={max_abs:.4f}]'
             alpha = 0.85
         elif flag == 'bad_channel':
             color = '#d62728'
-            label_suffix = f'[BAD (Stage A) | mean={mean_od:.3f}]'
+            label_suffix = f'[BAD (Stage A) | std={std_od:.4f}]'
             alpha = 0.7
         else:
             color = '#ff7f0e'
-            label_suffix = f'[ANOMALY: {flag} | mean={mean_od:.3f}]'
+            label_suffix = f'[{flag} | std={std_od:.2e}]'
             alpha = 0.7
 
         ax.plot(t_plot, ch_data, color=color, lw=0.8, alpha=alpha)
         ax.set_ylabel('OD', fontsize=9)
         ax.set_title(f'{ch_name}  {label_suffix}', fontsize=9, loc='left')
-        ax.axhline(0.1, color='green', ls='--', lw=0.8, alpha=0.6, label='OD min (0.1)')
-        ax.axhline(2.0, color='red', ls='--', lw=0.8, alpha=0.6, label='OD max (2.0)')
+        ax.axhline(0.0, color='gray', ls='--', lw=0.7, alpha=0.5, label='OD baseline (0)')
         ax.legend(fontsize=7, loc='upper right')
 
     axes[-1].set_xlabel('Time (s)', fontsize=10)
@@ -533,8 +551,7 @@ def run_intensity_to_od(
     # ---- 3.1.4 Verify OD range --------------------------------------------
     od_df = verify_od_range(
         raw_od,
-        od_min=od_params['valid_range_min'],
-        od_max=od_params['valid_range_max'],
+        flat_std_threshold=od_params['flat_std_threshold'],
         verbose=verbose,
     )
 
@@ -553,15 +570,14 @@ def run_intensity_to_od(
 
     print("\n" + "=" * 70)
     print(f"✅ Step B1 complete for subject {subject_id}")
-    n_ok = int((od_df['od_anomaly_flag'] == 'ok').sum())
-    n_bad_ch = int((od_df['od_anomaly_flag'] == 'bad_channel').sum())
-    n_anomaly = int(
-        ((od_df['od_anomaly_flag'] == 'below_min') |
-         (od_df['od_anomaly_flag'] == 'above_max')).sum()
-    )
-    print(f"  Channels OK:     {n_ok}")
-    print(f"  Channels bad:    {n_bad_ch}  (from Stage A exclusion)")
-    print(f"  OD anomalies:    {n_anomaly}  (outside [0.1, 2.0])")
+    n_ok = int((od_df['od_quality_flag'] == 'ok').sum())
+    n_bad_ch = int((od_df['od_quality_flag'] == 'bad_channel').sum())
+    n_nan_inf = int((od_df['od_quality_flag'] == 'nan_or_inf').sum())
+    n_flat = int((od_df['od_quality_flag'] == 'flat_signal').sum())
+    print(f"  Channels OK:         {n_ok}")
+    print(f"  Channels bad:        {n_bad_ch}  (from Stage A exclusion)")
+    print(f"  NaN/Inf anomalies:   {n_nan_inf}")
+    print(f"  Flat-signal flagged: {n_flat}")
     print(f"  Outputs saved:   {output_dir}")
     print("=" * 70 + "\n")
 

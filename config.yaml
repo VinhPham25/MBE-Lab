@@ -104,9 +104,10 @@ stage_a:
 
 stage_b:
   # Step B1: Intensity to Optical Density
+  # Note: MNE computes OD = -log(I / mean(I)); per-channel mean OD ≈ 0 by construction.
+  # Quality checks use std and NaN/Inf detection.
   optical_density:
-    valid_range_min: 0.1  # Minimum physiological OD
-    valid_range_max: 2.0  # Maximum physiological OD
+    flat_std_threshold: 1.0e-5  # OD std below this → flat/dead channel (flag flat_signal)
     
   # Step B2: Bandpass Filtering
   filter:
