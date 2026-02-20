@@ -435,7 +435,7 @@ def plot_motion_artifacts(
     subject_id: str,
     output_dir: Path,
     n_good: int = 3,
-    n_flagged: int = 2,
+    n_flagged: int = 3,
     t_window: float = 300.0,
     verbose: bool = True,
 ) -> Path:

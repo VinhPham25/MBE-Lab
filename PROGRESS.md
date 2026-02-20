@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
-**Last Updated:** February 19, 2026  
+**Last Updated:** February 20, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.3 Complete — Beginning Section 3.4
-**Next Milestone:** Section 3.4 — Recursive PCA Motion Correction (Step B4)
+**Current Stage:** Section 3.4 In Progress — Task 3.4.1 Complete
+**Next Milestone:** Section 3.4.2 — Before/After Motion Correction Visualization
 
 ---
 
@@ -11,18 +11,20 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.3 Complete
-- **Completion:** 45% (42/92 tasks)
+- **Active Stage:** Stage B — Section 3.4 In Progress (3.4.1 complete)
+- **Completion:** 46% (43/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Section 3.3 complete — Homer3 motion detection adapted for filtered OD with amplitude-only criterion; A1 result: 0% motion flagged (60 ok, 6 bad_channel) ✓; motion artifact visualization saved.
+- **Latest Achievement:** Task 3.4.1 complete — rPCA algorithm implemented; A1: union mask 99.9% (mathematically expected with 60 channels each flagging ~15%); 21 PCs removed, 97.2% variance removed, 2.8% neural residual preserved.
 
 ### Recent Changes
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
 - [2026-02-19] ✅ Section 3.3 complete (tasks 3.3.1–3.3.3) — built `code/stage_b_preprocessing/03_motion_correct.py`; Homer3 algorithm adapted for filtered OD with amplitude-only criterion (use_amp_only=True, AMPthresh=5.0 OD); A1: 0% motion, 60/60 ok, visualization saved.
+- [2026-02-20] ✅ Task 3.4.1 complete — rPCA algorithm implemented in `code/stage_b_preprocessing/04_rPCA_motion_correct.py`; global PCA on union motion mask; A1: 26,470/26,500 samples in union mask (99.9%), 21 PCs × 97.2% variance removed, neural residual 2.8%; corrected OD saved as `.fif`.
 
 ### Next Steps
-1. Section 3.4 — rPCA motion correction added to `03_motion_correct.py`.
-2. Section 3.5+ — Beer-Lambert and short-channel regression.
+1. Task 3.4.2 — Before/after motion correction comparison visualization.
+2. Task 3.4.3 — Verify motion reduction by re-running motion detection on corrected OD.
+3. Tasks 3.4.4–3.4.5 — Document effectiveness and tune if needed.
 
 ---
 
@@ -229,6 +231,9 @@ Important Note: a mean OD_std of 0.259 is quite high. The expected range of std 
 - [x] **3.2.4** (2026-02-19) Tested filtering on subject A1 — full pipeline runs end-to-end via `run_bandpass_filter()`; outputs in `outputs/stage_b_processed/bandpass_filter/A1/`
 
 #### 3.3 Motion Artifact Detection on OD (Step B3) ✅ COMPLETE
+- [x] **3.3.1** (2026-02-19) Adapted Homer3 motion detection for filtered OD — `detect_motion_artifacts()` with `_detect_motion_homer3_single()` + `_expand_mask_to_signal()`; Stage A key differences: input is filtered OD, output is per-sample boolean mask; `use_amp_only=True` parameter added to switch criterion for identifying motion artifacts
+- [x] **3.3.2** (2026-02-19) Generated per-channel motion mask and statistics — `compute_motion_stats()` calculates motion_ratio, pct_corrupted, quality flag (ok/elevated/high/bad_channel); A1: 60 ok, 0 elevated, 0 high, 6 bad_channel; 0.00% mean corrupted ✓
+- [x] **3.3.3** (2026-02-19) Visualized motion artifacts on OD traces — `plot_motion_artifacts()` shows 3 low-motion (blue) + 2 high-motion/bad (red/orange) channels with shaded flagged regions; saved `A1_motion_artifacts.png` in `outputs/stage_b_processed/motion_correction/A1/`
 
 **Threshold Decision — Amplitude-Only (use_amp_only=True)**
 The original Homer3 dual-criterion (AMPthresh=5.0 OD + STDEVthresh=20×std_diff) flagged 17.4% of A1 samples when applied to filtered OD (expected ~0%). Root cause: bandpass filtering (0.01–0.5 Hz) reduces the derivative std (std_diff) by orders of magnitude, so `mc_thresh = std_diff × 20` shrinks below the level of normal hemodynamic oscillations. This could be an overestimate for the presence of motion artifacts or it could be the ground truth.
@@ -239,12 +244,14 @@ Two options were considered if the threshold was too low, and too many motion ar
 
 However, both of these options require finding a new value for STDEVthresh or AMPthresh that captures the motion correctly, which is arbitrary. Note, only using AMPthresh = 5.0 resulted in no motion artifacts being found, meaning Option 2 could have undershot the detection of motion artifacts. Therefore, in the detect_motion_artifact() function, there exists a parameter labeled use_amp_only: bool = True, which can be toggled to determine if the motion detection function utilizes the original threshold or the amplitude specific one. Additionally, for the full pipeline function run_motion_detect(), USE_AMP_ONLY: bool = False is a boolean that can be toggled to adjust the time-series and .csv outputs. 
 
-- [x] **3.3.1** (2026-02-19) Adapted Homer3 motion detection for filtered OD — `detect_motion_artifacts()` with `_detect_motion_homer3_single()` + `_expand_mask_to_signal()`; Stage A key differences: input is filtered OD, output is per-sample boolean mask; `use_amp_only=True` parameter added to switch criterion
-- [x] **3.3.2** (2026-02-19) Generated per-channel motion mask and statistics — `compute_motion_stats()` calculates motion_ratio, pct_corrupted, quality flag (ok/elevated/high/bad_channel); A1: 60 ok, 0 elevated, 0 high, 6 bad_channel; 0.00% mean corrupted ✓
-- [x] **3.3.3** (2026-02-19) Visualized motion artifacts on OD traces — `plot_motion_artifacts()` shows 3 low-motion (blue) + 2 high-motion/bad (red/orange) channels with shaded flagged regions; saved `A1_motion_artifacts.png` in `outputs/stage_b_processed/motion_correction/A1/`
-
 #### 3.4 Recursive PCA Motion Correction (Step B4)
-- [ ] **3.4.1** Implement rPCA algorithm: Apply PCA to motion-corrupted segments only, remove high-variance components (motion), keep low-variance (neural signal), n_components=0.97
+- [x] **3.4.1** (2026-02-20) Implement rPCA algorithm: global PCA on union motion mask (dual criterion, use_amp_only=False), remove high-variance components (21 PCs, 97.2% variance = motion subspace), keep low-variance neural residual (2.8%); n_components=0.97; A1: union mask 99.9% (inevitable with 60 ch each flagging ~15% → (1−0.15)^60 ≈ 0.01% chance all-clean); corrected OD saved to `outputs/stage_b_processed/rPCA_correction/A1/`
+
+Note, the union mask covers almost 100% of the recording because each channel independently flags samples, so it's extremely likely that the mask will cover the entire time signal. This means rPCA is applied globally rather than locally on only the "bad" signals. Some suggestions for improvement that should be considered:
+1) Improving the motion detection algorithm. For subject A1, 17.4% of samples are detected as noise. If we can clarify the criteria/treshold for defining motion, this percentage could decrease and thus decrease the coverage of the union mask.
+2) Modify the OR mask with a summation threshold. Only include a time point as having motion if > X channels simulatenously flag this motion.
+3) Apply grouped union (masks for anatomical clusters / groups of channels (Ex: frontal channels, motor chanells, etc.)). This is because noise in the front region might not affect the channels in the back.
+
 - [ ] **3.4.2** Create before/after motion correction comparison visualization
 - [ ] **3.4.3** Verify motion reduction by recalculating motion ratio after correction
 - [ ] **3.4.4** Test rPCA on subject A1 and document effectiveness
@@ -556,22 +563,22 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 45 (49%)
+- **Completed:** 46 (50%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 47
+- **Remaining:** 46
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 12/36 (33%)
+- **Section 3 (Stage B):** 13/36 (36%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
 
 ---
 
-**Last saved:** February 18, 2026  
-**Next update:** After completing task 3.1  
+**Last saved:** February 20, 2026  
+**Next update:** After completing task 3.4.2  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
