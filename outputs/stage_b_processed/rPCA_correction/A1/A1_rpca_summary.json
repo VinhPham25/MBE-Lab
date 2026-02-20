@@ -4,5 +4,6 @@
   "n_components_used": 21,
   "variance_removed_pct": 97.2,
   "n_good_channels": 60,
-  "n_components_param": 0.97
+  "n_components_param": 0.97,
+  "min_channels_flagged": 1
 }

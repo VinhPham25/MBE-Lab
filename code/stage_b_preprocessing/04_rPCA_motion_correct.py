@@ -74,6 +74,7 @@ def apply_rpca_correction(
     raw_od_filt,
     motion_results: dict,
     n_components: float = 0.97,
+    min_channels_flagged: int = 1,
     verbose: bool = True,
 ) -> tuple:
     """
@@ -92,6 +93,13 @@ def apply_rpca_correction(
         of components whose cumulative explained variance >= n_components.
         These high-variance components represent the motion artifact subspace.
         Default 0.97 → removes the dominant 97% of variance (motion).
+    min_channels_flagged : int
+        Minimum number of good channels that must simultaneously flag a time
+        point for it to be included in the motion mask.
+        1 (default) = OR union (flag if any channel detects motion → 99.9%).
+        Higher values = "vote threshold" — only correct time points where
+        motion is truly global (flagged by many channels at once).
+        Example: 10 → flag only where ≥10/60 channels agree on motion.
     verbose : bool
 
     Returns
@@ -116,24 +124,32 @@ def apply_rpca_correction(
         print("\n" + "=" * 70)
         print("TASK 3.4.1 — rPCA MOTION CORRECTION")
         print("=" * 70)
-        print(f"  n_components  : {n_components}  "
+        print(f"  n_components         : {n_components}  "
               f"(PCA keeps components explaining ≥{n_components*100:.0f}% variance)")
-        print(f"  Good channels : {n_good}  |  Bad (skipped): {len(bad_set)}")
+        print(f"  min_channels_flagged : {min_channels_flagged}  "
+              f"({'OR union' if min_channels_flagged == 1 else 'vote threshold'})")
+        print(f"  Good channels        : {n_good}  |  Bad (skipped): {len(bad_set)}")
 
     # ------------------------------------------------------------------
-    # Step 1: Union motion mask across all good channels
+    # Step 1: Build motion mask using vote threshold
     # ------------------------------------------------------------------
-    union_mask = np.zeros(n_times, dtype=bool)
+    # Count how many channels flag each time point simultaneously.
+    # min_channels_flagged=1 replicates the original OR union (flag if any
+    # channel detects motion). Higher values make the mask more selective,
+    # requiring global agreement among multiple channels.
+    ch_vote_counts = np.zeros(n_times, dtype=np.int32)
     for ch in good_names:
         if ch in masks:
-            union_mask |= masks[ch]
+            ch_vote_counts += masks[ch].astype(np.int32)
+    union_mask = ch_vote_counts >= min_channels_flagged
 
-    n_flagged  = int(union_mask.sum())
+    n_flagged   = int(union_mask.sum())
     pct_flagged = 100.0 * n_flagged / n_times
 
     if verbose:
-        print(f"\n  Union motion mask: {n_flagged}/{n_times} samples "
-              f"({pct_flagged:.1f}%) flagged")
+        print(f"\n  Motion mask: {n_flagged}/{n_times} samples "
+              f"({pct_flagged:.1f}%) flagged  "
+              f"[≥{min_channels_flagged} ch voting]")
 
     if n_flagged == 0:
         if verbose:
@@ -194,12 +210,13 @@ def apply_rpca_correction(
     raw_od_corrected._data = data
 
     summary = {
-        'n_flagged':           n_flagged,
-        'pct_flagged_union':   round(pct_flagged, 2),
-        'n_components_used':   n_pc,
-        'variance_removed_pct': round(var_removed * 100, 2),
-        'n_good_channels':     n_good,
-        'n_components_param':  n_components,
+        'n_flagged':              n_flagged,
+        'pct_flagged_union':      round(pct_flagged, 2),
+        'n_components_used':      n_pc,
+        'variance_removed_pct':   round(var_removed * 100, 2),
+        'n_good_channels':        n_good,
+        'n_components_param':     n_components,
+        'min_channels_flagged':   min_channels_flagged,
     }
 
     if verbose:
@@ -664,6 +681,280 @@ def save_motion_comparison(
     return csv_path, json_path
 
 
+# ===========================================================================
+# Task 3.4.5 — Parameter Tuning
+# ===========================================================================
+
+def tune_rpca_parameters(
+    raw_od_filt,
+    motion_results: dict,
+    stats_before: pd.DataFrame,
+    subject_id: str,
+    output_dir: Path,
+    n_components_grid: list = None,
+    min_channels_grid: list = None,
+    amp_thresh: float = 5.0,
+    stdev_thresh: float = 20.0,
+    t_motion: float = 0.5,
+    t_mask: float = 0.5,
+    verbose: bool = True,
+) -> tuple:
+    """
+    Task 3.4.5: Grid search over n_components × min_channels_flagged to find
+    the configuration that maximises post-correction motion reduction.
+
+    Two axes of variation
+    ---------------------
+    n_components (float):
+        PCA variance threshold.  Higher → more PCs removed → less residual
+        variance.  Range: 0.90–0.99.
+
+    min_channels_flagged (int):
+        Vote threshold for the motion mask.  1 = OR union (current: 99.9%).
+        Higher values target only time points where motion is truly global
+        (flagged by many channels simultaneously), leaving the rest of the
+        signal untouched.
+
+    Evaluation metrics (per configuration)
+    ----------------------------------------
+    - pct_mask   : how much of the signal is inside the motion mask
+    - n_pcs      : number of PCs removed
+    - var_removed: % variance removed from mask segment
+    - MR_dual    : mean post-correction motion ratio (dual criterion)
+    - MR_amp     : mean post-correction motion ratio (amplitude-only ≥5 OD)
+    - reduction  : relative reduction in mean MR (dual) vs before
+
+    Parameters
+    ----------
+    raw_od_filt      : mne.io.Raw
+    motion_results   : dict  (Step B3 masks, use_amp_only=False)
+    stats_before     : pd.DataFrame
+    subject_id       : str
+    output_dir       : Path
+    n_components_grid : list of float  (default [0.90, 0.95, 0.97, 0.99])
+    min_channels_grid : list of int    (default [1, 3, 5, 10, 15])
+    amp_thresh etc.   : motion detection params (same as Step B3)
+    verbose           : bool
+
+    Returns
+    -------
+    results_df  : pd.DataFrame  (one row per configuration)
+    best_params : dict          (optimal n_components, min_channels_flagged)
+    """
+    if n_components_grid is None:
+        n_components_grid = [0.90, 0.95, 0.97, 0.99]
+    if min_channels_grid is None:
+        min_channels_grid = [1, 3, 5, 10, 15]
+
+    good_df    = stats_before[stats_before['motion_quality'] != 'bad_channel']
+    mr_before  = float(good_df['motion_ratio'].mean())
+    n_configs  = len(n_components_grid) * len(min_channels_grid)
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print("TASK 3.4.5 — rPCA PARAMETER TUNING SWEEP")
+        print("=" * 70)
+        print(f"  Baseline mean MR (dual criterion): {mr_before*100:.2f}%")
+        print(f"  n_components grid : {n_components_grid}")
+        print(f"  min_ch_flagged grid: {min_channels_grid}")
+        print(f"  Total configurations: {n_configs}")
+        print("-" * 70)
+        hdr = (f"{'n_comp':>7} {'min_ch':>6} {'mask%':>7} {'n_PCs':>6} "
+               f"{'var_rem':>8} {'MR_dual%':>9} {'MR_amp%':>8} {'reduc%':>8}")
+        print(hdr)
+        print("-" * 70)
+
+    records = []
+    for n_comp in n_components_grid:
+        for min_ch in min_channels_grid:
+            # Apply rPCA with this configuration
+            raw_corr, corr_sum = apply_rpca_correction(
+                raw_od_filt,
+                motion_results,
+                n_components         = n_comp,
+                min_channels_flagged = min_ch,
+                verbose              = False,
+            )
+
+            # Post-correction motion detection (dual criterion)
+            mr_after_results = detect_motion_artifacts(
+                raw_corr,
+                amp_thresh   = amp_thresh,
+                stdev_thresh = stdev_thresh,
+                t_motion     = t_motion,
+                t_mask       = t_mask,
+                use_amp_only = False,
+                verbose      = False,
+            )
+            mr_after_stats = compute_motion_stats(
+                mr_after_results, raw_corr, verbose=False
+            )
+
+            # Amplitude-only check
+            mr_amp_results = detect_motion_artifacts(
+                raw_corr,
+                amp_thresh   = amp_thresh,
+                stdev_thresh = stdev_thresh,
+                t_motion     = t_motion,
+                t_mask       = t_mask,
+                use_amp_only = True,
+                verbose      = False,
+            )
+            mr_amp_stats = compute_motion_stats(
+                mr_amp_results, raw_corr, verbose=False
+            )
+
+            good_after = mr_after_stats[mr_after_stats['motion_quality'] != 'bad_channel']
+            good_amp   = mr_amp_stats[mr_amp_stats['motion_quality']  != 'bad_channel']
+            mr_dual    = float(good_after['motion_ratio'].mean())
+            mr_amp     = float(good_amp['motion_ratio'].mean())
+            reduction  = (mr_before - mr_dual) / mr_before * 100 if mr_before > 0 else 0.0
+
+            rec = {
+                'n_components':       n_comp,
+                'min_channels_flagged': min_ch,
+                'pct_mask':           corr_sum['pct_flagged_union'],
+                'n_pcs_removed':      corr_sum['n_components_used'],
+                'variance_removed_pct': corr_sum['variance_removed_pct'],
+                'MR_before':          round(mr_before * 100, 2),
+                'MR_after_dual':      round(mr_dual * 100, 2),
+                'MR_after_amp':       round(mr_amp * 100, 2),
+                'reduction_pct':      round(reduction, 2),
+            }
+            records.append(rec)
+
+            if verbose:
+                print(f"  {n_comp:>7.2f} {min_ch:>6d} {rec['pct_mask']:>7.1f} "
+                      f"{rec['n_pcs_removed']:>6d} {rec['variance_removed_pct']:>7.1f}% "
+                      f"{rec['MR_after_dual']:>8.2f}% {rec['MR_after_amp']:>7.2f}% "
+                      f"{rec['reduction_pct']:>7.1f}%")
+
+    results_df = pd.DataFrame(records)
+
+    # Best = highest reduction_pct with MR_after_amp == 0 (no large spikes)
+    # If all have MR_after_amp == 0, sort purely by reduction_pct
+    clean = results_df[results_df['MR_after_amp'] == 0.0]
+    if clean.empty:
+        clean = results_df
+    best_row   = clean.sort_values('reduction_pct', ascending=False).iloc[0]
+    best_params = {
+        'n_components':       float(best_row['n_components']),
+        'min_channels_flagged': int(best_row['min_channels_flagged']),
+        'MR_after_dual':      float(best_row['MR_after_dual']),
+        'MR_after_amp':       float(best_row['MR_after_amp']),
+        'reduction_pct':      float(best_row['reduction_pct']),
+        'pct_mask':           float(best_row['pct_mask']),
+        'n_pcs_removed':      int(best_row['n_pcs_removed']),
+        'variance_removed_pct': float(best_row['variance_removed_pct']),
+    }
+
+    if verbose:
+        print("-" * 70)
+        print(f"\n  ★  Optimal configuration:")
+        print(f"     n_components         = {best_params['n_components']}")
+        print(f"     min_channels_flagged = {best_params['min_channels_flagged']}")
+        print(f"     Mask coverage        = {best_params['pct_mask']:.1f}%")
+        print(f"     PCs removed          = {best_params['n_pcs_removed']}")
+        print(f"     Variance removed     = {best_params['variance_removed_pct']:.1f}%")
+        print(f"     MR after (dual)      = {best_params['MR_after_dual']:.2f}%")
+        print(f"     MR after (amp-only)  = {best_params['MR_after_amp']:.2f}%")
+        print(f"     Reduction            = {best_params['reduction_pct']:.1f}%")
+        print("=" * 70 + "\n")
+
+    # Save results table
+    output_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = output_dir / f'{subject_id}_rpca_tuning_results.csv'
+    results_df.to_csv(csv_path, index=False)
+    if verbose:
+        print(f"  Saved tuning results: {csv_path}")
+
+    return results_df, best_params
+
+
+def plot_tuning_results(
+    results_df: pd.DataFrame,
+    best_params: dict,
+    subject_id: str,
+    output_dir: Path,
+    verbose: bool = True,
+) -> Path:
+    """
+    Task 3.4.5: Visualize the parameter tuning trade-off surface.
+
+    Two panels:
+      Left  : Heat-map of post-correction MR_dual (%) over the
+               n_components × min_channels_flagged grid.
+      Right : Heat-map of motion reduction (%) over the same grid.
+    Best configuration is marked with a star on both panels.
+    """
+    import matplotlib.colors as mcolors
+
+    n_comp_vals = sorted(results_df['n_components'].unique())
+    min_ch_vals = sorted(results_df['min_channels_flagged'].unique())
+
+    def _pivot(col):
+        return results_df.pivot(
+            index='min_channels_flagged',
+            columns='n_components',
+            values=col,
+        )
+
+    mr_grid  = _pivot('MR_after_dual')
+    red_grid = _pivot('reduction_pct')
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+
+    def _heatmap(ax, data, title, cmap, fmt='.1f', vmin=None, vmax=None):
+        im = ax.imshow(data.values, cmap=cmap, aspect='auto',
+                       vmin=vmin, vmax=vmax)
+        ax.set_xticks(range(len(n_comp_vals)))
+        ax.set_xticklabels([str(v) for v in n_comp_vals], fontsize=9)
+        ax.set_yticks(range(len(min_ch_vals)))
+        ax.set_yticklabels([str(v) for v in min_ch_vals], fontsize=9)
+        ax.set_xlabel('n_components', fontsize=10)
+        ax.set_ylabel('min_channels_flagged', fontsize=10)
+        ax.set_title(title, fontsize=10, fontweight='bold')
+        plt.colorbar(im, ax=ax, shrink=0.85)
+        # Annotate each cell
+        for r in range(data.shape[0]):
+            for c in range(data.shape[1]):
+                val = data.values[r, c]
+                ax.text(c, r, f'{val:{fmt}}', ha='center', va='center',
+                        fontsize=8, color='white' if val > data.values.mean() else 'black')
+        # Mark best
+        best_r = list(min_ch_vals).index(best_params['min_channels_flagged'])
+        best_c = list(n_comp_vals).index(best_params['n_components'])
+        ax.plot(best_c, best_r, marker='*', color='gold', ms=18, zorder=5,
+                markeredgecolor='k', markeredgewidth=0.8)
+
+    _heatmap(axes[0], mr_grid,
+             f'Post-correction MR (dual, %)  ← lower is better',
+             'YlOrRd_r', fmt='.1f')
+    _heatmap(axes[1], red_grid,
+             f'Reduction vs baseline (%)  ← higher is better',
+             'YlGn', fmt='.1f')
+
+    fig.suptitle(
+        f'Subject {subject_id} — rPCA Parameter Tuning\n'
+        f'Baseline mean MR = {results_df["MR_before"].iloc[0]:.1f}%  '
+        f'(dual criterion)   ★ = optimal: '
+        f'n_comp={best_params["n_components"]}, '
+        f'min_ch={best_params["min_channels_flagged"]} '
+        f'→ MR={best_params["MR_after_dual"]:.1f}% '
+        f'({best_params["reduction_pct"]:.1f}% reduction)',
+        fontsize=10, fontweight='bold', y=1.02,
+    )
+    plt.tight_layout()
+
+    fig_path = output_dir / f'{subject_id}_rpca_tuning_heatmap.png'
+    fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    if verbose:
+        print(f"  Saved tuning heatmap : {fig_path}")
+    return fig_path
+
+
 def save_corrected_od(
     raw_od_corrected,
     correction_summary: dict,
@@ -778,7 +1069,7 @@ def run_rpca_correction(
     )
 
     # ---- 3.4.2 Before/after visualization ----------------------------------
-    print("[4/6] Generating before/after correction comparison plot (Task 3.4.2)...")
+    print("[4/7] Generating before/after correction comparison plot (Task 3.4.2)...")
     fig_ba_path = plot_before_after_correction(
         raw_od_filt,
         raw_od_corrected,
@@ -794,7 +1085,7 @@ def run_rpca_correction(
     )
 
     # ---- 3.4.3 Post-correction motion verification -------------------------
-    print("[5/6] Verifying motion reduction post-rPCA (Task 3.4.3)...")
+    print("[5/7] Verifying motion reduction post-rPCA (Task 3.4.3)...")
     b3_params = get_stage_params('stage_b', config)['motion_detection']
     stats_after, comparison_df, reduction_summary = verify_motion_reduction(
         raw_od_filt,
@@ -809,7 +1100,7 @@ def run_rpca_correction(
     )
 
     # ---- 3.4.4 Effectiveness documentation ---------------------------------
-    print("[6/6] Documenting rPCA effectiveness (Task 3.4.4)...")
+    print("[6/7] Documenting rPCA effectiveness (Task 3.4.4)...")
     fig_red_path = plot_motion_reduction_summary(
         comparison_df,
         reduction_summary,
@@ -822,10 +1113,24 @@ def run_rpca_correction(
         comparison_df, reduction_summary, subject_id, output_dir
     )
 
+    # ---- 3.4.5 Parameter tuning --------------------------------------------
+    print("[7/7] Running parameter tuning sweep (Task 3.4.5)...")
+    tuning_df, best_params = tune_rpca_parameters(
+        raw_od_filt,
+        motion_results,
+        stats_before,
+        subject_id = subject_id,
+        output_dir = output_dir,
+        verbose    = verbose,
+    )
+    fig_tune_path = plot_tuning_results(
+        tuning_df, best_params, subject_id, output_dir, verbose=verbose
+    )
+
     # ---- Console summary ----------------------------------------------------
     rs = reduction_summary
     print("\n" + "=" * 70)
-    print(f"✅ Step B4 (Tasks 3.4.1–3.4.4) complete for subject {subject_id}")
+    print(f"✅ Step B4 (Tasks 3.4.1–3.4.5) complete for subject {subject_id}")
     print(f"\n  rPCA Correction:")
     print(f"    Union mask samples  : {correction_summary['n_flagged']} "
           f"({correction_summary['pct_flagged_union']:.1f}%)")
@@ -837,6 +1142,11 @@ def run_rpca_correction(
     print(f"    Mean MR after       : {rs['mean_motion_ratio_after_amp']*100:.1f}%  (amp-only)")
     print(f"    Mean reduction      : {rs['mean_reduction_pct']:.1f}%")
     print(f"    Channels improved   : {rs['n_channels_improved']}/{len(comparison_df)}")
+    print(f"\n  Optimal parameters (Task 3.4.5):")
+    print(f"    n_components         = {best_params['n_components']}")
+    print(f"    min_channels_flagged = {best_params['min_channels_flagged']}")
+    print(f"    Post-correction MR   = {best_params['MR_after_dual']:.2f}%  (dual)")
+    print(f"    Reduction            = {best_params['reduction_pct']:.1f}%")
     print(f"\n  Outputs saved to: {output_dir}")
     print("=" * 70 + "\n")
 
@@ -849,9 +1159,12 @@ def run_rpca_correction(
         'comparison_df':      comparison_df,
         'reduction_summary':  reduction_summary,
         'correction_summary': correction_summary,
+        'tuning_df':          tuning_df,
+        'best_params':        best_params,
         'output_dir':         output_dir,
         'fig_before_after':   fig_ba_path,
         'fig_reduction':      fig_red_path,
+        'fig_tuning':         fig_tune_path,
     }
 
 

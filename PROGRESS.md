@@ -2,8 +2,8 @@
 
 **Last Updated:** February 20, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.4 In Progress — Tasks 3.4.1–3.4.4 Complete
-**Next Milestone:** Section 3.4.5 — Tune rPCA Parameters
+**Current Stage:** Section 3.4 Complete ✅ — All Tasks 3.4.1–3.4.5 Done
+**Next Milestone:** Section 3.5 — Modified Beer-Lambert Law
 
 ---
 
@@ -11,10 +11,10 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.4 In Progress (3.4.1–3.4.4 complete)
-- **Completion:** 49% (45/92 tasks)
+- **Active Stage:** Stage B — Section 3.4 Complete ✅
+- **Completion:** 50% (46/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Tasks 3.4.3–3.4.4 complete — post-correction verification: dual-criterion MR 15.6%→10.9% (30.3% relative reduction); amplitude-only MR 0.0% after correction (no large spikes remain); 34/60 channels improved; motion reduction bar chart + comparison CSV saved.
+- **Latest Achievement:** Section 3.4 fully complete. Task 3.4.5 parameter tuning sweep (4×5 grid): optimal = n_components=0.99 + min_channels_flagged=10 → MR 15.6%→0.77% (95.1% reduction); amplitude-only 0.0% across all configs; tuning heatmap saved.
 
 ### Recent Changes
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
@@ -22,9 +22,10 @@
 - [2026-02-20] ✅ Task 3.4.1 complete — rPCA algorithm implemented in `code/stage_b_preprocessing/04_rPCA_motion_correct.py`; global PCA on union motion mask; A1: 26,470/26,500 samples in union mask (99.9%), 21 PCs × 97.2% variance removed, neural residual 2.8%; corrected OD saved as `.fif`.
 - [2026-02-20] ✅ Task 3.4.2 complete — before/after comparison plot; 4 channels (2 high-motion, 2 low-motion), 3-panel layout (Before | After | Removed), red union-mask shading, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`.
 - [2026-02-20] ✅ Tasks 3.4.3–3.4.4 complete — post-correction motion detection on corrected OD; dual-criterion: 15.6%→10.9% mean MR (30.3% relative reduction); amplitude-only: 0.0% (all large spikes removed); 34/60 ch improved, 26/60 worse (STDEVthresh still fires on low-variance residual); saved `A1_rpca_motion_reduction.png`, `A1_rpca_motion_comparison.csv`, `A1_rpca_effectiveness.json`.
+- [2026-02-20] ✅ Task 3.4.5 complete — parameter tuning sweep (n_components × min_channels_flagged, 4×5=20 configs); optimal: n_components=0.99, min_channels_flagged=10 (34.5% mask coverage, 26 PCs, 99.2% var removed) → MR 0.77% (95.1% reduction); amplitude-only 0.0% across all 20 configs; heatmap + CSV saved.
 
 ### Next Steps
-1. Task 3.4.5 — Evaluate whether motion artifacts persist; document parameter recommendations.
+1. Section 3.5 — Modified Beer-Lambert Law (Beer-Lambert conversion with TechEn PPF values).
 
 ---
 
@@ -256,17 +257,37 @@ Note, the union mask covers almost 100% of the recording because each channel in
 - [x] **3.4.3** (2026-02-20) Re-ran Homer3 dual criterion on rPCA-corrected OD: mean MR 15.6%→10.9% (30.3% relative reduction); amplitude-only 0.0% (no large OD spikes remain); 34/60 channels improved, 26/60 worse (relative STDEVthresh still fires on low-variance residual — expected behavior)
 - [x] **3.4.4** (2026-02-20) A1 effectiveness: dual reduction 4.7 pp absolute (30.3% relative); amplitude criterion fully cleared; confirmed rPCA removes dominant motion subspace leaving physiological residual; saved `A1_rpca_motion_reduction.png`, `A1_rpca_motion_comparison.csv`, `A1_rpca_effectiveness.json`
 
-Motion Reduction Results (Subject A1)
-Metric	                                Before rPCA	      After rPCA
-Mean motion ratio (dual criterion)	         15.6%	            10.9%
-Relative reduction	                         —	               30.3%
-Amplitude-only (≥5.0 OD spikes)              —  	            0.0% ✓
-Channels improved / total                   	—	               34/60
-Channels worse                            	—	               26/60
+#### Motion Reduction Performance (Default Configuration)
+| Metric | Before rPCA | After rPCA |
+| :--- | :--- | :--- |
+| **Mean motion ratio (dual criterion)** | 15.6% | 10.9% |
+| **Relative reduction** | — | **30.3%** |
+| **Amplitude-only (≥5.0 OD spikes)** | — | **0.0% ✓** |
+| **Channels improved / total** | — | **34/60** |
+| **Channels worse** | — | 26/60 |
 
 The amplitude crtierion indicates large-motion artifacts were removed with 30.3% relative reduction in dual-criterion (STDEV thresh and ampltidue) flagging overall. 26 channels worsened because STDEVthresh is relative based on the equation max_diff > std_diff x 20. After rPCA, the signal's derivative std decreases significantly because most noise is removed. The smaller mc_thresh makes the criterion more sensitive and flags normal physiological noise as motion. This relates to the same sensitivity problem documented in Section 3.3 but is now applied to corrected data. This metric has been noted and will be revisited.
 
-- [ ] **3.4.5** Tune rPCA parameters if motion artifacts persist (document parameter changes)
+- [x] **3.4.5** (2026-02-20) Parameter tuning sweep: grid over n_components=[0.90,0.95,0.97,0.99] × min_channels_flagged=[1,3,5,10,15] (20 configs total); key finding: vote-threshold mask (min_ch>1) dramatically outperforms OR-union — at min_ch=10 (34.5% mask), MR drops from 15.6% to 0.77% (95.1% reduction) with n_comp=0.99; amplitude-only=0.0% for all configs; optimal = n_comp=0.99, min_ch=10; saved `A1_rpca_tuning_results.csv`, `A1_rpca_tuning_heatmap.png`
+
+#### Parameter Sensitivity Analysis
+| n_comp | min_ch (Majority) | Mask % | PCs | Var rem | MR_dual | MR_amp | Reduction | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| 0.90 | 1 | 99.9% | 15 | 90.5% | 13.0% | 0.0% | 16.7% | |
+| 0.90 | 10 | 34.5% | 14 | 90.2% | 1.84% | 0.0% | 88.2% | |
+| 0.95 | 10 | 34.5% | 18 | 95.2% | 1.47% | 0.0% | 90.6% | |
+| **0.97** | **1** | **99.9%** | **21** | **97.2%** | **10.9%** | **0.0%** | **30.3%** | **Default (Baseline)** |
+| 0.97 | 10 | 34.5% | 21 | 97.3% | 1.25% | 0.0% | 92.0% | |
+| **0.99** | **10** | **34.5%** | **26** | **99.2%** | **0.77%** | **0.0%** | **95.1%** | **Optimal Configuration** |
+| 0.99 | 1 | 99.9% | 25 | 99.0% | 9.03% | 0.0% | 42.2% | |
+
+Note: when using amplitude-only, post-rPCA MR = 0.0%
+
+Optimal Dual Threshold Parameters
+n_components         = 0.99   (26 PCs removed, 99.2% variance) (increased from 0.97)
+min_channels_flagged = 10     (34.5% mask — only correct where ≥10/60 channels agree) (increased from 1)
+Post-correction MR   = 0.77%  (dual criterion)
+Reduction            = 95.1%  (vs 30.3% with default n=0.97, min_ch=1)
 
 #### 3.5 Modified Beer-Lambert Law (Step B5)
 - [ ] **3.5.1** Implement Beer-Lambert conversion with TechEn PPF values (690nm: 6.4, 830nm: 5.8)
@@ -574,15 +595,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 49 (53%)
+- **Completed:** 50 (54%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 43
+- **Remaining:** 42
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 16/36 (44%)
+- **Section 3 (Stage B):** 17/36 (47%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
@@ -590,6 +611,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 20, 2026  
-**Next update:** After completing task 3.4.5  
+**Next update:** After completing Section 3.5  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
