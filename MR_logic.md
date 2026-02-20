@@ -14,6 +14,8 @@ ChannelMR = 1 - sum(tIncCh{1}) ./ length(tIncCh{1});
 **hmrR_MotionArtifactByChannel Parameters:**
 1. **tMotion = 0.5:** Time threshold for motion detection window
 2. **tMask = 0.5:** Time to mask around detected motion
+- once motion is detected, rather than deleting or classifying that one point, tMask defines the surrounding area that also gets marked
+- for example, section off a rectangle on a time series graph. Rather than a sliver, the width is now + or - 0.5
 3. **STDEVthresh = 20:** Standard deviation multiplier threshold
 4. **AMPthresh = 5:** Amplitude threshold in OD units
 

@@ -2,8 +2,8 @@
 
 **Last Updated:** February 19, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.2 Complete — Beginning Section 3.3
-**Next Milestone:** Section 3.3 — Motion Artifact Detection on OD (Step B3)
+**Current Stage:** Section 3.3 Complete — Beginning Section 3.4
+**Next Milestone:** Section 3.4 — Recursive PCA Motion Correction (Step B4)
 
 ---
 
@@ -11,18 +11,18 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.2 Complete
-- **Completion:** 42% (39/92 tasks)
+- **Active Stage:** Stage B — Section 3.3 Complete
+- **Completion:** 45% (42/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Section 3.2 complete — `02_bandpass_filtering.py` implements 0.01–0.5 Hz IIR zero-phase filter; PSD verification confirms >99% attenuation above 0.5 Hz (ratio=0.0075); before/after time-series and PSD plots saved for A1.
+- **Latest Achievement:** Section 3.3 complete — Homer3 motion detection adapted for filtered OD with amplitude-only criterion; A1 result: 0% motion flagged (60 ok, 6 bad_channel) ✓; motion artifact visualization saved.
 
 ### Recent Changes
-- [2026-02-19] ✅ Section 3.1 complete (tasks 3.1.1–3.1.5) — built `code/stage_b_preprocessing/01_intensity_to_od.py`; load/mark exclusion channels, MNE OD conversion, std/NaN/Inf quality verification (replaced invalid mean-OD range check), and OD time series plot for A1.
-- [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD high-frequency attenuation ratio 0.0075 ✓; before/after comparison and PSD plots saved.
+- [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
+- [2026-02-19] ✅ Section 3.3 complete (tasks 3.3.1–3.3.3) — built `code/stage_b_preprocessing/03_motion_correct.py`; Homer3 algorithm adapted for filtered OD with amplitude-only criterion (use_amp_only=True, AMPthresh=5.0 OD); A1: 0% motion, 60/60 ok, visualization saved.
 
 ### Next Steps
-1. Section 3.3 — Motion artifact detection on OD in `03_motion_detection.py`.
-2. Section 3.4+ — continue Stage B core pipeline.
+1. Section 3.4 — rPCA motion correction added to `03_motion_correct.py`.
+2. Section 3.5+ — Beer-Lambert and short-channel regression.
 
 ---
 
@@ -210,7 +210,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 3: STAGE B - PREPROCESSING PIPELINE (Week 3-6)
-**Completion:** 9/36 tasks (25%)  
+**Completion:** 12/36 tasks (33%)  
 **Reference:** PRD Section 5
 
 #### 3.1 Intensity to Optical Density (Step B1) ✅ COMPLETE
@@ -228,10 +228,20 @@ Important Note: a mean OD_std of 0.259 is quite high. The expected range of std 
 - [x] **3.2.3** (2026-02-19) Verified filtering effectiveness with PSD plots — Welch PSD overlay (linear + log dB) saved as `A1_psd_comparison.png`; HF power ratio (>0.5 Hz) = 0.0075 ✓
 - [x] **3.2.4** (2026-02-19) Tested filtering on subject A1 — full pipeline runs end-to-end via `run_bandpass_filter()`; outputs in `outputs/stage_b_processed/bandpass_filter/A1/`
 
-#### 3.3 Motion Artifact Detection on OD (Step B3)
-- [ ] **3.3.1** Adapt motion detection algorithm for OD data (reuse Stage A logic)
-- [ ] **3.3.2** Generate motion mask and calculate percentage of motion-corrupted data
-- [ ] **3.3.3** Visualize detected motion artifacts on OD traces for subject A1
+#### 3.3 Motion Artifact Detection on OD (Step B3) ✅ COMPLETE
+
+**Threshold Decision — Amplitude-Only (use_amp_only=True)**
+The original Homer3 dual-criterion (AMPthresh=5.0 OD + STDEVthresh=20×std_diff) flagged 17.4% of A1 samples when applied to filtered OD (expected ~0%). Root cause: bandpass filtering (0.01–0.5 Hz) reduces the derivative std (std_diff) by orders of magnitude, so `mc_thresh = std_diff × 20` shrinks below the level of normal hemodynamic oscillations. This could be an overestimate for the presence of motion artifacts or it could be the ground truth.
+
+Two options were considered if the threshold was too low, and too many motion artifacts were flagged:
+- **Option 1 (dual-criterion, raise multiplier):** Increase STDEVthresh (e.g., 50–100×) to recalibrate for filtered data. Rejected because the correct multiplier is not well-defined and would require dataset-specific tuning — reintroducing the estimation problem that the amplitude criterion avoids.
+- **Option 2 (amplitude only) ✅ Chosen:** Use AMPthresh=5.0 OD units alone. Stable across datasets (absolute OD units, not relative to noise level). Catches large motion spikes that survive the bandpass filter. Result: 0% flagged for A1 ✓, consistent with Stage A expectation.
+
+However, both of these options require finding a new value for STDEVthresh or AMPthresh that captures the motion correctly, which is arbitrary. Note, only using AMPthresh = 5.0 resulted in no motion artifacts being found, meaning Option 2 could have undershot the detection of motion artifacts. Therefore, in the detect_motion_artifact() function, there exists a parameter labeled use_amp_only: bool = True, which can be toggled to determine if the motion detection function utilizes the original threshold or the amplitude specific one. Additionally, for the full pipeline function run_motion_detect(), USE_AMP_ONLY: bool = False is a boolean that can be toggled to adjust the time-series and .csv outputs. 
+
+- [x] **3.3.1** (2026-02-19) Adapted Homer3 motion detection for filtered OD — `detect_motion_artifacts()` with `_detect_motion_homer3_single()` + `_expand_mask_to_signal()`; Stage A key differences: input is filtered OD, output is per-sample boolean mask; `use_amp_only=True` parameter added to switch criterion
+- [x] **3.3.2** (2026-02-19) Generated per-channel motion mask and statistics — `compute_motion_stats()` calculates motion_ratio, pct_corrupted, quality flag (ok/elevated/high/bad_channel); A1: 60 ok, 0 elevated, 0 high, 6 bad_channel; 0.00% mean corrupted ✓
+- [x] **3.3.3** (2026-02-19) Visualized motion artifacts on OD traces — `plot_motion_artifacts()` shows 3 low-motion (blue) + 2 high-motion/bad (red/orange) channels with shaded flagged regions; saved `A1_motion_artifacts.png` in `outputs/stage_b_processed/motion_correction/A1/`
 
 #### 3.4 Recursive PCA Motion Correction (Step B4)
 - [ ] **3.4.1** Implement rPCA algorithm: Apply PCA to motion-corrupted segments only, remove high-variance components (motion), keep low-variance (neural signal), n_components=0.97
@@ -546,15 +556,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 42 (46%)
+- **Completed:** 45 (49%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 50
+- **Remaining:** 47
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 9/36 (25%)
+- **Section 3 (Stage B):** 12/36 (33%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
