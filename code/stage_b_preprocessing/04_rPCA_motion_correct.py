@@ -210,6 +210,190 @@ def apply_rpca_correction(
     return raw_od_corrected, summary
 
 
+# ===========================================================================
+# Task 3.4.2 — Before/After Motion Correction Comparison Visualization
+# ===========================================================================
+
+def plot_before_after_correction(
+    raw_od_filt,
+    raw_od_corrected,
+    motion_results: dict,
+    stats_before: pd.DataFrame,
+    correction_summary: dict,
+    subject_id: str,
+    output_dir: Path,
+    n_high: int = 2,
+    n_low: int = 2,
+    t_window: float = 300.0,
+    verbose: bool = True,
+) -> Path:
+    """
+    Task 3.4.2: Before/after rPCA correction comparison.
+
+    Layout
+    ------
+    For each selected channel one row with three panels:
+      [Before OD | After OD (corrected) | Removed signal (Before − After)]
+
+      Before OD (blue): graph of the filtered OD trace with red shading covering the union motion mask (motion-flagged time pointS)
+        - This is the original filtered OD trace before the rPCA correction
+      After OD (green): graph of the corrected OD trace with red shading covering the union motion mask (motion-flagged time points)
+        - This is the corrected OD trace after the rPCA correction and ideally the actual oxygenation change 
+      Removed signal (red): graph of the difference between the before and after OD traces
+        - This is the actual noise that was removed by rPCA correction. 
+
+      Overall, Before OD = After OD + Removed signal 
+      Blue = Green + Red
+
+    Channel selection: n_high channels with highest motion ratio (most artifact)
+    + n_low channels with lowest motion ratio (least artifact / ok).  Union
+    motion mask is shaded red in the Before and After panels.
+
+    Parameters
+    ----------
+    raw_od_filt      : mne.io.Raw  (Step B2 filtered OD — before correction)
+    raw_od_corrected : mne.io.Raw  (Step B4 corrected OD — after correction)
+    motion_results   : dict        (Step B3 masks + params)
+    stats_before     : pd.DataFrame  (per-channel motion stats, pre-correction)
+    correction_summary : dict      (rPCA metrics from apply_rpca_correction)
+    subject_id       : str
+    output_dir       : Path
+    n_high           : int   number of high-motion channels to display
+    n_low            : int   number of low/ok-motion channels to display
+    t_window         : float display window length in seconds (default 300 s)
+    verbose          : bool
+
+    Returns
+    -------
+    fig_path : Path
+    """
+    sfreq       = raw_od_filt.info['sfreq']
+    n_plot_samp = int(t_window * sfreq)
+    times       = raw_od_filt.times[:n_plot_samp]
+    data_before = raw_od_filt.get_data()
+    data_after  = raw_od_corrected.get_data()
+    ch_names    = raw_od_filt.ch_names
+    bad_set     = set(motion_results['bad_channels'])
+    masks       = motion_results['masks']
+
+    # -- Union motion mask for shading (first t_window seconds) ---------------
+    n_times    = data_before.shape[1]
+    good_names = [ch for ch in ch_names if ch not in bad_set]
+    union_mask = np.zeros(n_times, dtype=bool)
+    for ch in good_names:
+        if ch in masks:
+            union_mask |= masks[ch]
+    union_seg = union_mask[:n_plot_samp]
+
+    # -- Channel selection: highest and lowest motion ratios ------------------
+    good_df = stats_before[stats_before['motion_quality'] != 'bad_channel'].copy()
+    sorted_asc  = good_df.sort_values('motion_ratio', ascending=True)
+    sorted_desc = good_df.sort_values('motion_ratio', ascending=False)
+
+    low_chs  = sorted_asc['channel'].tolist()[:n_low]
+    high_chs = sorted_desc['channel'].tolist()[:n_high]
+    plot_chs = high_chs + low_chs      # high-motion first, then low-motion
+
+    n_rows = len(plot_chs)
+    fig, axes = plt.subplots(n_rows, 3, figsize=(18, 3.2 * n_rows),
+                             sharex=True)
+    if n_rows == 1:
+        axes = axes[np.newaxis, :]
+
+    col_titles = ['Before rPCA (filtered OD)', 'After rPCA (corrected)', 'Removed (Before − After)']
+    col_colors = ['#1f77b4', '#2ca02c', '#d62728']
+
+    for row_idx, ch_name in enumerate(plot_chs):
+        ch_idx  = ch_names.index(ch_name)
+        before  = data_before[ch_idx, :n_plot_samp]
+        after   = data_after[ch_idx, :n_plot_samp]
+        removed = before - after
+
+        row_stats = stats_before[stats_before['channel'] == ch_name].iloc[0]
+        is_high   = row_stats['motion_quality'] in ('elevated_motion', 'high_motion')
+        tag       = f"{row_stats['motion_quality']}  {row_stats['pct_corrupted']:.1f}% flagged"
+        ch_label  = f"{ch_name}  [{tag}]"
+
+        # Per-channel variance ratio: what fraction was removed
+        var_before  = float(np.var(before))
+        var_after   = float(np.var(after))
+        var_removed = float(np.var(removed))
+        var_ratio   = (var_before - var_after) / var_before * 100 if var_before > 0 else 0.0
+
+        for col, (sig, col_color) in enumerate(zip([before, after, removed], col_colors)):
+            ax = axes[row_idx, col]
+
+            # Shade union-mask regions
+            if col < 2:   # shade Before and After, not Removed
+                _shade_union(ax, times, union_seg, color='red', alpha=0.18)
+
+            ax.plot(times, sig, color=col_color, lw=0.65, alpha=0.9)
+            ax.axhline(0, color='k', lw=0.4, ls='--', alpha=0.3)
+            ax.set_ylabel('OD', fontsize=8)
+
+            if row_idx == 0:
+                ax.set_title(col_titles[col], fontsize=10, fontweight='bold',
+                             color=col_color)
+
+            if col == 0:
+                ax.set_ylabel(ch_label, fontsize=7.5, labelpad=4)
+                ax.yaxis.set_label_position('left')
+
+            if col == 2:
+                ax.text(0.98, 0.96, f'Var removed: {var_ratio:.1f}%',
+                        transform=ax.transAxes, ha='right', va='top',
+                        fontsize=7.5, color='#d62728',
+                        bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7))
+
+        axes[row_idx, -1].set_ylabel('OD\n(removed)', fontsize=7.5)
+
+    axes[-1, 0].set_xlabel('Time (s)', fontsize=9)
+    axes[-1, 1].set_xlabel('Time (s)', fontsize=9)
+    axes[-1, 2].set_xlabel('Time (s)', fontsize=9)
+
+    # Add legend patch for motion shading
+    from matplotlib.patches import Patch
+    legend_patch = Patch(color='red', alpha=0.25, label='Motion-flagged (union mask)')
+    fig.legend(handles=[legend_patch], loc='upper right', fontsize=8,
+               bbox_to_anchor=(1.0, 1.01))
+
+    fig.suptitle(
+        f'Subject {subject_id} — rPCA Motion Correction: Before vs After\n'
+        f'n_components={correction_summary["n_components_param"]}  |  '
+        f'PCs removed={correction_summary["n_components_used"]}  |  '
+        f'Variance removed={correction_summary["variance_removed_pct"]:.1f}%  |  '
+        f'Union mask={correction_summary["pct_flagged_union"]:.1f}%  |  '
+        f'Display window: first {t_window:.0f}s',
+        fontsize=10, fontweight='bold', y=1.02,
+    )
+    plt.tight_layout()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig_path = output_dir / f'{subject_id}_rpca_before_after.png'
+    fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    if verbose:
+        print(f"Saved before/after plot : {fig_path}")
+
+    return fig_path
+
+
+def _shade_union(ax, times, mask, color='red', alpha=0.18):
+    """Shade contiguous True blocks in mask."""
+    in_block = False
+    t_start  = None
+    for i, flagged in enumerate(mask):
+        if flagged and not in_block:
+            in_block = True
+            t_start  = times[i]
+        elif not flagged and in_block:
+            in_block = False
+            ax.axvspan(t_start, times[i - 1], color=color, alpha=alpha)
+    if in_block:
+        ax.axvspan(t_start, times[-1], color=color, alpha=alpha)
+
+
 def save_corrected_od(
     raw_od_corrected,
     correction_summary: dict,
@@ -252,7 +436,8 @@ def run_rpca_correction(
     verbose: bool = True,
 ) -> dict:
     """
-    Task 3.4.1 pipeline: Load filtered OD → motion detect → rPCA correct → save.
+    Task 3.4.1–3.4.2 pipeline: Load filtered OD → motion detect → rPCA correct
+    → before/after visualization → save.
 
     Motion detection uses the dual criterion (use_amp_only=False):
       AMPthresh=5.0 OD + STDEVthresh=20×std_diff
@@ -304,7 +489,7 @@ def run_rpca_correction(
     stats_before = compute_motion_stats(motion_results, raw_od_filt, verbose=verbose)
 
     # ---- Step B4.1: rPCA correction ----------------------------------------
-    print("[3/3] Applying rPCA correction (Task 3.4.1)...")
+    print("[3/4] Applying rPCA correction (Task 3.4.1)...")
     raw_od_corrected, correction_summary = apply_rpca_correction(
         raw_od_filt,
         motion_results,
@@ -321,23 +506,41 @@ def run_rpca_correction(
         output_dir,
     )
 
+    # ---- 3.4.2 Before/after visualization ----------------------------------
+    print("[4/4] Generating before/after correction comparison plot (Task 3.4.2)...")
+    fig_path = plot_before_after_correction(
+        raw_od_filt,
+        raw_od_corrected,
+        motion_results,
+        stats_before,
+        correction_summary,
+        subject_id  = subject_id,
+        output_dir  = output_dir,
+        n_high      = 2,
+        n_low       = 2,
+        t_window    = 300.0,
+        verbose     = verbose,
+    )
+
     # ---- Console summary ----------------------------------------------------
     print("\n" + "=" * 70)
-    print(f"✅ Step B4 (Task 3.4.1) complete for subject {subject_id}")
+    print(f"✅ Step B4 (Tasks 3.4.1–3.4.2) complete for subject {subject_id}")
     print(f"  Motion samples (union mask) : {correction_summary['n_flagged']} "
           f"({correction_summary['pct_flagged_union']:.1f}%)")
     print(f"  PCA components removed      : {correction_summary['n_components_used']}")
     print(f"  Variance removed            : {correction_summary['variance_removed_pct']:.1f}%")
+    print(f"  Before/after plot           : {fig_path.name}")
     print(f"  Corrected OD saved to       : {output_dir}")
     print("=" * 70 + "\n")
 
     return {
-        'raw_od_filt':       raw_od_filt,
-        'raw_od_corrected':  raw_od_corrected,
-        'motion_results':    motion_results,
-        'stats_before':      stats_before,
+        'raw_od_filt':        raw_od_filt,
+        'raw_od_corrected':   raw_od_corrected,
+        'motion_results':     motion_results,
+        'stats_before':       stats_before,
         'correction_summary': correction_summary,
-        'output_dir':        output_dir,
+        'output_dir':         output_dir,
+        'fig_path':           fig_path,
     }
 
 

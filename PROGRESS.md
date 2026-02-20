@@ -2,8 +2,8 @@
 
 **Last Updated:** February 20, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.4 In Progress — Task 3.4.1 Complete
-**Next Milestone:** Section 3.4.2 — Before/After Motion Correction Visualization
+**Current Stage:** Section 3.4 In Progress — Tasks 3.4.1–3.4.2 Complete
+**Next Milestone:** Section 3.4.3 — Verify Motion Reduction Post-Correction
 
 ---
 
@@ -11,20 +11,20 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.4 In Progress (3.4.1 complete)
-- **Completion:** 46% (43/92 tasks)
+- **Active Stage:** Stage B — Section 3.4 In Progress (3.4.1–3.4.2 complete)
+- **Completion:** 47% (44/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Task 3.4.1 complete — rPCA algorithm implemented; A1: union mask 99.9% (mathematically expected with 60 channels each flagging ~15%); 21 PCs removed, 97.2% variance removed, 2.8% neural residual preserved.
+- **Latest Achievement:** Task 3.4.2 complete — before/after correction comparison plot generated (4 channels: 2 high-motion + 2 low-motion, 3 panels per channel: Before | After | Removed, first 300s, red-shaded union mask); saved `A1_rpca_before_after.png`.
 
 ### Recent Changes
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
 - [2026-02-19] ✅ Section 3.3 complete (tasks 3.3.1–3.3.3) — built `code/stage_b_preprocessing/03_motion_correct.py`; Homer3 algorithm adapted for filtered OD with amplitude-only criterion (use_amp_only=True, AMPthresh=5.0 OD); A1: 0% motion, 60/60 ok, visualization saved.
 - [2026-02-20] ✅ Task 3.4.1 complete — rPCA algorithm implemented in `code/stage_b_preprocessing/04_rPCA_motion_correct.py`; global PCA on union motion mask; A1: 26,470/26,500 samples in union mask (99.9%), 21 PCs × 97.2% variance removed, neural residual 2.8%; corrected OD saved as `.fif`.
+- [2026-02-20] ✅ Task 3.4.2 complete — before/after comparison plot; 4 channels (2 high-motion, 2 low-motion), 3-panel layout (Before | After | Removed), red union-mask shading, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`.
 
 ### Next Steps
-1. Task 3.4.2 — Before/after motion correction comparison visualization.
-2. Task 3.4.3 — Verify motion reduction by re-running motion detection on corrected OD.
-3. Tasks 3.4.4–3.4.5 — Document effectiveness and tune if needed.
+1. Task 3.4.3 — Re-run motion detection on corrected OD and compare motion ratios.
+2. Tasks 3.4.4–3.4.5 — Document effectiveness and tune if needed.
 
 ---
 
@@ -252,7 +252,7 @@ Note, the union mask covers almost 100% of the recording because each channel in
 2) Modify the OR mask with a summation threshold. Only include a time point as having motion if > X channels simulatenously flag this motion.
 3) Apply grouped union (masks for anatomical clusters / groups of channels (Ex: frontal channels, motor chanells, etc.)). This is because noise in the front region might not affect the channels in the back.
 
-- [ ] **3.4.2** Create before/after motion correction comparison visualization
+- [x] **3.4.2** (2026-02-20) Before/after comparison visualization: 4 channels (2 highest-motion, 2 lowest-motion), 3-panel layout (Before | After | Removed), first 300 s, red shading for union motion mask, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`
 - [ ] **3.4.3** Verify motion reduction by recalculating motion ratio after correction
 - [ ] **3.4.4** Test rPCA on subject A1 and document effectiveness
 - [ ] **3.4.5** Tune rPCA parameters if motion artifacts persist (document parameter changes)
@@ -563,15 +563,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 46 (50%)
+- **Completed:** 47 (51%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 46
+- **Remaining:** 45
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 13/36 (36%)
+- **Section 3 (Stage B):** 14/36 (39%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
@@ -579,6 +579,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 20, 2026  
-**Next update:** After completing task 3.4.2  
+**Next update:** After completing task 3.4.3  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
