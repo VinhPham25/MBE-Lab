@@ -394,6 +394,276 @@ def _shade_union(ax, times, mask, color='red', alpha=0.18):
         ax.axvspan(t_start, times[-1], color=color, alpha=alpha)
 
 
+# ===========================================================================
+# Tasks 3.4.3 & 3.4.4 — Post-correction motion verification and effectiveness
+# ===========================================================================
+
+def verify_motion_reduction(
+    raw_od_filt,
+    raw_od_corrected,
+    motion_results_before: dict,
+    stats_before: pd.DataFrame,
+    amp_thresh: float = 5.0,
+    stdev_thresh: float = 20.0,
+    t_motion: float = 0.5,
+    t_mask: float = 0.5,
+    verbose: bool = True,
+) -> tuple:
+    """
+    Task 3.4.3: Re-run motion detection on rPCA-corrected OD and quantify
+    the reduction in motion artifacts vs the pre-correction baseline.
+
+    Both the dual criterion (AMPthresh + STDEVthresh) and the amplitude-only
+    criterion are evaluated on the corrected signal to give a complete picture
+    of how the correction changed signal statistics.
+
+    Parameters
+    ----------
+    raw_od_filt      : mne.io.Raw  (before — filtered OD)
+    raw_od_corrected : mne.io.Raw  (after  — rPCA corrected OD)
+    motion_results_before : dict   (Step B3 masks on pre-correction OD)
+    stats_before     : pd.DataFrame
+    amp_thresh, stdev_thresh, t_motion, t_mask : float
+        Same detection parameters used in Step B3.
+    verbose : bool
+
+    Returns
+    -------
+    stats_after : pd.DataFrame
+        Per-channel motion stats on the corrected OD (dual criterion).
+    comparison_df : pd.DataFrame
+        Per-channel comparison: channel, motion_ratio_before, motion_ratio_after,
+        reduction_abs, reduction_pct, quality_before, quality_after.
+    reduction_summary : dict
+        Aggregate metrics: mean/median motion ratio before and after,
+        mean reduction, n_channels_improved.
+    """
+    if verbose:
+        print("\n" + "=" * 70)
+        print("TASK 3.4.3 — POST-CORRECTION MOTION VERIFICATION")
+        print("=" * 70)
+        print("Re-running Homer3 dual criterion on rPCA-corrected OD...")
+
+    # Re-detect on corrected data (dual criterion, same params as B3)
+    motion_results_after = detect_motion_artifacts(
+        raw_od_corrected,
+        amp_thresh   = amp_thresh,
+        stdev_thresh = stdev_thresh,
+        t_motion     = t_motion,
+        t_mask       = t_mask,
+        use_amp_only = False,   # dual criterion — same as before
+        verbose      = False,
+    )
+    stats_after = compute_motion_stats(
+        motion_results_after, raw_od_corrected, verbose=False
+    )
+
+    # Also run amplitude-only on corrected to see if large spikes remain
+    motion_results_amp_only = detect_motion_artifacts(
+        raw_od_corrected,
+        amp_thresh   = amp_thresh,
+        stdev_thresh = stdev_thresh,
+        t_motion     = t_motion,
+        t_mask       = t_mask,
+        use_amp_only = True,
+        verbose      = False,
+    )
+    stats_amp_only = compute_motion_stats(
+        motion_results_amp_only, raw_od_corrected, verbose=False
+    )
+
+    # Build per-channel comparison DataFrame
+    bad_set = set(motion_results_before['bad_channels'])
+    records = []
+    for ch in raw_od_filt.ch_names:
+        if ch in bad_set:
+            continue
+        row_b = stats_before[stats_before['channel'] == ch].iloc[0]
+        row_a = stats_after[stats_after['channel'] == ch].iloc[0]
+        row_amp = stats_amp_only[stats_amp_only['channel'] == ch].iloc[0]
+
+        mr_before = float(row_b['motion_ratio'])
+        mr_after  = float(row_a['motion_ratio'])
+        mr_amp    = float(row_amp['motion_ratio'])
+        reduction_abs = mr_before - mr_after
+        reduction_pct = (reduction_abs / mr_before * 100) if mr_before > 0 else 0.0
+
+        records.append({
+            'channel':            ch,
+            'wavelength':         int(row_b['wavelength']),
+            'motion_ratio_before': round(mr_before, 4),
+            'motion_ratio_after':  round(mr_after, 4),
+            'motion_ratio_amp_only': round(mr_amp, 4),
+            'reduction_abs':       round(reduction_abs, 4),
+            'reduction_pct':       round(reduction_pct, 2),
+            'quality_before':      row_b['motion_quality'],
+            'quality_after':       row_a['motion_quality'],
+        })
+
+    comparison_df = pd.DataFrame(records)
+
+    # Aggregate summary
+    good_before = stats_before[stats_before['motion_quality'] != 'bad_channel']
+    good_after  = stats_after[stats_after['motion_quality']  != 'bad_channel']
+    good_amp    = stats_amp_only[stats_amp_only['motion_quality'] != 'bad_channel']
+
+    mean_before = float(good_before['motion_ratio'].mean())
+    mean_after  = float(good_after['motion_ratio'].mean())
+    mean_amp    = float(good_amp['motion_ratio'].mean())
+    n_improved  = int((comparison_df['reduction_abs'] > 0).sum())
+    n_worse     = int((comparison_df['reduction_abs'] < 0).sum())
+
+    reduction_summary = {
+        'mean_motion_ratio_before':      round(mean_before, 4),
+        'mean_motion_ratio_after_dual':  round(mean_after,  4),
+        'mean_motion_ratio_after_amp':   round(mean_amp,    4),
+        'mean_reduction_abs':            round(mean_before - mean_after, 4),
+        'mean_reduction_pct':            round((mean_before - mean_after) / mean_before * 100, 2) if mean_before > 0 else 0.0,
+        'n_channels_improved':           n_improved,
+        'n_channels_worse':              n_worse,
+        'n_channels_unchanged':          len(comparison_df) - n_improved - n_worse,
+    }
+
+    if verbose:
+        print(f"\n  {'Criterion':<30} {'Before':>10} {'After':>10} {'Reduction':>12}")
+        print(f"  {'-'*64}")
+        print(f"  {'Dual (AMP + STDEV)':<30} "
+              f"{mean_before*100:>9.1f}%  "
+              f"{mean_after*100:>9.1f}%  "
+              f"{(mean_before-mean_after)*100:>10.1f}%")
+        print(f"  {'Amplitude-only (≥5.0 OD)':<30} "
+              f"{'—':>10}  "
+              f"{mean_amp*100:>9.1f}%  {'—':>12}")
+        print(f"\n  Channels improved : {n_improved} / {len(comparison_df)}")
+        print(f"  Channels worse    : {n_worse}")
+        print("=" * 70 + "\n")
+
+    return stats_after, comparison_df, reduction_summary
+
+
+def plot_motion_reduction_summary(
+    comparison_df: pd.DataFrame,
+    reduction_summary: dict,
+    correction_summary: dict,
+    subject_id: str,
+    output_dir: Path,
+    verbose: bool = True,
+) -> Path:
+    """
+    Task 3.4.4: Visualize per-channel motion reduction (before vs after rPCA).
+
+    Figure layout (2 rows):
+      Row 1: Per-channel grouped bar chart — Before (orange) vs After (teal)
+             motion ratio, sorted by before-correction ratio.
+      Row 2: Per-channel reduction (%) bar chart — green = improved,
+             red = worse.
+
+    Parameters
+    ----------
+    comparison_df    : pd.DataFrame  (output of verify_motion_reduction)
+    reduction_summary : dict
+    correction_summary : dict        (rPCA metrics)
+    subject_id       : str
+    output_dir       : Path
+    verbose          : bool
+
+    Returns
+    -------
+    fig_path : Path
+    """
+    df = comparison_df.copy().sort_values('motion_ratio_before', ascending=False)
+    n_ch = len(df)
+    x    = np.arange(n_ch)
+    w    = 0.38
+
+    fig, axes = plt.subplots(2, 1, figsize=(max(14, n_ch * 0.22), 9),
+                             gridspec_kw={'height_ratios': [2, 1]})
+
+    # ---- Row 1: Grouped bars Before / After ---------------------------------
+    ax1 = axes[0]
+    bars_b = ax1.bar(x - w/2, df['motion_ratio_before'] * 100,
+                     width=w, color='#ff7f0e', alpha=0.85, label='Before rPCA')
+    bars_a = ax1.bar(x + w/2, df['motion_ratio_after'] * 100,
+                     width=w, color='#17becf', alpha=0.85, label='After rPCA (dual)')
+
+    # Add amp-only dots on After bar
+    ax1.scatter(x + w/2, df['motion_ratio_amp_only'] * 100,
+                color='#2ca02c', s=18, zorder=5, label='After rPCA (amp-only)',
+                marker='D')
+
+    ax1.axhline(10, color='gray', lw=0.8, ls='--', alpha=0.6, label='Elevated threshold (10%)')
+    ax1.set_ylabel('Motion Ratio (%)', fontsize=10)
+    ax1.set_title(
+        f'Subject {subject_id} — Per-Channel Motion Ratio: Before vs After rPCA\n'
+        f'n_components={correction_summary["n_components_param"]}  |  '
+        f'PCs removed={correction_summary["n_components_used"]}  |  '
+        f'Variance removed={correction_summary["variance_removed_pct"]:.1f}%',
+        fontsize=10, fontweight='bold',
+    )
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(df['channel'], rotation=90, fontsize=5.5)
+    ax1.legend(fontsize=8, loc='upper right')
+
+    # Annotate aggregate stats in top-right corner
+    stats_text = (
+        f"Mean before : {reduction_summary['mean_motion_ratio_before']*100:.1f}%\n"
+        f"Mean after  : {reduction_summary['mean_motion_ratio_after_dual']*100:.1f}%  (dual)\n"
+        f"Mean after  : {reduction_summary['mean_motion_ratio_after_amp']*100:.1f}%  (amp-only)\n"
+        f"Mean Δ      : {reduction_summary['mean_reduction_pct']:.1f}% reduction\n"
+        f"Improved    : {reduction_summary['n_channels_improved']}/{n_ch} channels"
+    )
+    ax1.text(0.01, 0.97, stats_text, transform=ax1.transAxes,
+             fontsize=8, va='top', ha='left',
+             bbox=dict(boxstyle='round,pad=0.4', fc='white', alpha=0.85))
+
+    # ---- Row 2: Reduction (%) per channel -----------------------------------
+    ax2 = axes[1]
+    colors_red = ['#2ca02c' if v >= 0 else '#d62728'
+                  for v in df['reduction_pct']]
+    ax2.bar(x, df['reduction_pct'], color=colors_red, alpha=0.85, width=0.7)
+    ax2.axhline(0, color='k', lw=0.8)
+    ax2.set_ylabel('Reduction (%)', fontsize=10)
+    ax2.set_xlabel('Channel', fontsize=10)
+    ax2.set_title('Per-Channel Motion Ratio Reduction After rPCA  '
+                  '(green = improved, red = worse)', fontsize=9)
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(df['channel'], rotation=90, fontsize=5.5)
+
+    plt.tight_layout()
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    fig_path = output_dir / f'{subject_id}_rpca_motion_reduction.png'
+    fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+    if verbose:
+        print(f"Saved motion reduction plot : {fig_path}")
+
+    return fig_path
+
+
+def save_motion_comparison(
+    comparison_df: pd.DataFrame,
+    reduction_summary: dict,
+    subject_id: str,
+    output_dir: Path,
+) -> tuple:
+    """Save per-channel comparison CSV and reduction summary JSON."""
+    import json
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    csv_path  = output_dir / f'{subject_id}_rpca_motion_comparison.csv'
+    json_path = output_dir / f'{subject_id}_rpca_effectiveness.json'
+
+    comparison_df.to_csv(csv_path, index=False)
+    with open(json_path, 'w') as f:
+        json.dump(reduction_summary, f, indent=2)
+
+    print(f"Saved motion comparison CSV : {csv_path}")
+    print(f"Saved effectiveness JSON    : {json_path}")
+    return csv_path, json_path
+
+
 def save_corrected_od(
     raw_od_corrected,
     correction_summary: dict,
@@ -436,8 +706,9 @@ def run_rpca_correction(
     verbose: bool = True,
 ) -> dict:
     """
-    Task 3.4.1–3.4.2 pipeline: Load filtered OD → motion detect → rPCA correct
-    → before/after visualization → save.
+    Task 3.4.1–3.4.4 pipeline: Load filtered OD → motion detect → rPCA correct
+    → save → before/after visualization → post-correction motion verification
+    → effectiveness documentation.
 
     Motion detection uses the dual criterion (use_amp_only=False):
       AMPthresh=5.0 OD + STDEVthresh=20×std_diff
@@ -507,8 +778,8 @@ def run_rpca_correction(
     )
 
     # ---- 3.4.2 Before/after visualization ----------------------------------
-    print("[4/4] Generating before/after correction comparison plot (Task 3.4.2)...")
-    fig_path = plot_before_after_correction(
+    print("[4/6] Generating before/after correction comparison plot (Task 3.4.2)...")
+    fig_ba_path = plot_before_after_correction(
         raw_od_filt,
         raw_od_corrected,
         motion_results,
@@ -522,15 +793,51 @@ def run_rpca_correction(
         verbose     = verbose,
     )
 
+    # ---- 3.4.3 Post-correction motion verification -------------------------
+    print("[5/6] Verifying motion reduction post-rPCA (Task 3.4.3)...")
+    b3_params = get_stage_params('stage_b', config)['motion_detection']
+    stats_after, comparison_df, reduction_summary = verify_motion_reduction(
+        raw_od_filt,
+        raw_od_corrected,
+        motion_results,
+        stats_before,
+        amp_thresh   = float(b3_params.get('AMPthresh', 5.0)),
+        stdev_thresh = float(b3_params['tStdev']),
+        t_motion     = float(b3_params['tMotion']),
+        t_mask       = 0.5,
+        verbose      = verbose,
+    )
+
+    # ---- 3.4.4 Effectiveness documentation ---------------------------------
+    print("[6/6] Documenting rPCA effectiveness (Task 3.4.4)...")
+    fig_red_path = plot_motion_reduction_summary(
+        comparison_df,
+        reduction_summary,
+        correction_summary,
+        subject_id = subject_id,
+        output_dir = output_dir,
+        verbose    = verbose,
+    )
+    csv_path, eff_path = save_motion_comparison(
+        comparison_df, reduction_summary, subject_id, output_dir
+    )
+
     # ---- Console summary ----------------------------------------------------
+    rs = reduction_summary
     print("\n" + "=" * 70)
-    print(f"✅ Step B4 (Tasks 3.4.1–3.4.2) complete for subject {subject_id}")
-    print(f"  Motion samples (union mask) : {correction_summary['n_flagged']} "
+    print(f"✅ Step B4 (Tasks 3.4.1–3.4.4) complete for subject {subject_id}")
+    print(f"\n  rPCA Correction:")
+    print(f"    Union mask samples  : {correction_summary['n_flagged']} "
           f"({correction_summary['pct_flagged_union']:.1f}%)")
-    print(f"  PCA components removed      : {correction_summary['n_components_used']}")
-    print(f"  Variance removed            : {correction_summary['variance_removed_pct']:.1f}%")
-    print(f"  Before/after plot           : {fig_path.name}")
-    print(f"  Corrected OD saved to       : {output_dir}")
+    print(f"    PCs removed         : {correction_summary['n_components_used']}")
+    print(f"    Variance removed    : {correction_summary['variance_removed_pct']:.1f}%")
+    print(f"\n  Motion Reduction Verification:")
+    print(f"    Mean MR before      : {rs['mean_motion_ratio_before']*100:.1f}%  (dual criterion)")
+    print(f"    Mean MR after       : {rs['mean_motion_ratio_after_dual']*100:.1f}%  (dual criterion)")
+    print(f"    Mean MR after       : {rs['mean_motion_ratio_after_amp']*100:.1f}%  (amp-only)")
+    print(f"    Mean reduction      : {rs['mean_reduction_pct']:.1f}%")
+    print(f"    Channels improved   : {rs['n_channels_improved']}/{len(comparison_df)}")
+    print(f"\n  Outputs saved to: {output_dir}")
     print("=" * 70 + "\n")
 
     return {
@@ -538,9 +845,13 @@ def run_rpca_correction(
         'raw_od_corrected':   raw_od_corrected,
         'motion_results':     motion_results,
         'stats_before':       stats_before,
+        'stats_after':        stats_after,
+        'comparison_df':      comparison_df,
+        'reduction_summary':  reduction_summary,
         'correction_summary': correction_summary,
         'output_dir':         output_dir,
-        'fig_path':           fig_path,
+        'fig_before_after':   fig_ba_path,
+        'fig_reduction':      fig_red_path,
     }
 
 

@@ -2,8 +2,8 @@
 
 **Last Updated:** February 20, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.4 In Progress — Tasks 3.4.1–3.4.2 Complete
-**Next Milestone:** Section 3.4.3 — Verify Motion Reduction Post-Correction
+**Current Stage:** Section 3.4 In Progress — Tasks 3.4.1–3.4.4 Complete
+**Next Milestone:** Section 3.4.5 — Tune rPCA Parameters
 
 ---
 
@@ -11,20 +11,20 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.4 In Progress (3.4.1–3.4.2 complete)
-- **Completion:** 47% (44/92 tasks)
+- **Active Stage:** Stage B — Section 3.4 In Progress (3.4.1–3.4.4 complete)
+- **Completion:** 49% (45/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Task 3.4.2 complete — before/after correction comparison plot generated (4 channels: 2 high-motion + 2 low-motion, 3 panels per channel: Before | After | Removed, first 300s, red-shaded union mask); saved `A1_rpca_before_after.png`.
+- **Latest Achievement:** Tasks 3.4.3–3.4.4 complete — post-correction verification: dual-criterion MR 15.6%→10.9% (30.3% relative reduction); amplitude-only MR 0.0% after correction (no large spikes remain); 34/60 channels improved; motion reduction bar chart + comparison CSV saved.
 
 ### Recent Changes
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
 - [2026-02-19] ✅ Section 3.3 complete (tasks 3.3.1–3.3.3) — built `code/stage_b_preprocessing/03_motion_correct.py`; Homer3 algorithm adapted for filtered OD with amplitude-only criterion (use_amp_only=True, AMPthresh=5.0 OD); A1: 0% motion, 60/60 ok, visualization saved.
 - [2026-02-20] ✅ Task 3.4.1 complete — rPCA algorithm implemented in `code/stage_b_preprocessing/04_rPCA_motion_correct.py`; global PCA on union motion mask; A1: 26,470/26,500 samples in union mask (99.9%), 21 PCs × 97.2% variance removed, neural residual 2.8%; corrected OD saved as `.fif`.
 - [2026-02-20] ✅ Task 3.4.2 complete — before/after comparison plot; 4 channels (2 high-motion, 2 low-motion), 3-panel layout (Before | After | Removed), red union-mask shading, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`.
+- [2026-02-20] ✅ Tasks 3.4.3–3.4.4 complete — post-correction motion detection on corrected OD; dual-criterion: 15.6%→10.9% mean MR (30.3% relative reduction); amplitude-only: 0.0% (all large spikes removed); 34/60 ch improved, 26/60 worse (STDEVthresh still fires on low-variance residual); saved `A1_rpca_motion_reduction.png`, `A1_rpca_motion_comparison.csv`, `A1_rpca_effectiveness.json`.
 
 ### Next Steps
-1. Task 3.4.3 — Re-run motion detection on corrected OD and compare motion ratios.
-2. Tasks 3.4.4–3.4.5 — Document effectiveness and tune if needed.
+1. Task 3.4.5 — Evaluate whether motion artifacts persist; document parameter recommendations.
 
 ---
 
@@ -253,8 +253,19 @@ Note, the union mask covers almost 100% of the recording because each channel in
 3) Apply grouped union (masks for anatomical clusters / groups of channels (Ex: frontal channels, motor chanells, etc.)). This is because noise in the front region might not affect the channels in the back.
 
 - [x] **3.4.2** (2026-02-20) Before/after comparison visualization: 4 channels (2 highest-motion, 2 lowest-motion), 3-panel layout (Before | After | Removed), first 300 s, red shading for union motion mask, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`
-- [ ] **3.4.3** Verify motion reduction by recalculating motion ratio after correction
-- [ ] **3.4.4** Test rPCA on subject A1 and document effectiveness
+- [x] **3.4.3** (2026-02-20) Re-ran Homer3 dual criterion on rPCA-corrected OD: mean MR 15.6%→10.9% (30.3% relative reduction); amplitude-only 0.0% (no large OD spikes remain); 34/60 channels improved, 26/60 worse (relative STDEVthresh still fires on low-variance residual — expected behavior)
+- [x] **3.4.4** (2026-02-20) A1 effectiveness: dual reduction 4.7 pp absolute (30.3% relative); amplitude criterion fully cleared; confirmed rPCA removes dominant motion subspace leaving physiological residual; saved `A1_rpca_motion_reduction.png`, `A1_rpca_motion_comparison.csv`, `A1_rpca_effectiveness.json`
+
+Motion Reduction Results (Subject A1)
+Metric	                                Before rPCA	      After rPCA
+Mean motion ratio (dual criterion)	         15.6%	            10.9%
+Relative reduction	                         —	               30.3%
+Amplitude-only (≥5.0 OD spikes)              —  	            0.0% ✓
+Channels improved / total                   	—	               34/60
+Channels worse                            	—	               26/60
+
+The amplitude crtierion indicates large-motion artifacts were removed with 30.3% relative reduction in dual-criterion (STDEV thresh and ampltidue) flagging overall. 26 channels worsened because STDEVthresh is relative based on the equation max_diff > std_diff x 20. After rPCA, the signal's derivative std decreases significantly because most noise is removed. The smaller mc_thresh makes the criterion more sensitive and flags normal physiological noise as motion. This relates to the same sensitivity problem documented in Section 3.3 but is now applied to corrected data. This metric has been noted and will be revisited.
+
 - [ ] **3.4.5** Tune rPCA parameters if motion artifacts persist (document parameter changes)
 
 #### 3.5 Modified Beer-Lambert Law (Step B5)
@@ -563,15 +574,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 47 (51%)
+- **Completed:** 49 (53%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 45
+- **Remaining:** 43
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 14/36 (39%)
+- **Section 3 (Stage B):** 16/36 (44%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
@@ -579,6 +590,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 20, 2026  
-**Next update:** After completing task 3.4.3  
+**Next update:** After completing task 3.4.5  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)
