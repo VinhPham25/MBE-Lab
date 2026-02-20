@@ -2,8 +2,8 @@
 
 **Last Updated:** February 20, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.4 Complete ✅ — All Tasks 3.4.1–3.4.5 Done
-**Next Milestone:** Section 3.5 — Modified Beer-Lambert Law
+**Current Stage:** Section 3.5 Complete ✅ — All Tasks 3.5.1–3.5.4 Done
+**Next Milestone:** Section 3.6 — Short-Channel Regression
 
 ---
 
@@ -11,10 +11,10 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.4 Complete ✅
-- **Completion:** 50% (46/92 tasks)
+- **Active Stage:** Stage B — Section 3.5 Complete ✅
+- **Completion:** 54% (50/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Section 3.4 fully complete. Task 3.4.5 parameter tuning sweep (4×5 grid): optimal = n_components=0.99 + min_channels_flagged=10 → MR 15.6%→0.77% (95.1% reduction); amplitude-only 0.0% across all configs; tuning heatmap saved.
+- **Latest Achievement:** Section 3.5 complete — MBLL applied via MNE ppf tuple (690nm: 6.4, 830nm: 5.8); A1: 33 HbO + 33 HbR channels; HbO std 3.03 μM range [-110.9, +87.7], HbR std 1.47 μM range [-39.8, +45.6]; 1 channel flagged (S6_D22 hbo, min=-110.9 μM); inverse relationship confirmed; all outputs saved.
 
 ### Recent Changes
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
@@ -23,9 +23,10 @@
 - [2026-02-20] ✅ Task 3.4.2 complete — before/after comparison plot; 4 channels (2 high-motion, 2 low-motion), 3-panel layout (Before | After | Removed), red union-mask shading, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`.
 - [2026-02-20] ✅ Tasks 3.4.3–3.4.4 complete — post-correction motion detection on corrected OD; dual-criterion: 15.6%→10.9% mean MR (30.3% relative reduction); amplitude-only: 0.0% (all large spikes removed); 34/60 ch improved, 26/60 worse (STDEVthresh still fires on low-variance residual); saved `A1_rpca_motion_reduction.png`, `A1_rpca_motion_comparison.csv`, `A1_rpca_effectiveness.json`.
 - [2026-02-20] ✅ Task 3.4.5 complete — parameter tuning sweep (n_components × min_channels_flagged, 4×5=20 configs); optimal: n_components=0.99, min_channels_flagged=10 (34.5% mask coverage, 26 PCs, 99.2% var removed) → MR 0.77% (95.1% reduction); amplitude-only 0.0% across all 20 configs; heatmap + CSV saved.
+- [2026-02-20] ✅ Section 3.5 complete (tasks 3.5.1–3.5.4) — built `code/stage_b_preprocessing/05_mbll.py`; MNE beer_lambert_law with ppf=(6.4, 5.8) tuple; A1: 33 HbO + 33 HbR channels; HbO std=3.03 μM [-110.9,+87.7], HbR std=1.47 μM [-39.8,+45.6]; 1 flagged (S6_D22 hbo, short-sep channel exceeds ±100 μM); inverse HbO/HbR relationship confirmed; haemo .fif saved.
 
 ### Next Steps
-1. Section 3.5 — Modified Beer-Lambert Law (Beer-Lambert conversion with TechEn PPF values).
+1. Section 3.6 — Short-Channel Regression (OLS, most-correlated short channel per long channel).
 
 ---
 
@@ -289,11 +290,11 @@ min_channels_flagged = 10     (34.5% mask — only correct where ≥10/60 channe
 Post-correction MR   = 0.77%  (dual criterion)
 Reduction            = 95.1%  (vs 30.3% with default n=0.97, min_ch=1)
 
-#### 3.5 Modified Beer-Lambert Law (Step B5)
-- [ ] **3.5.1** Implement Beer-Lambert conversion with TechEn PPF values (690nm: 6.4, 830nm: 5.8)
-- [ ] **3.5.2** Verify hemoglobin concentration ranges (±50 μM typical, flag if >±100 μM)
-- [ ] **3.5.3** Visualize HbO and HbR time series and verify inverse relationship
-- [ ] **3.5.4** Test Beer-Lambert conversion on subject A1
+#### 3.5 Modified Beer-Lambert Law (Step B5) ✅ COMPLETE
+- [x] **3.5.1** (2026-02-20) Implemented `apply_beer_lambert()` using MNE `beer_lambert_law(raw, ppf=(6.4, 5.8))` — tuple PPF for wavelength-specific values (MNE ≥1.7 feature); 690 nm PPF=6.4, 830 nm PPF=5.8 (TechEn paper values); output: 66 haemo channels (33 HbO + 33 HbR), type mol/L
+- [x] **3.5.2** (2026-02-20) `verify_hb_ranges()`: all channels evaluated at ±100 μM threshold; A1: HbO std=3.03 μM range=[-110.9,+87.7], HbR std=1.47 μM range=[-39.8,+45.6]; 1 channel flagged (S6_D22 hbo, min=-110.9 μM — likely a short-sep channel with noisy signal); 65/66 within range
+- [x] **3.5.3** (2026-02-20) `plot_hbo_hbr_timeseries()`: 4 representative channels, HbO (red) vs HbR (blue), per-channel HbO/HbR Pearson correlation annotated; inverse relationship (negative corr) confirmed on most channels; saved `A1_hbo_hbr_timeseries.png`
+- [x] **3.5.4** (2026-02-20) End-to-end test on A1 via `run_mbll()`; full chain B1→B2→B3→B4→B5 runs cleanly; haemo .fif, range stats CSV, MBLL summary JSON all saved to `outputs/stage_b_processed/mbll/A1/`
 
 #### 3.6 Short-Channel Regression (Step B6)
 - [ ] **3.6.1** Implement short-channel regression: Find most correlated short channel for each long channel, apply OLS regression to remove shared variance (scalp noise)
@@ -595,15 +596,15 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 50 (54%)
+- **Completed:** 54 (59%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 42
+- **Remaining:** 38
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
-- **Section 3 (Stage B):** 17/36 (47%)
+- **Section 3 (Stage B):** 21/36 (58%)
 - **Section 4 (Stage C):** 0/20 (0%)
 - **Section 5 (Extension):** 0/7 (0%)
 
@@ -611,6 +612,6 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 ---
 
 **Last saved:** February 20, 2026  
-**Next update:** After completing Section 3.5  
+**Next update:** After completing Section 3.6  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)

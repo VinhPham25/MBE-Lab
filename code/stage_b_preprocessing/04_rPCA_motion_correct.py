@@ -994,6 +994,7 @@ def run_rpca_correction(
     dataset_name: str,
     subject_id: str,
     n_components: float = 0.97,
+    min_channels_flagged: int = 1,
     verbose: bool = True,
 ) -> dict:
     """
@@ -1011,6 +1012,7 @@ def run_rpca_correction(
     dataset_name : str
     subject_id   : str
     n_components : float  PCA variance threshold (default 0.97)
+    min_channels_flagged : int  vote threshold for the motion mask (default 1 = OR union)
     verbose      : bool
 
     Returns
@@ -1055,8 +1057,9 @@ def run_rpca_correction(
     raw_od_corrected, correction_summary = apply_rpca_correction(
         raw_od_filt,
         motion_results,
-        n_components = n_components,
-        verbose      = verbose,
+        n_components         = n_components,
+        min_channels_flagged = min_channels_flagged,
+        verbose              = verbose,
     )
 
     # ---- Save outputs -------------------------------------------------------
