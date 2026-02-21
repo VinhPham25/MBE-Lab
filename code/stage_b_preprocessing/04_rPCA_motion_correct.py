@@ -16,13 +16,16 @@ OD data.  For subject A1 this flags a mean of ~17.4% of samples per channel
 
 rPCA motion correction (Homer3: hmrR_PCAfilter):
 1.  Compute union motion mask (OR across all good channels) → motion time points
+    - The bad channels were previously excluded because they were not in the 80-140 dB range
 2.  Extract corrupted samples as data matrix X: shape (n_flagged, n_good_channels)
 3.  PCA(n_components=0.97): retain the principal components that together explain
     97% of the variance in X.  In motion-corrupted windows these high-variance
     components correspond to the broadband motion artifact.
 4.  Reconstruct the motion signal: X_motion = PCA.inverse_transform(PCA.transform(X))
+    - Using the k number of components that explain 97% of variance, use those components to reconstruct the motion signal
 5.  Corrected = original − motion_reconstruction  → keeps the low-variance neural
     residual at the corrupted time points.
+    - We essentially subtract the motion signal from the original signal to get the corrected signal
 6.  All un-flagged time points are unchanged.
 
 Why global (not segment-by-segment)?
