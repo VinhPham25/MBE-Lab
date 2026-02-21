@@ -973,7 +973,7 @@ def save_corrected_od(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save corrected OD as .fif
-    fif_path = output_dir / f"{subject_id}_od_corrected_rpca.fif"
+    fif_path = output_dir / f"{subject_id}_od_corrected_rpca_raw.fif"
     raw_od_corrected.save(str(fif_path), overwrite=True, verbose=False)
     print(f"Saved corrected OD : {fif_path}")
 

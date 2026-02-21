@@ -16,6 +16,17 @@ Modified Beer-Lambert Law (Delpy et al. 1988):
 
     ΔOD_λ = Σ_i (ε_i_λ × ΔC_i) × d × PPF_λ
 
+    Colloquially:
+    - Light Loss = Concentration × Extinction Coefficient × Path Length × Partial Path-length Factor
+    - Light Loss = (Likelihood of hitting a hemoglobin molecule) × (How strongly the hemoglobin molecule absorbs light) × (How far the light travels through the tissue) × (How effectively the light travels through the tissue)
+
+    ΔOD_λ = change in optical density; the change in light attenuation at a specific wavelength
+    ε_i_λ = molar extinction coefficient; a constant descirbing how strongly a substance absorbs light at a specific wavelength
+    ΔC_i = change in concentration; the change in concentration of a specific substance
+    d = path length; the distance the light travels through the substance (30-40 mm for long-separation channels, 10-15 mm for short-separation channels)
+    PPF_λ = partial path-length factor; a constant describing the effective path length of light through the tissue at a specific wavelength
+
+
 Rearranged for a two-wavelength (690 nm, 830 nm) system:
 
     [ΔHbO]       [ε_HbO_690  ε_HbR_690]⁻¹   [ΔOD_690 / PPF_690]
@@ -387,7 +398,7 @@ def save_haemo_data(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Save haemo .fif
-    fif_path = output_dir / f'{subject_id}_haemo.fif'
+    fif_path = output_dir / f'{subject_id}_haemo_raw.fif'  # MNE-compliant filename
     raw_haemo.save(str(fif_path), overwrite=True, verbose=False)
     print(f"Saved haemo .fif       : {fif_path}")
 
@@ -514,7 +525,7 @@ def run_mbll(
         hb_stats_df,
         subject_id = subject_id,
         output_dir = output_dir,
-        n_channels = 4,
+        n_channels = 10,
         t_window   = 300.0,
         verbose    = verbose,
     )
