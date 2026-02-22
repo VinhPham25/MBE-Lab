@@ -375,71 +375,74 @@ def apply_ols_regression(
 # Task 3.6.3 — Before/after comparison plots
 # ===========================================================================
 
-def plot_before_after_regression(
-    raw_haemo,
-    raw_corrected,
-    reg_results: pd.DataFrame,
+def _plot_before_after_one_type(
+    ch_type: str,
+    long_df: pd.DataFrame,
+    data_before: np.ndarray,
+    data_after: np.ndarray,
+    ch_names: list,
+    times: np.ndarray,
+    n_samples: int,
+    n_plot: int,
     subject_id: str,
     output_dir: Path,
-    n_channels: int = 4,
-    t_window: float = 300.0,
-    verbose: bool = True,
 ) -> Path:
     """
-    Task 3.6.3: Before/after OLS regression comparison visualization.
-
-    Layout: one column per representative long channel (HbO).
-    Each column has 3 rows:
-      Row 1 — Before regression  (HbO only, red)
-      Row 2 — After regression   (corrected HbO, dark red)
-      Row 3 — Removed noise      (Before − After = β · S*)
-
-    The matched short channel is overlaid on Row 1 and Row 3 (blue, secondary axis)
-    to show the noise reference.
+    Internal helper: produce a 3-row × n_plot-column before/after figure for
+    one channel type (HbO or HbR) and save it.
 
     Parameters
     ----------
-    raw_haemo : mne.io.Raw
-        Uncorrected hemoglobin data.
-    raw_corrected : mne.io.Raw
-        OLS-corrected hemoglobin data.
-    reg_results : pd.DataFrame
-        Output of apply_ols_regression().
+    ch_type : str
+        Channel type ('hbo' or 'hbr').
+    long_df : pd.DataFrame
+        DataFrame of long-separation channels of the given type, with regression results.
+    data_before : np.ndarray
+        Raw data matrix before regression (channels × samples).
+    data_after : np.ndarray
+        Data matrix after regression (channels × samples).
+    ch_names : list
+        List of channel names (matching data arrays).
+    times : np.ndarray
+        Array of time points (seconds).
+    n_samples : int
+        Number of samples to plot (time window).
+    n_plot : int
+        Number of long channels to plot (columns in figure).
     subject_id : str
+        Subject identifier (for figure title and filename).
     output_dir : Path
-    n_channels : int
-        Number of long HbO channels to plot (evenly sampled by |r|).
-    t_window : float
-        Time (s) of data to display.
-    verbose : bool
+        Output directory to save the figure.
 
     Returns
     -------
     fig_path : Path
+        Path to the saved figure file.
     """
-    sfreq     = raw_haemo.info['sfreq']
-    n_samples = int(min(t_window * sfreq, raw_haemo.n_times))
-    times     = raw_haemo.times[:n_samples]
+    is_hbo   = ch_type == 'hbo'
+    # Colour palette differs between HbO (reds) and HbR (blues)
+    if is_hbo:
+        main_color    = '#d62728'   # red
+        after_color   = '#8c1a1a'   # dark red
+        removed_color = '#ff7f0e'   # orange  (removed noise for HbO)
+        short_color   = 'steelblue'
+        type_label    = 'HbO'
+    else:
+        main_color    = '#1f77b4'   # blue
+        after_color   = '#0a3d6b'   # dark blue
+        removed_color = '#17becf'   # cyan  (removed noise for HbR)
+        short_color   = 'coral'
+        type_label    = 'HbR'
 
-    data_before = raw_haemo.get_data()
-    data_after  = raw_corrected.get_data()
-    ch_names    = raw_haemo.ch_names
+    row_labels = [
+        f'Before Regression [{type_label}]',
+        f'After Regression [{type_label}]',
+        f'Removed Noise (β · S*) [{type_label}]',
+    ]
+    row_colors = [main_color, after_color, removed_color]
 
-    # Select representative long HbO channels (range of |r_before| magnitudes)
-    hbo_long = (
-        reg_results[reg_results['ch_type'] == 'hbo']
-        .dropna(subset=['best_short_ch'])
-        .sort_values('pearson_r_before', key=abs, ascending=False)
-    )
-
-    if len(hbo_long) == 0:
-        print("  ⚠  No HbO long channels with regression results — skipping plot.")
-        return None
-
-    # Sample channels: high-r, mid-r, and low-r cases
-    n_plot = min(n_channels, len(hbo_long))
-    indices = np.round(np.linspace(0, len(hbo_long) - 1, n_plot)).astype(int)
-    selected = hbo_long.iloc[indices]
+    indices  = np.round(np.linspace(0, len(long_df) - 1, n_plot)).astype(int)
+    selected = long_df.iloc[indices]
 
     fig, axes = plt.subplots(
         nrows=3, ncols=n_plot,
@@ -448,9 +451,6 @@ def plot_before_after_regression(
     )
     if n_plot == 1:
         axes = axes.reshape(3, 1)
-
-    row_labels = ['Before Regression', 'After Regression', 'Removed Noise (β · S*)']
-    row_colors = ['#d62728', '#8c1a1a', '#1f77b4']   # red, dark red, blue
 
     for col, (_, row) in enumerate(selected.iterrows()):
         ch_name   = row['channel']
@@ -463,32 +463,43 @@ def plot_before_after_regression(
         ch_idx      = ch_names.index(ch_name)
         short_idx_v = ch_names.index(short_ch) if short_ch else None
 
-        sig_before   = data_before[ch_idx, :n_samples] * 1e6   # mol/L → μM
-        sig_after    = data_after[ch_idx,  :n_samples] * 1e6
-        sig_removed  = sig_before - sig_after                   # = β · S*
+        sig_before  = data_before[ch_idx, :n_samples].ravel() * 1e6
+        sig_after   = data_after[ch_idx,  :n_samples].ravel() * 1e6
+        sig_removed = sig_before - sig_after
 
         axes[0, col].set_title(
             f'{ch_name}\nr={r_before:.3f}  |  β={beta:.4f}',
             fontsize=9,
         )
 
-        for ax_row, sig, color, label in zip(
+        for ax_row, sig, color, rl in zip(
             [0, 1, 2],
             [sig_before, sig_after, sig_removed],
             row_colors,
             row_labels,
         ):
             ax = axes[ax_row, col]
-            ax.plot(times, sig, color=color, lw=0.7, label=ch_name)
+            # Main signal line — labelled for legend
+            ax.plot(times, sig, color=color, lw=0.8,
+                    label=f'{ch_name} ({rl.split("[")[0].strip()})')
 
-            # Overlay matched short channel on Before and Removed rows
+            # Overlay matched short channel on Before (row 0) and Removed (row 2)
             if short_idx_v is not None and ax_row != 1:
-                s_sig = data_before[short_idx_v, :n_samples] * 1e6
+                s_sig = data_before[short_idx_v, :n_samples].ravel() * 1e6
                 ax2 = ax.twinx()
-                ax2.plot(times, s_sig, color='steelblue', lw=0.5,
-                         alpha=0.5, label=short_ch)
-                ax2.set_ylabel(short_ch, fontsize=6, color='steelblue')
-                ax2.tick_params(axis='y', labelsize=6, colors='steelblue')
+                ax2.plot(times, s_sig, color=short_color, lw=0.6,
+                         alpha=0.6, label=f'{short_ch} (Short-ch ref)')
+                ax2.set_ylabel(short_ch, fontsize=6, color=short_color)
+                ax2.tick_params(axis='y', labelsize=6, colors=short_color)
+                # Combine legend from both axes
+                lines1, labels1 = ax.get_legend_handles_labels()
+                lines2, labels2 = ax2.get_legend_handles_labels()
+                ax.legend(lines1 + lines2, labels1 + labels2,
+                          fontsize=6, loc='upper right',
+                          framealpha=0.7, handlelength=1.5)
+            else:
+                ax.legend(fontsize=6, loc='upper right',
+                          framealpha=0.7, handlelength=1.5)
 
             if col == 0:
                 ax.set_ylabel(f'{row_labels[ax_row]}\n[μM]', fontsize=8)
@@ -501,26 +512,107 @@ def plot_before_after_regression(
         # Annotate variance removed on After row
         axes[1, col].annotate(
             f'var removed: {var_rem:.1f}%\nr_after: {r_after:.3f}',
-            xy=(0.98, 0.95), xycoords='axes fraction',
-            ha='right', va='top', fontsize=7,
-            bbox=dict(boxstyle='round,pad=0.2', fc='wheat', alpha=0.7),
+            xy=(0.02, 0.95), xycoords='axes fraction',
+            ha='left', va='top', fontsize=7,
+            bbox=dict(boxstyle='round,pad=0.2', fc='wheat', alpha=0.8),
         )
 
     fig.suptitle(
-        f'Subject {subject_id} — OLS Short-Channel Regression: Before vs After\n'
+        f'Subject {subject_id} — OLS Short-Channel Regression: Before vs After [{type_label}]\n'
         f'(Before = After + Removed Noise)',
         fontsize=11, fontweight='bold', y=1.01,
     )
     plt.tight_layout()
 
-    fig_path = output_dir / f'{subject_id}_ols_before_after.png'
+    fig_path = output_dir / f'{subject_id}_{type_label}_ols_before_after.png'
     fig.savefig(str(fig_path), dpi=150, bbox_inches='tight')
     plt.close(fig)
-
-    if verbose:
-        print(f"  Saved before/after plot : {fig_path}")
-
     return fig_path
+
+
+def plot_before_after_regression(
+    raw_haemo,
+    raw_corrected,
+    reg_results: pd.DataFrame,
+    subject_id: str,
+    output_dir: Path,
+    n_channels: int = 4,
+    t_window: float = 300.0,
+    verbose: bool = True,
+) -> tuple:
+    """
+    Task 3.6.3: Before/after OLS regression comparison visualization.
+
+    Produces two separate figures — one for HbO and one for HbR — each with
+    n_channels representative long channels sampled across the |r| range.
+
+    Layout per figure: 3 rows × n_channels columns
+      Row 1 — Before regression   (coloured line + short-ch overlay)
+      Row 2 — After regression    (corrected signal)
+      Row 3 — Removed noise       (Before − After = β · S*)
+
+    All lines are labelled; short-channel reference is shown on twin axes
+    in rows 1 and 3 with a combined legend.
+
+    Parameters
+    ----------
+    raw_haemo : mne.io.Raw
+        Uncorrected hemoglobin data.
+    raw_corrected : mne.io.Raw
+        OLS-corrected hemoglobin data.
+    reg_results : pd.DataFrame
+        Output of apply_ols_regression().
+    subject_id : str
+    output_dir : Path
+    n_channels : int
+        Number of long channels per type to plot (evenly sampled by |r|).
+    t_window : float
+        Time (s) of data to display.
+    verbose : bool
+
+    Returns
+    -------
+    fig_path_hbo : Path
+    fig_path_hbr : Path
+    """
+    sfreq     = raw_haemo.info['sfreq']
+    n_samples = int(min(t_window * sfreq, raw_haemo.n_times))
+    times     = raw_haemo.times[:n_samples]
+
+    data_before = raw_haemo.get_data()
+    data_after  = raw_corrected.get_data()
+    ch_names    = raw_haemo.ch_names
+
+    fig_paths = {}
+    for ch_type in ('hbo', 'hbr'):
+        long_df = (
+            reg_results[reg_results['ch_type'] == ch_type]
+            .dropna(subset=['best_short_ch'])
+            .sort_values('pearson_r_before', key=abs, ascending=False)
+        )
+        if len(long_df) == 0:
+            print(f"  ⚠  No {ch_type.upper()} long channels — skipping plot.")
+            fig_paths[ch_type] = None
+            continue
+
+        n_plot = min(n_channels, len(long_df))
+        fig_path = _plot_before_after_one_type(
+            ch_type     = ch_type,
+            long_df     = long_df,
+            data_before = data_before,
+            data_after  = data_after,
+            ch_names    = ch_names,
+            times       = times,
+            n_samples   = n_samples,
+            n_plot      = n_plot,
+            subject_id  = subject_id,
+            output_dir  = output_dir,
+        )
+        fig_paths[ch_type] = fig_path
+        if verbose:
+            print(f"  Saved before/after plot [{ch_type.upper()}] : {fig_path}")
+
+    return fig_paths.get('hbo'), fig_paths.get('hbr')
 
 
 # ===========================================================================
@@ -596,13 +688,21 @@ def calculate_correlation_reduction(
         r_ls_bef = row['pearson_r_before']
         r_ls_aft = row['pearson_r_after']
 
-        # HbO/HbR pair correlation
+        # HbO/HbR pair correlation — computed for both HbO and HbR rows
+        # (symmetric: r(HbO, HbR) == r(HbR, HbO), just looked up from the
+        #  other channel's perspective)
         hbo_hbr_before = np.nan
         hbo_hbr_after  = np.nan
         if ct == 'hbo' and base in hbr_base:
-            hbr_i = hbr_base[base]
-            r1, _ = stats.pearsonr(data_before[si], data_before[hbr_i])
-            r2, _ = stats.pearsonr(data_after[si],  data_after[hbr_i])
+            pair_i = hbr_base[base]
+            r1, _ = stats.pearsonr(data_before[si].ravel(), data_before[pair_i].ravel())
+            r2, _ = stats.pearsonr(data_after[si].ravel(),  data_after[pair_i].ravel())
+            hbo_hbr_before = round(float(r1), 4)
+            hbo_hbr_after  = round(float(r2), 4)
+        elif ct == 'hbr' and base in hbo_base:
+            pair_i = hbo_base[base]
+            r1, _ = stats.pearsonr(data_before[si].ravel(), data_before[pair_i].ravel())
+            r2, _ = stats.pearsonr(data_after[si].ravel(),  data_after[pair_i].ravel())
             hbo_hbr_before = round(float(r1), 4)
             hbo_hbr_after  = round(float(r2), 4)
 
@@ -657,13 +757,14 @@ def calculate_correlation_reduction(
     )
 
     # Panel B: HbO/HbR pair correlation before vs after
+    # Use HbO rows only to avoid double-counting each pair (HbO and HbR share r)
     ax = axes[1]
     pair_df = corr_df[corr_df['ch_type'] == 'hbo'].dropna(
         subset=['hbo_hbr_r_before'])
 
     ax.scatter(
         pair_df['hbo_hbr_r_before'], pair_df['hbo_hbr_r_after'],
-        c='#2ca02c', alpha=0.7, s=40, label='HbO/HbR pairs'
+        c='#2ca02c', alpha=0.7, s=40, label='Long-channel HbO/HbR pairs'
     )
     ax.plot([-1, 1], [-1, 1], 'k--', lw=0.8, label='No change')
     ax.axhline(0,    color='gray',      lw=0.5)
@@ -841,14 +942,15 @@ def run_ols_regression(
     -------
     results : dict
         {
-          'raw_haemo'      : mne.io.Raw  (uncorrected, from B5),
-          'raw_corrected'  : mne.io.Raw  (OLS-corrected),
-          'reg_results'    : pd.DataFrame,
-          'corr_df'        : pd.DataFrame,
-          'output_dir'     : Path,
-          'fif_path'       : Path,
-          'fig_before_after': Path,
-          'fig_corr'       : Path,
+          'raw_haemo'    : mne.io.Raw  (uncorrected, from B5),
+          'raw_corrected': mne.io.Raw  (OLS-corrected),
+          'reg_results'  : pd.DataFrame,
+          'corr_df'      : pd.DataFrame,
+          'output_dir'   : Path,
+          'fif_path'     : Path,
+          'fig_hbo'      : Path  (HbO before/after plot),
+          'fig_hbr'      : Path  (HbR before/after plot),
+          'fig_corr'     : Path  (correlation reduction plot),
         }
     """
     print("\n" + "=" * 70)
@@ -877,7 +979,7 @@ def run_ols_regression(
     # ---- 3.6.3 Before/after visualization -------------------------------------
     output_dir = get_output_path('stage_b', f'ols_regression/{subject_id}')
     print("[3/5] Creating before/after comparison plots (Task 3.6.3)...")
-    fig_before_after = plot_before_after_regression(
+    fig_hbo, fig_hbr = plot_before_after_regression(
         raw_haemo, raw_corrected, reg_results,
         subject_id = subject_id,
         output_dir = output_dir,
@@ -931,14 +1033,15 @@ def run_ols_regression(
     print("=" * 70 + "\n")
 
     return {
-        'raw_haemo':       raw_haemo,
-        'raw_corrected':   raw_corrected,
-        'reg_results':     reg_results,
-        'corr_df':         corr_df,
-        'output_dir':      output_dir,
-        'fif_path':        fif_path,
-        'fig_before_after': fig_before_after,
-        'fig_corr':        fig_corr,
+        'raw_haemo':        raw_haemo,
+        'raw_corrected':    raw_corrected,
+        'reg_results':      reg_results,
+        'corr_df':          corr_df,
+        'output_dir':       output_dir,
+        'fif_path':         fif_path,
+        'fig_hbo':          fig_hbo,
+        'fig_hbr':          fig_hbr,
+        'fig_corr':         fig_corr,
     }
 
 

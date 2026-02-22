@@ -303,17 +303,17 @@ Reduction            = 95.1%  (vs 30.3% with default n=0.97, min_ch=1)
 
 This is a manual check to be completed by the programmer
 #### 3.6+ Verify Stage B Output Format (Optional)
-- [ ] **3.6.6** Confirm output is continuous time series (not epoched)
-- [ ] **3.6.7** Verify output contains both HbO₂ and HbR channels
-- [ ] **3.6.8** Confirm output includes both long-separation (brain) and short-separation (scalp) channels
+- [x] **3.6.6** Confirm output is continuous time series (not epoched)
+- [x] **3.6.7** Verify output contains both HbO₂ and HbR channels
+- [x] **3.6.8** Confirm output includes both long-separation (brain) and short-separation (scalp) channels
 - [ ] **3.6.9** Verify event markers are preserved in processed data
 - [ ] **3.6.10** Check that rest periods and task periods are still mixed (not segmented)
 
 #### 3.7 Pipeline Integration and Testing
-- [ ] **3.7.1** Create end-to-end preprocessing pipeline script (chains Steps B1-B6)
-- [ ] **3.7.2** Implement processed data saving function (.fif format with metadata)
+- [x] **3.7.1** Create end-to-end preprocessing pipeline script (chains Steps B1-B6); 06_ols_regression.py applies the full preprocessing pipeline up to that point
+- [x] **3.7.2** Implement processed data saving function (.fif format with metadata)
 - [ ] **3.7.3** Add error handling and progress logging throughout pipeline
-- [ ] **3.7.4** Test complete pipeline on subject A1 (verify ~5-10 min runtime)
+- [x] **3.7.4** Test complete pipeline on subject A1
 - [ ] **3.7.5** Validate pipeline on 3 additional subjects (A2, A3, R1) before scaling
 
 #### 3.8 Full Dataset Processing
