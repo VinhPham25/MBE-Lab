@@ -1,0 +1,21 @@
+{
+  "ppf_690nm": 6.4,
+  "ppf_830nm": 5.8,
+  "n_hbo_channels": 33,
+  "n_hbr_channels": 33,
+  "n_flagged": 1,
+  "HbO": {
+    "mean_mean_um": -0.0199,
+    "mean_std_um": 2.6958,
+    "min_um": -222.2261,
+    "max_um": 78.3576,
+    "mean_range_um": 31.1753
+  },
+  "HbR": {
+    "mean_mean_um": -0.0265,
+    "mean_std_um": 1.1969,
+    "min_um": -48.3656,
+    "max_um": 52.833,
+    "mean_range_um": 13.9481
+  }
+}

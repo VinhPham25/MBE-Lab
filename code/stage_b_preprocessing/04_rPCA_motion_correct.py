@@ -176,6 +176,27 @@ def apply_rpca_correction(
     # n_good: the label of good channels (the channels that actually have data, for subject A1 6 bad channels were removed because they weren't in 80-140 dB)
     X = data[np.ix_(good_idx, motion_idx)].T   # (n_flagged, n_good)
 
+    # Some channel can have NaN/Inf values due to trailing/padded zeros in the intensity data.
+    # This creates a problem because in the bandpass filter, a drope from a real signal to 0 
+    # is a large change and can represent an infinite range of frequencies. The IIR filter 
+    # tries to process this drop and the math divides by zero or hits an infinite value.
+    # This produces a NaN or Inf[inite] value, and when rPCA tries to caclulate the mean, it hits an error.
+    # This problem is prevalanet in subject R10 of the Expert/Novice study.
+    # To fix this problem NaN imputation (replacing missing/NaN data points with substituted values) is used.
+    # The NaN/Inf imputation is done by replacing the non-finite values with the per-channel mean.
+    # The affected channels are still present but contribute minimal variance, but as a result
+    # the variance reduction is exaggerated (Ex: var_removed from subject R10 was HbO=87% and HbR=99%)
+    if not np.all(np.isfinite(X)):
+        n_bad = int(np.sum(~np.isfinite(X)))
+        col_means = np.nanmean(X, axis=0)
+        col_means[~np.isfinite(col_means)] = 0.0  # all-NaN column → 0
+        nan_mask = ~np.isfinite(X)
+        X[nan_mask] = np.take(col_means, np.where(nan_mask)[1])
+        X[~np.isfinite(X)] = 0.0  # any residual non-finite → 0
+        if verbose:
+            print(f"  ⚠  NaN/Inf imputation: replaced {n_bad} values with column mean "
+                  f"(likely trailing-zero channel — see subject data quality notes)")
+
     if verbose:
         print(f"  Data matrix    : {X.shape[0]} samples × {X.shape[1]} channels")
 

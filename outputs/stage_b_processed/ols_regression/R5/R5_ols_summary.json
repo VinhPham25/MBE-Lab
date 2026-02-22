@@ -1,0 +1,22 @@
+{
+  "n_long_channels_corrected": 48,
+  "n_short_channels_used": 15,
+  "HbO_regression": {
+    "mean_abs_r_before": 0.3601,
+    "mean_abs_r_after": 0.0,
+    "mean_beta": 0.122198,
+    "mean_var_removed_pct": 17.76
+  },
+  "HbR_regression": {
+    "mean_abs_r_before": 0.2192,
+    "mean_abs_r_after": 0.0,
+    "mean_beta": 0.077811,
+    "mean_var_removed_pct": 5.93
+  },
+  "HbO_HbR_correlation": {
+    "mean_r_before": -0.2254,
+    "mean_r_after": -0.2035,
+    "n_in_target_range": 5,
+    "n_total_pairs": 24
+  }
+}

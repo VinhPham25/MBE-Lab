@@ -1,0 +1,10 @@
+{
+  "mean_motion_ratio_before": 0.0055,
+  "mean_motion_ratio_after_dual": 0.0025,
+  "mean_motion_ratio_after_amp": 0.002,
+  "mean_reduction_abs": 0.003,
+  "mean_reduction_pct": 54.66,
+  "n_channels_improved": 57,
+  "n_channels_worse": 0,
+  "n_channels_unchanged": 1
+}

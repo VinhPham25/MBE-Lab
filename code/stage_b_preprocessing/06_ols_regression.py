@@ -918,6 +918,7 @@ def run_ols_regression(
     short_threshold_mm: float = SHORT_SEP_THRESHOLD_MM,
     n_components: float = 0.99,
     min_channels_flagged: int = 10,
+    ppf_dict: dict = None,
     verbose: bool = True,
 ) -> dict:
     """
@@ -936,6 +937,10 @@ def run_ols_regression(
         rPCA variance threshold (passed to B4).
     min_channels_flagged : int
         rPCA vote threshold (passed to B4).
+    ppf_dict : dict, optional
+        {wavelength_nm: ppf_value} for Beer-Lambert (passed to B5).
+        Defaults to TechEn CW6 values {690: 6.4, 830: 5.8}.
+        Pass NIRx values {760: 6.0, 850: 6.0} for tES studies (Section 3.9).
     verbose : bool
 
     Returns
@@ -962,6 +967,7 @@ def run_ols_regression(
     b5_results = run_mbll(
         dataset_name,
         subject_id,
+        ppf_dict             = ppf_dict,
         n_components         = n_components,
         min_channels_flagged = min_channels_flagged,
         verbose              = False,
