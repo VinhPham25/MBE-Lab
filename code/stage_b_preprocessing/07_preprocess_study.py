@@ -13,8 +13,8 @@ Task coverage:
 Output layout  (example: expert-novice)
 ---------------------------------------
 outputs/stage_b_processed/data/expert-novice/
-  sub-A1_task-ExpNovPatternCutting_desc-preprocessed_nirs.fif
-  sub-A2_task-ExpNovPatternCutting_desc-preprocessed_nirs.fif
+  sub-A1_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif
+  sub-A2_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif
   ...  (14 BIDS-compliant .fif files)
   expert-novice_master_summary.csv
   expert-novice_group_visualization.png
@@ -22,7 +22,7 @@ outputs/stage_b_processed/data/expert-novice/
 
 BIDS naming convention
 ----------------------
-  sub-{subject_id}_task-{task}_desc-preprocessed_nirs.fif
+  sub-{subject_id}_task-{task}_desc-preprocessed_nirs_raw.fif
 
 Study parameter table
 ---------------------
@@ -275,7 +275,7 @@ def process_subject(
         corr_df       = results["corr_df"]
 
         # ---- 3. Save BIDS-compliant .fif to study directory ------------------
-        bids_fname = f"sub-{subject_id}_task-{task_name}_desc-preprocessed_nirs.fif"
+        bids_fname = f"sub-{subject_id}_task-{task_name}_desc-preprocessed_nirs_raw.fif"
         bids_path  = study_dir / bids_fname
         raw_corrected.save(str(bids_path), overwrite=True, verbose=False)
         metrics["bids_fif_path"] = str(bids_path)
@@ -598,7 +598,7 @@ def save_provenance_log(
             },
         },
         "output_format":       "MNE .fif",
-        "bids_naming":         "sub-{subject_id}_task-{task}_desc-preprocessed_nirs.fif",
+        "bids_naming":         "sub-{subject_id}_task-{task}_desc-preprocessed_nirs_raw.fif",
     }
 
     json_path = study_dir / f"{study_folder}_provenance.json"
@@ -677,7 +677,7 @@ def run_preprocess_study(
     # ---- Study output directory ---------------------------------------------
     study_dir = (
         PROJECT_ROOT
-        / config["paths"].get("processed_root", "outputs/stage_b_processed/data")
+        / config["paths"].get("processed_root", "outputs/stage_b_processed/preprocessed_data")
         / study_folder
     )
     study_dir.mkdir(parents=True, exist_ok=True)
@@ -693,7 +693,7 @@ def run_preprocess_study(
     print(f"  rPCA params:    n_components={n_components}, "
           f"min_channels_flagged={min_channels_flagged}")
     print(f"  Output dir:     {study_dir}")
-    print(f"  BIDS naming:    sub-{{id}}_task-{task_name}_desc-preprocessed_nirs.fif")
+    print(f"  BIDS naming:    sub-{{id}}_task-{task_name}_desc-preprocessed_nirs_raw.fif")
     print("=" * 70 + "\n")
 
     # ---- Per-subject processing  (Tasks 3.8.2 + 3.8.3) --------------------

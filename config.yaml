@@ -221,7 +221,7 @@ events:
 paths:
   bids_root: "data/BIDS"
   raw_root: "data/Raw"
-  processed_root: "outputs/stage_b_processed/data"
+  processed_root: "outputs/stage_b_processed/processed_data"
   stage_a_outputs: "outputs/stage_a_qa"
   stage_b_outputs: "outputs/stage_b_processed"
   stage_c_outputs: "outputs/stage_c_validation"
