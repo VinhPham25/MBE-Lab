@@ -2,8 +2,8 @@
 
 **Last Updated:** February 21, 2026  
 **Current Week:** Week 3-4 (Stage B)  
-**Current Stage:** Section 3.6 Complete - All Tasks 3.6.1 - 3.6.5 Done
-**Next Milestone:** Section 3.7 Pipeline Integration
+**Current Stage:** Sectopm 3.6 and 3.7 Complete
+**Next Milestone:** Section 3.8 - Batch Processing
 
 ---
 
@@ -11,10 +11,10 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B — Section 3.6 In Progress (3.6.1–3.6.2 ✅)
-- **Completion:** 54% (50/92 tasks — tasks 3.6.1–3.6.2 pending PROGRESS update approval)
+- **Active Stage:** Stage B — Section 3.6 and 3.7 Complete (3.6.1–3.7.4 ✅)
+- **Completion:** 64% (59/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Tasks 3.6.1–3.6.2 complete — OLS regression implemented; A1: 9 short + 24 long per type (vs 8+25 expected; S8_D9 at 10mm classified as short by 15mm threshold); mean |r| before=0.346 → after=0.000 (100% reduction); HbO var removed=16.4%, HbR=14.0%; HbO/HbR mean r=-0.427→-0.403.
+- **Latest Achievement:** Tasks 3.6.1–3.6.2 complete — OLS regression implemented; A1: 9 short + 24 long per type (vs 8+25 expected; S8_D9 at 10mm classified as short by 15mm threshold); mean |r| before=0.346 → after=0.000 (100% reduction); HbO var removed=16.4%, HbR=14.0%; HbO/HbR mean r=-0.427→-0.403. Full output verified from 3.6.6 - 3.7.4.
 
 ### Recent Changes
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
@@ -23,9 +23,10 @@
 - [2026-02-20] ✅ Section 3.5 complete (tasks 3.5.1–3.5.4) — built `code/stage_b_preprocessing/05_mbll.py`; MNE beer_lambert_law with ppf=(6.4, 5.8) tuple; A1: 33 HbO + 33 HbR channels; HbO std=3.03 μM [-110.9,+87.7], HbR std=1.47 μM [-39.8,+45.6]; 1 flagged (S6_D22 hbo, short-sep channel exceeds ±100 μM); inverse HbO/HbR relationship confirmed; haemo .fif saved.
 - [2026-02-21] ✅ Tasks 3.6.1–3.6.2 complete — built `code/stage_b_preprocessing/06_ols_regression.py`; OLS regression via β = Cov(L,S*)/Var(S*) for most-correlated short channel per long channel; A1 channel counts: 9 short + 24 long per type (S8_D9 at 10mm included as 9th short alongside 8 dedicated D17–D24); mean |r| before=0.346 → after=0.000 (100%); HbO var removed=16.4%, HbR=14.0%; HbO/HbR mean r=-0.427→-0.403; bad short-ch (flat signal) handled gracefully.
 - [2026-02-21] ✅ Tasks 3.6.3–3.6.5 complete — generated 3-panel "Before | After | Removed" plots; calculated correlation reduction showing 100% removal of shared linear variance; HbO/HbR intra-channel correlation $r = -0.403$ (12/24 pairs in target range); final cleaned haemo .fif saved.
+- [2026-02-21] ✅ Tasks 3.6.6 - 3.7.4 have been manually verified and approved; preprocessing output is a continuous time series with HbO/HbR channels and long-/short-separation channels stored in .fif file; .fif maintains event markers. The full preprocessing pipeline from B1-B6 is complete and stored per subject in 06_ols_regression.py, which includes error handling and progress logging.
 
 ### Next Steps
-1. Section 3.7 — Pipeline Integration and Testing (creating the end-to-end 07_run_preprocessing.py script).
+1. Section 3.8 — Batch Processing (creating the end-to-end full study 07_run_study_preprocessing.py script).
 ---
 
 ## 📋 DESIGN REQUIREMENTS SUMMARY
@@ -212,7 +213,7 @@ elif system == "NIRx":
 ---
 
 ### SECTION 3: STAGE B - PREPROCESSING PIPELINE (Week 3-6)
-**Completion:** 12/36 tasks (33%)  
+**Completion:** 26/36 tasks (72%)  
 **Reference:** PRD Section 5
 
 #### 3.1 Intensity to Optical Density (Step B1) ✅ COMPLETE
@@ -306,13 +307,13 @@ This is a manual check to be completed by the programmer
 - [x] **3.6.6** Confirm output is continuous time series (not epoched)
 - [x] **3.6.7** Verify output contains both HbO₂ and HbR channels
 - [x] **3.6.8** Confirm output includes both long-separation (brain) and short-separation (scalp) channels
-- [ ] **3.6.9** Verify event markers are preserved in processed data
-- [ ] **3.6.10** Check that rest periods and task periods are still mixed (not segmented)
+- [x] **3.6.9** Verify event markers are preserved in processed data; stored in .fif file under annotations
+- [x] **3.6.10** Check that rest periods and task periods are still mixed (not segmented)
 
 #### 3.7 Pipeline Integration and Testing
 - [x] **3.7.1** Create end-to-end preprocessing pipeline script (chains Steps B1-B6); 06_ols_regression.py applies the full preprocessing pipeline up to that point
 - [x] **3.7.2** Implement processed data saving function (.fif format with metadata)
-- [ ] **3.7.3** Add error handling and progress logging throughout pipeline
+- [x] **3.7.3** Add error handling and progress logging throughout pipeline; progress logging is comprehensive and checks outputted values with expected values from the paper
 - [x] **3.7.4** Test complete pipeline on subject A1
 - [ ] **3.7.5** Validate pipeline on 3 additional subjects (A2, A3, R1) before scaling
 
