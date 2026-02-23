@@ -188,7 +188,12 @@ def apply_rpca_correction(
     # the variance reduction is exaggerated (Ex: var_removed from subject R10 was HbO=87% and HbR=99%)
     if not np.all(np.isfinite(X)):
         n_bad = int(np.sum(~np.isfinite(X)))
-        col_means = np.nanmean(X, axis=0)
+        # np.nanmean raises "Mean of empty slice" when an entire column is NaN.
+        # Suppress it here — we explicitly handle the all-NaN case below.
+        import warnings as _warnings
+        with _warnings.catch_warnings():
+            _warnings.simplefilter("ignore", RuntimeWarning)
+            col_means = np.nanmean(X, axis=0)
         col_means[~np.isfinite(col_means)] = 0.0  # all-NaN column → 0
         nan_mask = ~np.isfinite(X)
         X[nan_mask] = np.take(col_means, np.where(nan_mask)[1])

@@ -783,7 +783,7 @@ def calculate_correlation_reduction(
     mean_bef = pair_df['hbo_hbr_r_before'].mean()
     mean_aft = pair_df['hbo_hbr_r_after'].mean()
     target_ok = mean_aft <= -0.5
-    status_str = '✅ in target range' if target_ok else '⚠ above target'
+    status_str = '[OK] in target range' if target_ok else '[above target]'
     ax.annotate(
         f'Mean r before: {mean_bef:.3f}\nMean r after:  {mean_aft:.3f}  {status_str}',
         xy=(0.04, 0.04), xycoords='axes fraction',

@@ -428,7 +428,7 @@ def generate_group_visualization(
     ax = axes[0]
     bp = ax.boxplot(
         [var_hbo, var_hbr],
-        labels=["HbO", "HbR"],
+        tick_labels=["HbO", "HbR"],
         patch_artist=True,
         medianprops=dict(color="black", linewidth=2),
         whiskerprops=dict(linewidth=1.2),
@@ -774,6 +774,7 @@ if __name__ == "__main__":
     )
 
     #Ex: python code/stage_b_preprocessing/07_preprocess_study.py --study short_term_tes
+    #expert-novice, learning-curve, short-term-tes, long-term-tes
     parser.add_argument(
         "--study",
         default="expert_novice",
