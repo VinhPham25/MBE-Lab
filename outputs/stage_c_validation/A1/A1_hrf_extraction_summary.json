@@ -21,6 +21,7 @@
   },
   "outputs": {
     "epochs_fif": "outputs/stage_c_validation/A1/A1-epo.fif",
+    "evoked_fif": "outputs/stage_c_validation/A1/A1-ave.fif",
     "hrf_averages_csv": "outputs/stage_c_validation/A1/A1_hrf_averages.csv",
     "verification_plot": "outputs/stage_c_validation/A1/A1_hrf_verification_plot.png",
     "region_map_json": "outputs/stage_c_validation/A1/A1_hrf_region_map.json"

@@ -494,6 +494,10 @@ def run_hrf_extraction(
     print(f"\n[4.1.2] HRF averaging across {len(epochs)} trials")
     evoked, df_hrf = compute_hrf_average(epochs, hbo_long, hbr_long)
 
+    ave_path = out_dir / f"{subject_id}-ave.fif"
+    evoked.save(ave_path, overwrite=True, verbose=False)
+    print(f"  Saved: {ave_path.name}")
+
     csv_path = out_dir / f"{subject_id}_hrf_averages.csv"
     df_hrf.to_csv(csv_path, index=False)
     print(f"  Saved: {csv_path.name}  "
@@ -526,6 +530,7 @@ def run_hrf_extraction(
         "region_channel_counts": {r: len(v) for r, v in region_map.items()},
         "outputs": {
             "epochs_fif": str(epo_path),
+            "evoked_fif": str(ave_path),
             "hrf_averages_csv": str(csv_path),
             "verification_plot": str(plot_path),
             "region_map_json": str(region_map_path),
