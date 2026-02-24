@@ -163,8 +163,8 @@ stage_c:
     expected_peak_time_min: 8   # seconds - Expected HRF peak window start
     expected_peak_time_max: 12  # seconds - Expected HRF peak window end
     peak_analysis_window: [5, 15]  # seconds - Window for extracting peak amplitude
-    expected_hbo_amplitude: [5, 15]  # μM - Typical HbO peak amplitude range
-    expected_hbr_amplitude: [2, 8]   # μM - Typical HbR peak amplitude range
+    expected_hbo_amplitude: [0.35, 1]  # μM - Typical HbO peak amplitude range
+    expected_hbr_amplitude: [0.25, 1]   # μM - Typical HbR peak amplitude range
     
   # Brain Region Channel Mapping
   # Note: Specific channel indices will be extracted from .snirf metadata

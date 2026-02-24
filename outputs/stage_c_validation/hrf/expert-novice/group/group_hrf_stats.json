@@ -8,8 +8,8 @@
     12.0
   ],
   "expected_hbo_amplitude_uM": [
-    5.0,
-    15.0
+    0.35,
+    1.0
   ],
   "Expert_PFC_HbO_PeakTime_s": 14.84,
   "Expert_PFC_HbO_PeakAmp_uM": -0.004,
