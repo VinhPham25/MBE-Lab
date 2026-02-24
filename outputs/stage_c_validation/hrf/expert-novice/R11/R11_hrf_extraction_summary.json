@@ -1,0 +1,29 @@
+{
+  "subject_id": "R11",
+  "n_trials": 5,
+  "n_long_hbo": 24,
+  "n_long_hbr": 24,
+  "epoch_tmin": -5.0,
+  "epoch_tmax": 30.0,
+  "baseline": [
+    -5.0,
+    0.0
+  ],
+  "hbo_peak_uM": -0.00942120703330603,
+  "hbr_trough_uM": -0.5324958569469486,
+  "hbo_morphology_pass": false,
+  "hbr_morphology_pass": true,
+  "overall_morphology_pass": false,
+  "region_channel_counts": {
+    "PFC": 6,
+    "M1": 8,
+    "SMA": 10
+  },
+  "outputs": {
+    "epochs_fif": "outputs/stage_c_validation/R11/R11-epo.fif",
+    "evoked_fif": "outputs/stage_c_validation/R11/R11-ave.fif",
+    "hrf_averages_csv": "outputs/stage_c_validation/R11/R11_hrf_averages.csv",
+    "verification_plot": "outputs/stage_c_validation/R11/R11_hrf_verification_plot.png",
+    "region_map_json": "outputs/stage_c_validation/R11/R11_hrf_region_map.json"
+  }
+}

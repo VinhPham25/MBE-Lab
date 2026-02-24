@@ -1,0 +1,29 @@
+{
+  "subject_id": "R1",
+  "n_trials": 5,
+  "n_long_hbo": 24,
+  "n_long_hbr": 24,
+  "epoch_tmin": -5.0,
+  "epoch_tmax": 30.0,
+  "baseline": [
+    -5.0,
+    0.0
+  ],
+  "hbo_peak_uM": -0.07326329318805964,
+  "hbr_trough_uM": -0.25162446446873593,
+  "hbo_morphology_pass": false,
+  "hbr_morphology_pass": true,
+  "overall_morphology_pass": false,
+  "region_channel_counts": {
+    "PFC": 6,
+    "M1": 8,
+    "SMA": 10
+  },
+  "outputs": {
+    "epochs_fif": "outputs/stage_c_validation/hrf/Expert-Novice/R1/R1-epo.fif",
+    "evoked_fif": "outputs/stage_c_validation/hrf/Expert-Novice/R1/R1-ave.fif",
+    "hrf_averages_csv": "outputs/stage_c_validation/hrf/Expert-Novice/R1/R1_hrf_averages.csv",
+    "verification_plot": "outputs/stage_c_validation/hrf/Expert-Novice/R1/R1_hrf_verification_plot.png",
+    "region_map_json": "outputs/stage_c_validation/hrf/Expert-Novice/R1/R1_hrf_region_map.json"
+  }
+}

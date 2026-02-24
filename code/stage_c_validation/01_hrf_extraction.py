@@ -432,7 +432,10 @@ def run_hrf_extraction(
     results : dict  Summary metrics and file paths.
     """
     config = load_config()
-    out_dir = Path(config["paths"]["stage_c_outputs"]) / subject_id
+    # Study display name matches the BIDS folder (e.g. "Expert-Novice")
+    study_display_name = Path(config["datasets"][study]["data_path"]).name
+    out_dir = (Path(config["paths"]["stage_c_outputs"])
+               / "hrf" / study_display_name / subject_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Resolve Stage B output .fif ──────────────────────────────────────────
