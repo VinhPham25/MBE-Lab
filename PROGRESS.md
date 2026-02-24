@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
-**Last Updated:** February 22, 2026  
-**Current Week:** Week 5-6 (Stage B Complete)  
-**Current Stage:** Section 3.8 Complete — all 14 Expert/Novice subjects batch-processed  
-**Next Milestone:** Section 4.1 - HRF Extraction (Stage C)
+**Last Updated:** February 24, 2026  
+**Current Week:** Week 7-8 (Stage C In Progress)  
+**Current Stage:** Section 4.1 Complete — HRF extraction pipeline built and verified on A1  
+**Next Milestone:** Section 4.2 - Group-Level HRF Analysis
 
 ---
 
@@ -11,12 +11,13 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage B Complete — Section 3.8 done (3.8.1–3.8.4 ✅)
-- **Completion:** 72% (66/92 tasks)
+- **Active Stage:** Stage C — Section 4.1 done (4.1.1–4.1.4 ✅)
+- **Completion:** 76% (70/92 tasks)
 - **Blockers:** None
-- **Latest Achievement:** Section 3.8 complete — `07_preprocess_study.py` batch script processes any study; 14/14 Expert/Novice subjects passed with BIDS-compliant `.fif` outputs; group summary: mean MR post-rPCA=0.022, mean HbO var removed=47.0%, mean HbR var removed=29.5%; R10 flagged with data quality note (trailing 690nm zeros → NaN imputation applied).
+- **Latest Achievement:** Section 4.1 complete — `01_hrf_extraction.py` built; A1 epochs extracted (5 trials, tmin=-5s, tmax=30s, baseline=(-5,0)); HRF morphology verified (HbO peak=+0.155 μM mean-long, HbR trough=-0.243 μM ✓); strongest activation in M1 (S6/S7 channels, peak up to +3.17 μM HbO); PFC shows near-zero/slightly negative response (expected for motor task); brain regions classified: PFC=6, M1=8, SMA=10 channel pairs; 3 output files produced for A1.
 
 ### Recent Changes
+- [2026-02-24] ✅ Section 4.1 complete (tasks 4.1.1–4.1.4) — built `code/stage_c_validation/01_hrf_extraction.py`; epoch extraction (5 trials, 876 time points each, 0 dropped); HRF averaging across 24 HbO + 24 HbR long channels; morphology PASS (HbO↑, HbR↓ mean-long); brain region classification by 2-D midpoint coords: PFC (y>0.06m)=6 pairs, M1 (|x|>0.04m)=8 pairs, SMA (medial belt)=10 pairs; per-region M1 peak HbO=+0.506 μM HbR=-0.622 μM, SMA peak HbO=+0.446 μM HbR=-0.164 μM, PFC near-zero (expected for motor task); outputs: `A1-epo.fif`, `A1_hrf_averages.csv` (876×49), `A1_hrf_verification_plot.png`.
 - [2026-02-22] ✅ Section 3.8 complete (tasks 3.8.1–3.8.4) — built `code/stage_b_preprocessing/07_preprocess_study.py`; parameterised batch script for any study (expert_novice / learning_curve / short_term_tes / long_term_tes) with study-specific PPF and BIDS task names; added `ppf_dict` param to `run_ols_regression()`; batch-processed all 14 Expert/Novice subjects: 14/14 Pass; outputs in `outputs/stage_b_processed/data/expert-novice/` — 14 BIDS .fif files (`sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs.fif`), master summary CSV, group visualisation PNG, provenance JSON; fixed two issues discovered during batch: (1) MNE NIRS bad-channel pairing constraint → both wavelengths of a pair must be consistently bad (7 subjects fixed); (2) R10 has trailing zeros in 690nm channels (last 544 samples) → NaN after zero-phase filter → added NaN imputation in rPCA step; R10 passes but var_removed anomalously high (HbO 87%, HbR 99%) — documented as data quality flag.
 - [2026-02-19] ✅ Section 3.2 complete (tasks 3.2.1–3.2.4) — built `code/stage_b_preprocessing/02_bandpass_filtering.py`; 0.01–0.5 Hz IIR bandpass filter applied to 60 good channels (6 bad skipped); PSD HF attenuation ratio 0.0075 ✓.
 - [2026-02-19] ✅ Section 3.3 complete (tasks 3.3.1–3.3.3) — built `code/stage_b_preprocessing/03_motion_correct.py`; Homer3 algorithm adapted for filtered OD with amplitude-only criterion (use_amp_only=True, AMPthresh=5.0 OD); A1: 0% motion, 60/60 ok, visualization saved.
@@ -27,7 +28,7 @@
 - [2026-02-21] ✅ Tasks 3.6.6 - 3.7.4 have been manually verified and approved; preprocessing output is a continuous time series with HbO/HbR channels and long-/short-separation channels stored in .fif file; .fif maintains event markers. The full preprocessing pipeline from B1-B6 is complete and stored per subject in 06_ols_regression.py, which includes error handling and progress logging.
 
 ### Next Steps
-1. Section 4.1 — HRF Extraction: epoch extraction (tmin=-5, tmax=30s, baseline=(-5,0)), single-subject averaging, HRF morphology verification
+1. Section 4.2 — Group-Level HRF Analysis: grand-average HRFs for Expert (n=8) and Novice (n=6) across PFC/M1/SMA regions
 ---
 
 ## 📋 DESIGN REQUIREMENTS SUMMARY
@@ -346,14 +347,14 @@ This is a manual check to be completed by the programmer
 ---
 
 ### SECTION 4: STAGE C - POST-PROCESSING VALIDATION (Week 7-8)
-**Completion:** 0/20 tasks (0%)  
+**Completion:** 4/20 tasks (20%)  
 **Reference:** PRD Section 6
 
-#### 4.1 HRF Extraction (Step C1)
-- [ ] **4.1.1** Implement epoch extraction function (tmin=-5, tmax=30, baseline=(-5,0))
-- [ ] **4.1.2** Create single-subject HRF averaging function (average across trials)
-- [ ] **4.1.3** Verify HRF morphology for subject A1 (HbO increases, HbR decreases)
-- [ ] **4.1.4** Implement brain region channel selection (PFC, M1, SMA)
+#### 4.1 HRF Extraction (Step C1) ✅ COMPLETE
+- [x] **4.1.1** (2026-02-24) Implement epoch extraction function (tmin=-5, tmax=30, baseline=(-5,0))
+- [x] **4.1.2** (2026-02-24) Create single-subject HRF averaging function (average across trials)
+- [x] **4.1.3** (2026-02-24) Verify HRF morphology for subject A1 (HbO increases, HbR decreases)
+- [x] **4.1.4** (2026-02-24) Implement brain region channel selection (PFC, M1, SMA)
 
 #### 4.2 Group-Level HRF Analysis
 - [ ] **4.2.1** Calculate grand average HRFs for Expert group (n=8) across all regions
@@ -609,22 +610,22 @@ python code/stage_c_validation/03_final_validation.py --dataset Expert_Novice
 
 ### Overall Progress
 - **Total Tasks:** 92
-- **Completed:** 66 (72%)
+- **Completed:** 70 (76%)
 - **In Progress:** 0
 - **Blocked:** 0
-- **Remaining:** 26
+- **Remaining:** 22
 
 ### By Section
 - **Section 1 (Setup):** 7/7 (100%) ✅
 - **Section 2 (Stage A):** 26/26 (100%) ✅
 - **Section 3 (Stage B):** 33/36 (92%) — 3.7.5 and 3.9.1–3.9.4 pending
-- **Section 4 (Stage C):** 0/20 (0%)
+- **Section 4 (Stage C):** 4/20 (20%) — 4.1 complete
 - **Section 5 (Extension):** 0/7 (0%)
 
 
 ---
 
-**Last saved:** February 22, 2026  
-**Next update:** After completing Section 4.1 (HRF Extraction)  
+**Last saved:** February 24, 2026  
+**Next update:** After completing Section 4.2 (Group-Level HRF Analysis)  
 **Project start date:** January 18, 2026  
 **Target completion:** ~March 29, 2026 (10 weeks)

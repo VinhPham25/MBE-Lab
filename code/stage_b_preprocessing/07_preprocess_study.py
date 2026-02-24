@@ -774,7 +774,7 @@ if __name__ == "__main__":
     )
 
     #Ex: python code/stage_b_preprocessing/07_preprocess_study.py --study short_term_tes
-    #expert-novice, learning-curve, short-term-tes, long-term-tes
+    #expert_novice, learning_curve, short_term_tes, long_term_tes
     parser.add_argument(
         "--study",
         default="expert_novice",

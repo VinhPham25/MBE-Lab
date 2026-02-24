@@ -17,7 +17,7 @@ Short-channel regression (Saager & Berger 2008; Scholkmann et al. 2014):
 
   For each long-separation channel L of type T (HbO or HbR):
     1. Collect all short-separation channels {S_i} of the same type T.
-        - Ex: for a long HbO channel, the lagorithm only looks at the 8 short HbO channels available
+        - Ex: for a long HbO channel, the algorithm only looks at the 8 short HbO channels available
     2. Compute Pearson r(L, S_i) for each S_i; select S* = argmax |r|.
         - Not all short channels are the same because of where they sit on the head.
         - By calculating the pearson coefficient between the long channel and every short channel, it finds the short channel that is most correlated with the noise in the long channel.

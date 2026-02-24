@@ -525,7 +525,7 @@ def run_mbll(
         hb_stats_df,
         subject_id = subject_id,
         output_dir = output_dir,
-        n_channels = 10,
+        n_channels = 4,
         t_window   = 300.0,
         verbose    = verbose,
     )

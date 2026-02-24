@@ -434,8 +434,8 @@ def plot_motion_artifacts(
     stats_df: pd.DataFrame,
     subject_id: str,
     output_dir: Path,
-    n_good: int = 3,
-    n_flagged: int = 3,
+    n_good: int = 2,
+    n_flagged: int = 2,
     t_window: float = 300.0,
     verbose: bool = True,
 ) -> Path:
