@@ -1,0 +1,23 @@
+{
+  "comparison": "Expert vs Novice",
+  "group1": "Expert",
+  "group2": "Novice",
+  "group1_n_subjects": 8,
+  "group2_n_subjects": 6,
+  "peak_window_s": [
+    5.0,
+    15.0
+  ],
+  "n_channels_hbo": 24,
+  "n_channels_hbr": 24,
+  "n_valid_cnr": 48,
+  "median_cnr": 0.2395,
+  "mean_cnr": 0.2398,
+  "max_cnr": 0.6339,
+  "pct_above_1.0": 0.0,
+  "cnr_threshold_detectable": 1.0,
+  "outputs": {
+    "cnr_csv": "outputs/stage_c_validation/cnr/cnr_Expert-Novice.csv",
+    "cnr_boxplot": "outputs/stage_c_validation/cnr/cnr_boxplot.png"
+  }
+}
