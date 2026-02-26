@@ -229,7 +229,7 @@ def plot_hrf_panel(
         ax.set_xlabel("Time (s)", fontsize=10)
     if show_ylabel:
         chrom_unit = "HbO₂" if chromophore == "hbo" else "HbR"
-        ax.set_ylabel(f"Δ{chrom_unit} conc. (μM)", fontsize=10)
+        ax.set_ylabel(f"Δ{chrom_unit} conc. (μM) [paper: μM*mm]", fontsize=10)
     if show_legend:
         handles, labels = ax.get_legend_handles_labels()
         # Put task-start line last
@@ -410,7 +410,7 @@ def generate_hrf_plots_5region(
             f"Expert vs. Novice Group HRF — Δ{chrom_display}  "
             f"(Figure 3c reproduction)\n"
             f"mean ± 1 SD across subjects  |  units: μM  "
-            f"[Note: paper reports μM*mm — Issue 6 pending]",
+            f"[paper reports μM*mm; numerically equivalent — see Issue 6]",
             fontsize=11, fontweight="bold",
         )
 

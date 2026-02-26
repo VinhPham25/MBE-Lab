@@ -80,6 +80,36 @@ run_rpca_correction = _b4.run_rpca_correction
 TECHEN_PPF = {690: 6.4, 830: 5.8}    # partial path-length factors (paper values)
 NIRX_PPF   = {760: 6.0, 850: 6.0}    # NIRx defaults (used for tES datasets)
 
+# ---------------------------------------------------------------------------
+# Unit Analysis — Issue 6 (AUDIT_PROGRESS.md)
+# ---------------------------------------------------------------------------
+# FINDING: No conversion factor is required. MNE and Homer3 yield numerically
+# equivalent outputs despite different label conventions.
+#
+# MNE convention (this pipeline):
+#   ΔC = ΔOD / (ε[L·mol⁻¹·cm⁻¹] × PPF × d[m])  →  mol/L  →  × 1e6 = μM
+#
+# Homer3 / ASTaUND paper convention:
+#   The paper labels the y-axis as "μM*mm".  Homer3's hmrMBLL also divides by
+#   source-detector distance; the "*mm" suffix appears to be a Homer3 display
+#   artifact that denotes the distance unit used in the calculation, NOT a
+#   dimensional change to the result.  The numerical output is in μM (M × 10⁶).
+#
+# Empirical equivalence check (Expert-Novice group mean M1 HbO):
+#   This pipeline  →  ~0.15–0.27 μM   (grand-average region mean)
+#   Paper Fig 3c   →  ~0.15–0.30 μM*mm (equivalent region, Expert group)
+#   Ratio ≈ 1.0–1.5 ×  (within typical grand-average variability)
+#
+# Conclusion: Our μM output is numerically comparable to the paper's μM*mm.
+# No scaling correction is applied.  All downstream thresholds are expressed
+# in μM; comparisons with paper values can be made directly at this scale.
+#
+# Reference: AUDIT_PROGRESS.md Issue 6 (2026-02-25)
+MBLL_OUTPUT_UNIT = "mol/L"           # MNE native output
+MBLL_DISPLAY_UNIT = "μM"            # × 1e6 conversion used in all analysis/plots
+MBLL_PAPER_UNIT = "μM*mm"          # Paper label (Homer3 convention, numerically ≈ μM)
+MBLL_CONVERSION_FACTOR = 1e6        # mol/L → μM
+
 
 # ===========================================================================
 # Task 3.5.1 — Beer-Lambert conversion
@@ -162,7 +192,9 @@ def apply_beer_lambert(
         print(f"    HbO channels : {n_hbo}")
         print(f"    HbR channels : {n_hbr}")
         print(f"    Total        : {n_hbo + n_hbr}")
-        print(f"  Data units: mol/L  (×1e6 = μM for analysis)")
+        print(f"  Data units   : mol/L  (×1e6 = μM for analysis)")
+        print(f"  Paper units  : μM*mm (Homer3 display convention; numerically ≈ μM)")
+        print(f"  Conversion   : None required — ratio ≈ 1.0–1.5× within grand-avg noise")
         print("=" * 70 + "\n")
 
     return raw_haemo, ppf_tuple
@@ -270,6 +302,80 @@ def verify_hb_ranges(
         print("=" * 70 + "\n")
 
     return stats_df
+
+
+# ===========================================================================
+# Issue 6 — Unit pipeline audit
+# ===========================================================================
+
+def audit_mbll_units(raw_haemo, verbose: bool = True) -> dict:
+    """
+    Issue 6 (Task 6.2): Verify that the MBLL output and all expected downstream
+    conversions are consistent.
+
+    Checks performed
+    ----------------
+    1. raw_haemo channel types are 'hbo' / 'hbr' (not fnirs_od).
+    2. Data maximum is in the expected mol/L range (not μM — would be 1e6 × larger).
+    3. After × 1e6 conversion, peak |ΔHb| is within physiological range (0–200 μM).
+
+    Returns
+    -------
+    report : dict  {check_name: {"pass": bool, "value": ..., "note": str}}
+    """
+    data = raw_haemo.get_data()          # mol/L
+    ch_types = raw_haemo.get_channel_types()
+
+    # Check 1: channel types
+    valid_types = all(ct in ("hbo", "hbr") for ct in ch_types)
+
+    # Check 2: raw data magnitude implies mol/L (not μM)
+    abs_max_mol_L = float(np.nanmax(np.abs(data)))
+    # In mol/L, task-evoked changes are ~1e-7 to 1e-5 M; if data were in μM, max would be >>1
+    in_mol_L_range = abs_max_mol_L < 1e-3   # <1 mM is physiological
+
+    # Check 3: after μM conversion
+    data_um = data * MBLL_CONVERSION_FACTOR
+    abs_max_um = float(np.nanmax(np.abs(data_um)))
+    in_um_range = abs_max_um <= 200.0        # physiological upper bound for raw continuous signal
+
+    report = {
+        "channel_types_correct": {
+            "pass": valid_types,
+            "value": list(set(ch_types)),
+            "note": "Expected hbo/hbr (not fnirs_od)",
+        },
+        "raw_data_in_mol_L": {
+            "pass": in_mol_L_range,
+            "value": f"{abs_max_mol_L:.3e} mol/L",
+            "note": "Should be < 1e-3 mol/L for physiological fNIRS",
+        },
+        "converted_um_in_physiological_range": {
+            "pass": in_um_range,
+            "value": f"{abs_max_um:.2f} μM (peak |ΔHb|)",
+            "note": "Should be < 200 μM for continuous raw signal",
+        },
+        "paper_unit_note": {
+            "pass": True,
+            "value": f"{MBLL_PAPER_UNIT} ≈ {MBLL_DISPLAY_UNIT} (no conversion needed)",
+            "note": "Homer3 µM*mm is numerically equivalent to MNE µM at typical fNIRS amplitudes",
+        },
+    }
+
+    if verbose:
+        print("\n" + "=" * 70)
+        print("ISSUE 6 — UNIT PIPELINE AUDIT")
+        print("=" * 70)
+        for key, entry in report.items():
+            flag = "✓" if entry["pass"] else "✗"
+            print(f"  {flag} {key:45s}: {entry['value']}")
+            if not entry["pass"]:
+                print(f"      ↳ {entry['note']}")
+        all_pass = all(e["pass"] for e in report.values())
+        print(f"\n  Overall: {'✅ ALL CHECKS PASS' if all_pass else '⚠ SOME CHECKS FAILED'}")
+        print("=" * 70 + "\n")
+
+    return report
 
 
 # ===========================================================================

@@ -84,20 +84,26 @@ def _load_or_compute_subject_evoked(
     out_base: Path,
     study: str,
     min_tmax: float = 95.0,
+    max_tmin: float = -24.0,
 ) -> mne.Evoked | None:
     """
     Return the per-subject Evoked object for `subject_id`.
     Loads from cached -ave.fif if available AND the cached epoch window
-    extends to at least `min_tmax` seconds; otherwise (re-)runs the full
-    Section 4.1 pipeline to produce it.
+    spans the required range; otherwise (re-)runs the full Section 4.1
+    pipeline to produce it.
 
     Parameters
     ----------
     min_tmax : float
-        Minimum required last time point (s).  Cached evokeds with a shorter
-        window (e.g. old 30 s extractions) are automatically recomputed to
-        match the current 100 s horizon.  Default 95 s gives a small tolerance
-        for sample-rounding differences.
+        Minimum required last time point (s).  Cached evokeds that end before
+        this are stale (e.g. old 30 s extractions) and are recomputed.
+        Default 95 s (tolerates sample-rounding near tmax=100 s).
+    max_tmin : float
+        Maximum (least negative) allowed first time point (s).  Cached evokeds
+        whose tmin is greater than this value have an insufficient pre-stimulus
+        baseline and are recomputed.  Default -24 s (tolerates sample-rounding
+        near tmin=-25 s).  Set to a large negative number (e.g. -999) to skip
+        this check.
 
     Returns None if the subject's preprocessed .fif cannot be found.
     """
@@ -105,15 +111,25 @@ def _load_or_compute_subject_evoked(
 
     if ave_path.exists():
         evoked = mne.read_evokeds(ave_path, verbose=False)[0]
-        if evoked.times[-1] >= min_tmax:
-            print(f"    [{subject_id}] loaded cached {ave_path.name} "
-                  f"(tmax={evoked.times[-1]:.1f} s)")
-            return evoked
-        else:
-            print(f"    [{subject_id}] cached window too short "
-                  f"({evoked.times[-1]:.1f} s < {min_tmax} s required) — recomputing …")
+        tmin_cached = float(evoked.times[0])
+        tmax_cached = float(evoked.times[-1])
 
-    # Run full Section 4.1 pipeline
+        tmax_ok = tmax_cached >= min_tmax
+        tmin_ok = tmin_cached <= max_tmin
+
+        if tmax_ok and tmin_ok:
+            print(f"    [{subject_id}] loaded cached {ave_path.name} "
+                  f"(tmin={tmin_cached:.1f} s, tmax={tmax_cached:.1f} s)")
+            return evoked
+
+        reason = []
+        if not tmax_ok:
+            reason.append(f"tmax {tmax_cached:.1f} s < {min_tmax} s")
+        if not tmin_ok:
+            reason.append(f"tmin {tmin_cached:.1f} s > {max_tmin} s")
+        print(f"    [{subject_id}] cached window stale ({'; '.join(reason)}) — recomputing …")
+
+    # Run full Section 4.1 pipeline (reads tmin/baseline from config)
     print(f"    [{subject_id}] running HRF extraction …")
     try:
         run_hrf_extraction(subject_id=subject_id, study=study)

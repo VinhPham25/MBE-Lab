@@ -3,14 +3,14 @@
   "n_trials": 5,
   "n_long_hbo": 24,
   "n_long_hbr": 24,
-  "epoch_tmin": -5.0,
+  "epoch_tmin": -25.0,
   "epoch_tmax": 100.0,
   "baseline": [
-    -5.0,
+    -25.0,
     0.0
   ],
-  "hbo_peak_uM": 0.1917492279828329,
-  "hbr_trough_uM": -0.10862472367287118,
+  "hbo_peak_uM": 0.13581772039120116,
+  "hbr_trough_uM": -0.10752013787639819,
   "hbo_morphology_pass": true,
   "hbr_morphology_pass": true,
   "overall_morphology_pass": true,

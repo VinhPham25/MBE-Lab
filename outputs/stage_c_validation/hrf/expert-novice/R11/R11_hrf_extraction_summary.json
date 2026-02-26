@@ -3,17 +3,17 @@
   "n_trials": 5,
   "n_long_hbo": 24,
   "n_long_hbr": 24,
-  "epoch_tmin": -5.0,
+  "epoch_tmin": -25.0,
   "epoch_tmax": 100.0,
   "baseline": [
-    -5.0,
+    -25.0,
     0.0
   ],
-  "hbo_peak_uM": -0.00942120703330603,
-  "hbr_trough_uM": -0.5324958569469486,
-  "hbo_morphology_pass": false,
+  "hbo_peak_uM": 0.13035773920833643,
+  "hbr_trough_uM": -0.6274710696056299,
+  "hbo_morphology_pass": true,
   "hbr_morphology_pass": true,
-  "overall_morphology_pass": false,
+  "overall_morphology_pass": true,
   "region_channel_counts_3": {
     "PFC": 6,
     "M1": 8,

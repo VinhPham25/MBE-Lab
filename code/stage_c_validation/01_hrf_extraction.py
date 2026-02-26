@@ -478,12 +478,15 @@ def plot_hrf_verification(
 # Top-level pipeline
 # ===========================================================================
 
+_SENTINEL = object()   # sentinel to detect "caller passed nothing"
+
+
 def run_hrf_extraction(
     subject_id: str = "A1",
     study: str = STUDY,
-    tmin: float = -5.0,
-    tmax: float = 100.0,
-    baseline: tuple[float, float] = (-5.0, 0.0),
+    tmin=_SENTINEL,
+    tmax=_SENTINEL,
+    baseline=_SENTINEL,
     trial_event_id: int = 1,
 ) -> dict:
     """
@@ -493,8 +496,10 @@ def run_hrf_extraction(
     ----------
     subject_id : str   Subject identifier (e.g. 'A1').
     study      : str   Study key matching config (e.g. 'expert_novice').
-    tmin, tmax : float Epoch window in seconds (default: -5 to +100 for 100 s horizon).
-    baseline   : tuple Baseline correction window.
+    tmin, tmax : float Epoch window in seconds.  When not supplied the values
+                       are read from config.yaml (stage_c.epochs.tmin / tmax).
+    baseline   : tuple Baseline correction window.  When not supplied, read
+                       from config.yaml (stage_c.epochs.baseline).
     trial_event_id : int  Annotation code for trial onset.
 
     Returns
@@ -502,6 +507,15 @@ def run_hrf_extraction(
     results : dict  Summary metrics and file paths (includes both 3-region and 5-region maps).
     """
     config = load_config()
+
+    # ── Resolve epoch window from config when not explicitly passed ───────────
+    epochs_cfg = config["stage_c"]["epochs"]
+    if tmin is _SENTINEL:
+        tmin = float(epochs_cfg["tmin"])
+    if tmax is _SENTINEL:
+        tmax = float(epochs_cfg["tmax"])
+    if baseline is _SENTINEL:
+        baseline = tuple(float(v) for v in epochs_cfg["baseline"])
     # Study display name matches the BIDS folder (e.g. "Expert-Novice")
     study_display_name = Path(config["datasets"][study]["data_path"]).name
     out_dir = (Path(config["paths"]["stage_c_outputs"])

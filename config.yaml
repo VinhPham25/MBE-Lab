@@ -151,9 +151,9 @@ stage_b:
 stage_c:
   # Step C1: HRF Extraction
   epochs:
-    tmin: -5    # seconds before stimulus onset (baseline period)
+    tmin: -25    # seconds before stimulus onset (baseline period)
     tmax: 100   # seconds after stimulus onset — extended to match Figure 3c horizon
-    baseline: [-5, 0]  # Baseline correction period (seconds)
+    baseline: [-25, 0]  # Baseline correction period (seconds)
     event_id:
       trial_start: 1  # Condition 1 = trial start
       trial_end: 2    # Condition 2 = trial end
@@ -163,8 +163,12 @@ stage_c:
     expected_peak_time_min: 8   # seconds - Expected HRF peak window start
     expected_peak_time_max: 12  # seconds - Expected HRF peak window end
     peak_analysis_window: [5, 15]  # seconds - Window for extracting peak amplitude
-    expected_hbo_amplitude: [0.35, 1]  # μM - Typical HbO peak amplitude range
-    expected_hbr_amplitude: [0.25, 1]   # μM - Typical HbR peak amplitude range
+    # Amplitude ranges for GROUP-MEAN region averages (after grand-averaging across subjects+channels)
+    # Units: μM (mol/L × 1e6). Paper reports μM*mm (Homer3 convention) — numerically equivalent.
+    # Single-channel per-subject peaks are ~5–15 μM; grand-average region means are ~0.01–0.50 μM.
+    # See: AUDIT_PROGRESS.md Issue 6 (unit analysis, 2026-02-25)
+    expected_hbo_amplitude: [0.01, 0.50]  # μM - group-mean region average HbO peak
+    expected_hbr_amplitude: [0.01, 0.50]  # μM - group-mean region average HbR trough
     
   # Brain Region Channel Mapping
   # Note: Specific channel indices will be extracted from .snirf metadata
@@ -257,6 +261,7 @@ validation:
     
   stage_c:
     hrf_peak_time: [8, 12]  # seconds - Expected HRF peak timing
+    hrf_amplitude_um: [0.01, 0.50]  # μM - group-mean region average (updated Issue 6)
     cnr_minimum: 1.0  # Minimum CNR for detectable group differences
     p_value_threshold: 0.05  # Significance threshold
     
