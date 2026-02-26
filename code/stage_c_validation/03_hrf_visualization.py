@@ -9,19 +9,25 @@ Task coverage:
   4.3.2 — Generate plots for all regions (PFC, M1, SMA) × both groups
   4.3.3 — Save plots and compare to paper Figure 3c, 3d
   4.3.4 — Verify HRF characteristics match expected physiology
+  1.3   — Extended x-axis to 100 s post-onset for both 3-region and 5-region plots
+  1.4   — Generate paper-faithful 5-region Figure 3c reproduction alongside 3-region
 
-Figure layout
--------------
-One figure per chromophore (HbO / HbR), each with 1×3 subplots (PFC | M1 | SMA).
-Saves two files:
-  hrf_plot_HbO.png   — ΔHbO mean ± SD for Expert (red) and Novice (green)
-  hrf_plot_HbR.png   — ΔHbR mean ± SD for Expert (red) and Novice (green)
+Figure layouts
+--------------
+A) Original 3-region (extended to 100 s): 1×3 subplots (PFC | M1 | SMA)
+     hrf_plot_HbO.png   — ΔHbO  mean ± SD, 100 s window
+     hrf_plot_HbR.png   — ΔHbR  mean ± SD, 100 s window
+
+B) Paper-faithful 5-region (Figure 3c reproduction):
+     Top row   : Left Lateral PFC | Central PFC | Right Lateral PFC
+     Bottom row: Left Medial M1   | SMA          | Legend
+     hrf_plot_5region_HbO.png  — matches Figure 3c (HbO₂, 100 s)
+     hrf_plot_5region_HbR.png  — HbR counterpart (100 s)
 
 Per-subject SD
 --------------
-SD bands are computed from per-subject region-mean traces (not across channels):
-  1. Load each subject's -ave.fif.
-  2. Harmonise (resample if needed, drop NaN channels — same as Section 4.2).
+  1. Load each subject's -ave.fif (100 s window, recomputed from cache if needed).
+  2. Harmonise (resample to 25 Hz if needed, drop NaN channels).
   3. For each region × chromophore, average across that region's channels.
   4. Stack per-subject traces → array (n_subjects × n_times).
   5. Compute group mean and ±1 SD.
@@ -30,14 +36,16 @@ Visual style (matches paper Figure 3c)
   Expert   : mean line  #8B1A1A (dark red)  |  SD band  #FFAAAA (light red/pink)
   Novice   : mean line  #1A6B1A (dark green) |  SD band  #A8E6A8 (light green)
   Task start: vertical dashed black line at t = 0
-  Zero line : thin grey horizontal line at y = 0
+  Zero line : thin black horizontal line at y = 0
 
 Outputs (outputs/stage_c_validation/hrf/{study_name}/group/)
-  hrf_plot_HbO.png
-  hrf_plot_HbR.png
+  hrf_plot_HbO.png          — 3-region, 100 s window
+  hrf_plot_HbR.png          — 3-region, 100 s window
+  hrf_plot_5region_HbO.png  — 5-region Figure 3c layout, 100 s window
+  hrf_plot_5region_HbR.png  — 5-region HbR counterpart, 100 s window
 
 Upstream : 01_hrf_extraction.py, 02_group_hrf_analysis.py
-Reference : PROGRESS.md Section 4.3; paper Figure 3c, 3d
+Reference : AUDIT_PROGRESS.md Issue 1; PROGRESS.md Section 4.3; paper Figure 3c, 3d
 """
 
 import importlib.util
@@ -47,6 +55,7 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 import matplotlib.ticker as mticker
 import mne
 import numpy as np
@@ -70,6 +79,7 @@ _grp = importlib.util.module_from_spec(_spec_02)
 _spec_02.loader.exec_module(_grp)
 
 build_region_map               = _hrf.build_region_map
+build_region_map_5             = _hrf.build_region_map_5
 _load_or_compute_subject_evoked = _grp._load_or_compute_subject_evoked
 _harmonise_evoked              = _grp._harmonise_evoked
 
@@ -329,6 +339,153 @@ def generate_hrf_plots(
 
 
 # ===========================================================================
+# 1.4 — Paper-faithful 5-region Figure 3c layout
+# ===========================================================================
+
+def generate_hrf_plots_5region(
+    groups: dict[str, list[str]],
+    out_base: Path,
+    study: str,
+    region_map_5: dict[str, list[str]],
+    out_dir: Path,
+) -> dict:
+    """
+    Build two figures (one per chromophore) matching the Figure 3c layout of
+    Kamat et al. (2023):
+      Top row    : Left Lateral PFC | Central PFC | Right Lateral PFC
+      Bottom row : Left Medial M1   | SMA          | (legend panel)
+
+    Saves hrf_plot_5region_HbO.png and hrf_plot_5region_HbR.png to out_dir.
+
+    Returns peak stats dict.
+    """
+    top_regions    = ["Left Lateral PFC", "Central PFC", "Right Lateral PFC"]
+    bottom_regions = ["Left Medial M1", "SMA"]
+    all_regions    = top_regions + bottom_regions
+    all_stats: dict = {}
+    saved: list[str] = []
+
+    for chromophore in ("hbo", "hbr"):
+        chrom_label   = "HbO" if chromophore == "hbo" else "HbR"
+        chrom_display = "HbO₂" if chromophore == "hbo" else "HbR"
+        print(f"\n  [Plotting 5-region {chrom_label}]")
+
+        # ── Collect per-subject traces ─────────────────────────────────────
+        group_region_traces: dict[str, dict[str, np.ndarray]] = {}
+        times_ref: np.ndarray | None = None
+
+        for group_name, subjects in groups.items():
+            traces, t = collect_group_traces(
+                subjects, out_base, study, region_map_5,
+                chromophore=chromophore,
+            )
+            group_region_traces[group_name] = traces
+            if times_ref is None and t is not None:
+                times_ref = t
+
+        if times_ref is None:
+            print(f"    ⚠ No time array found, skipping 5-region {chrom_label}")
+            continue
+
+        # ── Build figure with mosaic layout ───────────────────────────────
+        # 2 rows × 3 cols: top row = 3 PFC panels; bottom row = 2 motor + legend
+        mosaic = [
+            ["A", "B", "C"],
+            ["D", "E", "legend"],
+        ]
+        fig, axes = plt.subplot_mosaic(
+            mosaic,
+            figsize=(14, 8),
+            gridspec_kw={"wspace": 0.35, "hspace": 0.50},
+        )
+        panel_keys = {
+            "Left Lateral PFC":  "A",
+            "Central PFC":       "B",
+            "Right Lateral PFC": "C",
+            "Left Medial M1":    "D",
+            "SMA":               "E",
+        }
+
+        fig.suptitle(
+            f"Expert vs. Novice Group HRF — Δ{chrom_display}  "
+            f"(Figure 3c reproduction)\n"
+            f"mean ± 1 SD across subjects  |  units: μM  "
+            f"[Note: paper reports μM*mm — Issue 6 pending]",
+            fontsize=11, fontweight="bold",
+        )
+
+        # ── Draw panels ────────────────────────────────────────────────────
+        for region in all_regions:
+            ax = axes[panel_keys[region]]
+            panel_traces = {
+                g: group_region_traces[g][region]
+                for g in groups
+                if group_region_traces[g].get(region, np.empty((0,))).size > 0
+            }
+            panel_stats = plot_hrf_panel(
+                ax, times_ref, panel_traces,
+                region=region,
+                chromophore=chromophore,
+                show_legend=False,
+                show_xlabel=True,
+                show_ylabel=(region in ("Left Lateral PFC", "Left Medial M1")),
+            )
+            all_stats[f"{chrom_label}_{region}"] = panel_stats
+
+            n_expert = panel_traces.get("Expert", np.empty((0,))).shape[0]
+            n_novice = panel_traces.get("Novice", np.empty((0,))).shape[0]
+            print(f"    {region}: Expert n={n_expert}, Novice n={n_novice}")
+            for grp, ps in panel_stats.items():
+                print(f"      {grp}: peak={ps['peak_amp_uM']:+.3f} μM "
+                      f"@ {ps['peak_time_s']:.1f} s")
+
+        # ── Legend panel ───────────────────────────────────────────────────
+        ax_leg = axes["legend"]
+        ax_leg.axis("off")
+
+        legend_elements = []
+        for group_name in groups:
+            s = GROUP_STYLE[group_name]
+            legend_elements.append(
+                plt.Line2D(
+                    [0], [0],
+                    color=s["mean_color"], lw=s["lw"],
+                    label=f"{s['label']} mean",
+                )
+            )
+            legend_elements.append(
+                plt.Rectangle(
+                    (0, 0), 1, 1,
+                    fc=s["band_color"], alpha=s["band_alpha"],
+                    label=f"{s['label']} SD",
+                )
+            )
+        legend_elements.append(
+            plt.Line2D(
+                [0], [0],
+                color="black", lw=1.5, ls="--",
+                label="FLS task start",
+            )
+        )
+        ax_leg.legend(
+            handles=legend_elements,
+            loc="center",
+            fontsize=9,
+            framealpha=0.9,
+            handlelength=2.0,
+        )
+
+        plt.tight_layout()
+        out_path = out_dir / f"hrf_plot_5region_{chrom_label}.png"
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        saved.append(out_path.name)
+        print(f"  Saved: {out_path.name}")
+
+    return {"peak_stats": all_stats, "saved_files": saved}
+
+
+# ===========================================================================
 # 4.3.4 — Physiological verification
 # ===========================================================================
 
@@ -381,7 +538,7 @@ def run_hrf_visualization(
     out_dir  = out_base / "group"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Region map (from reference subject A1) ────────────────────────────
+    # ── Region maps (from reference subject A1) ───────────────────────────
     stage_b_dir = (Path(config["paths"]["stage_b_outputs"])
                    / "processed_data"
                    / study.replace("_", "-"))
@@ -389,38 +546,52 @@ def run_hrf_visualization(
         list(stage_b_dir.glob("sub-A1_*_raw.fif"))[0],
         preload=False, verbose=False,
     )
-    region_map = build_region_map(raw_ref)
+    region_map   = build_region_map(raw_ref)    # 3-region
+    region_map_5 = build_region_map_5(raw_ref)  # 5-region (Figure 3c)
 
     print(f"\n{'='*60}")
     print(f"  Section 4.3 — HRF Visualization")
     print(f"  Study  : {study_display_name}")
     print(f"  Groups : {', '.join(f'{g} (n={len(s)})' for g, s in groups.items())}")
-    print(f"  Regions: {', '.join(f'{r}={len(v)}ch' for r, v in region_map.items())}")
+    print(f"  3-region: {', '.join(f'{r}={len(v)}ch' for r, v in region_map.items())}")
+    print(f"  5-region: {', '.join(f'{r}={len(v)}ch' for r, v in region_map_5.items())}")
     print(f"  Output : {out_dir}")
     print(f"{'='*60}")
 
-    # ── 4.3.1 + 4.3.2 + 4.3.3 — Plot both chromophores ──────────────────
+    # ── 4.3.1 + 4.3.2 + 4.3.3 — 3-region plots (100 s window) ───────────
+    print(f"\n--- 3-Region Plots (original layout, extended to 100 s) ---")
     plot_results = generate_hrf_plots(
         groups, out_base, study, region_map, out_dir
     )
 
-    # ── 4.3.4 — Physiology check ─────────────────────────────────────────
-    physio_checks = verify_physiology(plot_results["peak_stats"])
+    # ── 1.4 — 5-region Figure 3c-faithful plots ───────────────────────────
+    print(f"\n--- 5-Region Plots (Figure 3c paper-faithful layout) ---")
+    plot_results_5 = generate_hrf_plots_5region(
+        groups, out_base, study, region_map_5, out_dir
+    )
 
-    n_pass  = sum(1 for v in physio_checks.values() if v["pass"])
-    n_total = len(physio_checks)
+    # ── 4.3.4 — Physiology check (both sets) ──────────────────────────────
+    combined_stats = {**plot_results["peak_stats"], **plot_results_5["peak_stats"]}
+    physio_checks  = verify_physiology(combined_stats)
+
+    all_saved = plot_results["saved_files"] + plot_results_5["saved_files"]
+    n_pass    = sum(1 for v in physio_checks.values() if v["pass"])
+    n_total   = len(physio_checks)
 
     print(f"\n{'='*60}")
     print(f"  Section 4.3 complete")
-    print(f"  Saved: {', '.join(plot_results['saved_files'])}")
-    print(f"  Physiology: {n_pass}/{n_total} pass")
+    print(f"  3-region saved : {', '.join(plot_results['saved_files'])}")
+    print(f"  5-region saved : {', '.join(plot_results_5['saved_files'])}")
+    print(f"  Physiology     : {n_pass}/{n_total} pass")
     print(f"{'='*60}\n")
 
     return {
-        "saved_files": plot_results["saved_files"],
-        "peak_stats": plot_results["peak_stats"],
+        "saved_files": all_saved,
+        "peak_stats": combined_stats,
         "physiology_checks": physio_checks,
         "physiology_pass": f"{n_pass}/{n_total}",
+        "region_map_3": region_map,
+        "region_map_5": region_map_5,
     }
 
 

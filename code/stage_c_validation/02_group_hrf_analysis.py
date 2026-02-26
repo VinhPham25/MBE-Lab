@@ -83,11 +83,21 @@ def _load_or_compute_subject_evoked(
     subject_id: str,
     out_base: Path,
     study: str,
+    min_tmax: float = 95.0,
 ) -> mne.Evoked | None:
     """
     Return the per-subject Evoked object for `subject_id`.
-    Loads from cached -ave.fif if available; otherwise runs the full
+    Loads from cached -ave.fif if available AND the cached epoch window
+    extends to at least `min_tmax` seconds; otherwise (re-)runs the full
     Section 4.1 pipeline to produce it.
+
+    Parameters
+    ----------
+    min_tmax : float
+        Minimum required last time point (s).  Cached evokeds with a shorter
+        window (e.g. old 30 s extractions) are automatically recomputed to
+        match the current 100 s horizon.  Default 95 s gives a small tolerance
+        for sample-rounding differences.
 
     Returns None if the subject's preprocessed .fif cannot be found.
     """
@@ -95,8 +105,13 @@ def _load_or_compute_subject_evoked(
 
     if ave_path.exists():
         evoked = mne.read_evokeds(ave_path, verbose=False)[0]
-        print(f"    [{subject_id}] loaded cached {ave_path.name}")
-        return evoked
+        if evoked.times[-1] >= min_tmax:
+            print(f"    [{subject_id}] loaded cached {ave_path.name} "
+                  f"(tmax={evoked.times[-1]:.1f} s)")
+            return evoked
+        else:
+            print(f"    [{subject_id}] cached window too short "
+                  f"({evoked.times[-1]:.1f} s < {min_tmax} s required) — recomputing …")
 
     # Run full Section 4.1 pipeline
     print(f"    [{subject_id}] running HRF extraction …")

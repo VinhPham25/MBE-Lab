@@ -4,7 +4,7 @@
   "n_long_hbo": 24,
   "n_long_hbr": 24,
   "epoch_tmin": -5.0,
-  "epoch_tmax": 30.0,
+  "epoch_tmax": 100.0,
   "baseline": [
     -5.0,
     0.0
@@ -14,16 +14,24 @@
   "hbo_morphology_pass": false,
   "hbr_morphology_pass": false,
   "overall_morphology_pass": false,
-  "region_channel_counts": {
+  "region_channel_counts_3": {
     "PFC": 6,
     "M1": 8,
     "SMA": 10
   },
+  "region_channel_counts_5": {
+    "Left Lateral PFC": 2,
+    "Central PFC": 2,
+    "Right Lateral PFC": 2,
+    "Left Medial M1": 9,
+    "SMA": 9
+  },
   "outputs": {
-    "epochs_fif": "outputs/stage_c_validation/R10/R10-epo.fif",
-    "evoked_fif": "outputs/stage_c_validation/R10/R10-ave.fif",
-    "hrf_averages_csv": "outputs/stage_c_validation/R10/R10_hrf_averages.csv",
-    "verification_plot": "outputs/stage_c_validation/R10/R10_hrf_verification_plot.png",
-    "region_map_json": "outputs/stage_c_validation/R10/R10_hrf_region_map.json"
+    "epochs_fif": "outputs/stage_c_validation/hrf/Expert-Novice/R10/R10-epo.fif",
+    "evoked_fif": "outputs/stage_c_validation/hrf/Expert-Novice/R10/R10-ave.fif",
+    "hrf_averages_csv": "outputs/stage_c_validation/hrf/Expert-Novice/R10/R10_hrf_averages.csv",
+    "verification_plot": "outputs/stage_c_validation/hrf/Expert-Novice/R10/R10_hrf_verification_plot.png",
+    "region_map_json": "outputs/stage_c_validation/hrf/Expert-Novice/R10/R10_hrf_region_map.json",
+    "region_map_5_json": "outputs/stage_c_validation/hrf/Expert-Novice/R10/R10_hrf_region_map_5.json"
   }
 }

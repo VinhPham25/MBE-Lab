@@ -151,8 +151,8 @@ stage_b:
 stage_c:
   # Step C1: HRF Extraction
   epochs:
-    tmin: -5  # seconds before stimulus onset (baseline period)
-    tmax: 30  # seconds after stimulus onset
+    tmin: -5    # seconds before stimulus onset (baseline period)
+    tmax: 100   # seconds after stimulus onset — extended to match Figure 3c horizon
     baseline: [-5, 0]  # Baseline correction period (seconds)
     event_id:
       trial_start: 1  # Condition 1 = trial start

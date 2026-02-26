@@ -4,18 +4,20 @@ Purpose: Extract, average, and verify trial-locked HRF epochs from the Stage B
          preprocessed hemoglobin concentration time series.
 
 Task coverage:
-  4.1.1 — Epoch extraction (tmin=-5, tmax=30 s, baseline=(-5,0))
+  4.1.1 — Epoch extraction (tmin=-5, tmax=100 s, baseline=(-5,0))
   4.1.2 — Single-subject HRF averaging (average across trials per channel)
   4.1.3 — HRF morphology verification for A1 (HbO↑, HbR↓)
-  4.1.4 — Brain region channel selection (PFC, M1, SMA)
+  4.1.4 — Brain region channel selection (3-region: PFC, M1, SMA)
+  1.2   — 5-region channel mapping matching Figure 3c (Kamat et al. 2023)
+  1.3   — Extended epoch window: tmax = 100 s post-onset
 
 Algorithm
 ---------
 1.  Load Stage B preprocessed .fif (continuous HbO/HbR, all channels).
 2.  Convert MNE Annotations → integer event array using event_id={'1':1,'2':2}.
 3.  Epoch around trial-start events (event_id=1):
-      tmin = -5 s  (pre-stimulus baseline)
-      tmax = +30 s (post-stimulus window capturing full HRF)
+      tmin = -5 s   (pre-stimulus baseline)
+      tmax = +100 s (post-stimulus window capturing full 100 s Figure 3c horizon)
       baseline = (-5, 0)  (subtract mean of pre-stimulus window)
       reject_by_annotation = False  (annotations are task onsets, not artefacts)
 4.  Save raw epoch object as {subject_id}-epo.fif.
@@ -25,22 +27,28 @@ Algorithm
       - HbO peak should be positive (increase) in [5, 15] s window
       - HbR peak should be negative (decrease) in the same window
       - Compute mean long-channel HbO/HbR per brain region
-8.  Classify long-separation channels into PFC / M1 / SMA using 2-D
-    midpoint coordinates from raw.info:
+8a. 3-region classification (PFC / M1 / SMA) using 2-D midpoint coords:
       PFC  : channel midpoint y  >  0.060 m  (frontal)
       M1   : channel midpoint |x| > 0.040 m  AND  y <= 0.060 m  (lateral motor)
       SMA  : channel midpoint |x| <= 0.040 m AND  y <= 0.060 m  (midline/medial motor)
+8b. 5-region classification (Figure 3c paper-faithful):
+      Left Lateral PFC  : y > 0.060 m  AND  x < -0.020 m
+      Central PFC       : y > 0.060 m  AND  |x| <= 0.020 m
+      Right Lateral PFC : y > 0.060 m  AND  x > 0.020 m
+      Left Medial M1    : y <= 0.060 m AND  x < 0 m  (left hemisphere motor)
+      SMA               : y <= 0.060 m AND  x >= 0 m (midline / right hemisphere motor)
     Short-separation channels (D17–D24 suffix, or S8_D9 at 10 mm) are excluded
     from all region analyses.
 
 Outputs (outputs/stage_c_validation/{subject_id}/)
-  {subject_id}-epo.fif                — raw epoch object (MNE Epochs)
-  {subject_id}_hrf_averages.csv       — time × channel HRF matrix (μM)
-  {subject_id}_hrf_verification_plot.png — HbO/HbR morphology verification figure
-  {subject_id}_hrf_region_map.json    — channel-to-region assignment
+  {subject_id}-epo.fif                    — raw epoch object (MNE Epochs)
+  {subject_id}_hrf_averages.csv           — time × channel HRF matrix (μM)
+  {subject_id}_hrf_verification_plot.png  — HbO/HbR morphology verification figure
+  {subject_id}_hrf_region_map.json        — 3-region channel-to-region assignment
+  {subject_id}_hrf_region_map_5.json      — 5-region channel-to-region assignment
 
 Upstream : outputs/stage_b_processed/processed_data/{study}/sub-{id}_*_raw.fif
-Reference : PROGRESS.md Section 4.1; config.yaml stage_c.epochs
+Reference : PROGRESS.md Section 4.1; AUDIT_PROGRESS.md Issue 1; config.yaml stage_c.epochs
 """
 
 import json
@@ -64,9 +72,13 @@ SHORT_SEP_SUFFIX = tuple(f"D{d}" for d in range(17, 25))   # D17–D24
 SHORT_SEP_SPECIAL = {"S8_D9"}                               # 10 mm channel
 
 # Brain-region classification thresholds (channel midpoint, metres)
-PFC_Y_THRESHOLD   = 0.060   # y > 0.060 → Prefrontal Cortex
-M1_X_THRESHOLD    = 0.040   # |x| > 0.040 → Primary Motor Cortex (lateral)
+PFC_Y_THRESHOLD        = 0.060   # y > 0.060 → Prefrontal Cortex
+M1_X_THRESHOLD         = 0.040   # |x| > 0.040 → Primary Motor Cortex (lateral)
 # SMA = everything else in the motor belt (|x| ≤ 0.040, y ≤ 0.060)
+
+# 5-region sub-division thresholds (Figure 3c, Kamat et al. 2023)
+PFC_LATERAL_X_THRESHOLD = 0.020  # |x| > 0.020 → Lateral PFC (left/right)
+# Motor split: x < 0 → Left Medial M1 (left hemisphere); x >= 0 → SMA (midline/right)
 
 STUDY = "expert_novice"
 
@@ -120,6 +132,64 @@ def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
             region_map["M1"].append(base)
         else:
             region_map["SMA"].append(base)
+
+    return region_map
+
+
+def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
+    """
+    5-region classification matching Figure 3c (Kamat et al. 2023).
+
+    Regions
+    -------
+    Left Lateral PFC  : y > PFC_Y_THRESHOLD  AND  x < -PFC_LATERAL_X_THRESHOLD
+    Central PFC       : y > PFC_Y_THRESHOLD  AND  |x| <= PFC_LATERAL_X_THRESHOLD
+    Right Lateral PFC : y > PFC_Y_THRESHOLD  AND  x >  PFC_LATERAL_X_THRESHOLD
+    Left Medial M1    : y <= PFC_Y_THRESHOLD AND  x < 0   (left hemisphere motor)
+    SMA               : y <= PFC_Y_THRESHOLD AND  x >= 0  (midline / right hemisphere motor)
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Preprocessed haemo raw object with HbO + HbR channels.
+
+    Returns
+    -------
+    region_map : dict  {region_name: [channel_base_names]}
+        Five keys matching Figure 3c panel labels.
+    """
+    region_map: dict[str, list[str]] = {
+        "Left Lateral PFC":  [],
+        "Central PFC":       [],
+        "Right Lateral PFC": [],
+        "Left Medial M1":    [],
+        "SMA":               [],
+    }
+
+    for ch in raw.info["chs"]:
+        ch_name = ch["ch_name"]
+        if "hbr" in ch_name:
+            continue
+        if "hbo" not in ch_name:
+            continue
+        if _is_short_sep(ch_name):
+            continue
+
+        x, y, _ = ch["loc"][:3]
+        base = ch_name.split(" ")[0]
+
+        if y > PFC_Y_THRESHOLD:
+            if x < -PFC_LATERAL_X_THRESHOLD:
+                region_map["Left Lateral PFC"].append(base)
+            elif x > PFC_LATERAL_X_THRESHOLD:
+                region_map["Right Lateral PFC"].append(base)
+            else:
+                region_map["Central PFC"].append(base)
+        else:
+            if x < 0:
+                region_map["Left Medial M1"].append(base)
+            else:
+                region_map["SMA"].append(base)
 
     return region_map
 
@@ -412,7 +482,7 @@ def run_hrf_extraction(
     subject_id: str = "A1",
     study: str = STUDY,
     tmin: float = -5.0,
-    tmax: float = 30.0,
+    tmax: float = 100.0,
     baseline: tuple[float, float] = (-5.0, 0.0),
     trial_event_id: int = 1,
 ) -> dict:
@@ -423,13 +493,13 @@ def run_hrf_extraction(
     ----------
     subject_id : str   Subject identifier (e.g. 'A1').
     study      : str   Study key matching config (e.g. 'expert_novice').
-    tmin, tmax : float Epoch window in seconds.
+    tmin, tmax : float Epoch window in seconds (default: -5 to +100 for 100 s horizon).
     baseline   : tuple Baseline correction window.
     trial_event_id : int  Annotation code for trial onset.
 
     Returns
     -------
-    results : dict  Summary metrics and file paths.
+    results : dict  Summary metrics and file paths (includes both 3-region and 5-region maps).
     """
     config = load_config()
     # Study display name matches the BIDS folder (e.g. "Expert-Novice")
@@ -470,19 +540,29 @@ def run_hrf_extraction(
     print(f"\n  Loaded: {len(raw.ch_names)} channels, "
           f"{raw.times[-1]:.1f} s @ {raw.info['sfreq']} Hz")
 
-    # ── 4.1.4 — Region map ───────────────────────────────────────────────────
-    print(f"\n[4.1.4] Brain region channel classification")
+    # ── 4.1.4 — 3-region map ─────────────────────────────────────────────────
+    print(f"\n[4.1.4] Brain region channel classification (3-region)")
     region_map = build_region_map(raw)
     hbo_long, hbr_long = get_long_channel_names(raw)
     print(f"  Long channels: {len(hbo_long)} HbO, {len(hbr_long)} HbR")
     for region, bases in region_map.items():
         print(f"  {region:5s}: {len(bases)} pairs → {bases}")
 
-    # Save region map
     region_map_path = out_dir / f"{subject_id}_hrf_region_map.json"
     with open(region_map_path, "w") as f:
         json.dump(region_map, f, indent=2)
     print(f"  Saved: {region_map_path.name}")
+
+    # ── 1.2 — 5-region map (Figure 3c) ───────────────────────────────────────
+    print(f"\n[1.2] 5-region classification (Figure 3c — Kamat et al. 2023)")
+    region_map_5 = build_region_map_5(raw)
+    for region, bases in region_map_5.items():
+        print(f"  {region:20s}: {len(bases)} pairs")
+
+    region_map_5_path = out_dir / f"{subject_id}_hrf_region_map_5.json"
+    with open(region_map_5_path, "w") as f:
+        json.dump(region_map_5, f, indent=2)
+    print(f"  Saved: {region_map_5_path.name}")
 
     # ── 4.1.1 — Epoch extraction ─────────────────────────────────────────────
     print(f"\n[4.1.1] Epoch extraction (tmin={tmin}s, tmax={tmax}s, baseline={baseline})")
@@ -530,13 +610,15 @@ def run_hrf_extraction(
         "hbo_morphology_pass": morph["hbo_morphology_pass"],
         "hbr_morphology_pass": morph["hbr_morphology_pass"],
         "overall_morphology_pass": morph["overall_pass"],
-        "region_channel_counts": {r: len(v) for r, v in region_map.items()},
+        "region_channel_counts_3": {r: len(v) for r, v in region_map.items()},
+        "region_channel_counts_5": {r: len(v) for r, v in region_map_5.items()},
         "outputs": {
             "epochs_fif": str(epo_path),
             "evoked_fif": str(ave_path),
             "hrf_averages_csv": str(csv_path),
             "verification_plot": str(plot_path),
             "region_map_json": str(region_map_path),
+            "region_map_5_json": str(region_map_5_path),
         },
     }
 
@@ -551,7 +633,8 @@ def run_hrf_extraction(
     print(f"  Morphology: {'✓ PASS' if results['overall_morphology_pass'] else '✗ FAIL'}")
     print(f"  HbO peak: {results['hbo_peak_uM']:+.3f} μM  "
           f"HbR trough: {results['hbr_trough_uM']:+.3f} μM")
-    print(f"  Regions: {results['region_channel_counts']}")
+    print(f"  3-region counts: {results['region_channel_counts_3']}")
+    print(f"  5-region counts: {results['region_channel_counts_5']}")
     print(f"{'='*60}\n")
 
     return results

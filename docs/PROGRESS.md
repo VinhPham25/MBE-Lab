@@ -2,21 +2,22 @@
 
 **Last Updated:** February 25, 2026  
 **Current Week:** Week 7-8 (Stage C In Progress)  
-**Current Stage:** Section 4.4 Complete — CNR calculated and box plot produced for Expert/Novice  
-**Next Milestone:** Section 4.5 - Statistical Validation (t-test, Cohen's d)
+**Current Stage:** Audit Issue 1 Complete — 5-region HRF plots + 100 s window generated  
+**Next Milestone:** Audit Issue 2 — Short-channel regression model alignment
 
 ---
 
 ## 🎯 PROJECT STATE OF THE UNION
 
 ### Current Status
-- **Phase:** Phase 1 - Reproduction and Validation
-- **Active Stage:** Stage C — Section 4.4 done (4.4.1–4.4.4 ✅)
-- **Completion:** 85% (81/96 tasks)
+- **Phase:** Phase 1 - Reproduction and Validation (Audit Track)
+- **Active Stage:** Audit Issue 1 ✅ → Next: Audit Issue 2
+- **Completion:** 85%+ (81 original tasks + Issue 1 audit tasks complete)
 - **Blockers:** None
-- **Latest Achievement:** Section 4.4 complete — `04_calculate_cnr.py` built; per-subject peak amplitudes extracted from cached Evoked objects; CNR computed for 24 HbO + 24 HbR long channels; median CNR=0.240, mean=0.240, max=0.634; 0% channels exceed CNR=1.0 threshold (consistent with grand-mean attenuation noted in 4.2/4.3); box plot produced (Figure 4i style, blue boxes, red median, placeholder slots for Trainee/Control and tES comparisons); CSV and summary JSON saved to `outputs/stage_c_validation/cnr/`.
+- **Latest Achievement:** Audit Issue 1 complete — 5-region HRF extraction + 100 s epoch window implemented; all 14 subjects re-extracted; 4 output plots generated in `outputs/stage_c_validation/hrf/Expert-Novice/group/` (hrf_plot_HbO.png, hrf_plot_HbR.png, hrf_plot_5region_HbO.png, hrf_plot_5region_HbR.png); morphological mismatch documented (21/28 physiology checks pass; key discrepancies: unit mismatch μM vs μM*mm, group contrast direction in PFC/M1); see AUDIT_PROGRESS.md §1.5.
 
 ### Recent Changes
+- [2026-02-25] ✅ **Audit Issue 1 complete** (tasks 1.1–1.5) — Added `build_region_map_5()` (5-region: Left Lat PFC/Central PFC/Right Lat PFC/Left Medial M1/SMA) to `01_hrf_extraction.py`; changed default tmax from 30 → 100 s; added stale-cache invalidation in `02_group_hrf_analysis.py`; added `generate_hrf_plots_5region()` (Figure 3c 2-row mosaic layout) to `03_hrf_visualization.py`; all 14 subjects re-extracted; 4 plots saved; morphological mismatch documented in `AUDIT_PROGRESS.md §1.5`.
 - [2026-02-25] ✅ Section 4.4 complete (tasks 4.4.1–4.4.4) — built `code/stage_c_validation/04_calculate_cnr.py`; per-subject peak amplitudes extracted in 5–15 s window for all 14 subjects (cached); CNR = |μ₁−μ₂|/√(σ₁²+σ₂²) computed per long channel; Expert n=8, Novice n=6; 24 HbO + 24 HbR = 48 valid channels; HbO median CNR=0.175, HbR median CNR=0.258, pooled median=0.240, max=0.634; 0% channels above threshold (1.0) — consistent with grand-mean attenuation; box plot (Figure 4i style) saved with pending slots for future studies; `cnr_Expert-Novice.csv`, `cnr_boxplot.png`, `cnr_summary.json` in `outputs/stage_c_validation/cnr/`.
 - [2026-02-24] ✅ Section 4.3 complete (tasks 4.3.1–4.3.4) — built `code/stage_c_validation/03_hrf_visualization.py`; per-subject region-mean traces collected for Expert (n=8) and Novice (n=6); two 1×3 figures produced (HbO and HbR), each with PFC|M1|SMA panels, Expert dark-red + Novice dark-green mean lines with ±1SD shading, vertical task-onset dashed line; physiology check 9/12 pass (3 PFC failures expected — PFC shows near-zero/deactivation for motor task; M1 and SMA both pass HbO↑ HbR↓); Expert M1 HbO peak=+0.256 μM @ 8.2 s, Novice M1 HbO peak=+0.217 μM @ 13.2 s; outputs: `hrf_plot_HbO.png`, `hrf_plot_HbR.png` in `outputs/stage_c_validation/hrf/Expert-Novice/group/`.
 - [2026-02-24] ✅ Section 4.2 complete (tasks 4.2.1–4.2.3) — built `code/stage_c_validation/02_group_hrf_analysis.py`; batch-extracted all 14 subjects via cached 4.1 pipeline; Expert grand avg: 8/8 subjects, 40 ch (8 dropped from R10 NaN), Novice grand avg: 6/6 subjects, 48 ch; two data harmonisation fixes applied: R9 resampled 50→25 Hz (R9 processed at 50 Hz in Stage B due to split-recording handling), R10 8 NaN channels dropped (known trailing-zero artefact); peak timing: Expert M1 HbO=8.7 s ✓, Expert M1 HbR=9.8 s ✓, Novice M1 HbR=9.8 s ✓, Novice SMA HbO=10.9 s ✓ (4/12 entries within 8–12 s); amplitudes in region-mean grand-avg are 0.01–0.3 μM — well below the 5–15 μM single-channel criterion, consistent with spatial averaging attenuation; outputs: `expert_grand_average-ave.fif`, `novice_grand_average-ave.fif`, `group_hrf_stats.json` in `outputs/stage_c_validation/group/`.
@@ -31,7 +32,8 @@
 - [2026-02-21] ✅ Tasks 3.6.6 - 3.7.4 have been manually verified and approved; preprocessing output is a continuous time series with HbO/HbR channels and long-/short-separation channels stored in .fif file; .fif maintains event markers. The full preprocessing pipeline from B1-B6 is complete and stored per subject in 06_ols_regression.py, which includes error handling and progress logging.
 
 ### Next Steps
-1. Section 4.5 — Statistical Validation: t-test + Cohen's d for Expert vs Novice; comprehensive validation report
+1. **Audit Issue 2** — Short-channel regression model parity (Gaussian-basis OLS vs scalar OLS)
+2. Section 4.5 — Statistical Validation (deferred): t-test + Cohen's d for Expert vs Novice
 ---
 
 ## 📋 DESIGN REQUIREMENTS SUMMARY
@@ -42,7 +44,7 @@
 - **Bandpass Filter:** 0.01-0.5 Hz
 - **PPF Values (TechEn):** 6.4 (690nm), 5.8 (830nm)
 - **Short-Channel Regression:** OLS method
-- **Epoch Window:** -5 to +30 seconds, baseline (-5, 0)
+- **Epoch Window:** -5 to +100 seconds, baseline (-5, 0)  ← updated 2026-02-25
 
 ### Three-Stage Workflow
 ```
@@ -585,7 +587,7 @@ When you encounter a blocker, add it here with this format:
 | PPF 690nm | 6.4 | Stage B (TechEn) |
 | PPF 830nm | 5.8 | Stage B (TechEn) |
 | Epoch tmin | -5 s | Stage C |
-| Epoch tmax | 30 s | Stage C |
+| Epoch tmax | 100 s | Stage C |
 | HRF Peak Window | 5-15 s | Stage C |
 
 ### Common Commands
