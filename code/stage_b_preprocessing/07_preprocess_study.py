@@ -293,8 +293,8 @@ def process_subject(
             )
 
         # ---- 5. OLS regression metrics ---------------------------------------
-        hbo_r = reg_results[reg_results["ch_type"] == "hbo"].dropna(subset=["beta"])
-        hbr_r = reg_results[reg_results["ch_type"] == "hbr"].dropna(subset=["beta"])
+        hbo_r = reg_results[reg_results["ch_type"] == "hbo"].dropna(subset=["beta_norm"])
+        hbr_r = reg_results[reg_results["ch_type"] == "hbr"].dropna(subset=["beta_norm"])
 
         if len(hbo_r):
             metrics["var_removed_HbO_pct"] = round(

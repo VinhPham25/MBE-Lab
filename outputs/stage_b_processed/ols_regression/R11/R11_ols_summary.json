@@ -1,21 +1,25 @@
 {
+  "regression_method": "gaussian_basis_OLS",
+  "n_gaussians": 3,
+  "gaussian_std_s": 1.0,
+  "gaussian_spacing_s": 1.5,
   "n_long_channels_corrected": 48,
   "n_short_channels_used": 10,
   "HbO_regression": {
     "mean_abs_r_before": 0.8114,
-    "mean_abs_r_after": 0.0,
-    "mean_beta": 0.140692,
-    "mean_var_removed_pct": 67.02
+    "mean_abs_r_after": 0.0418,
+    "mean_beta_norm": 0.322462,
+    "mean_var_removed_pct": 66.41
   },
   "HbR_regression": {
     "mean_abs_r_before": 0.5505,
-    "mean_abs_r_after": 0.0,
-    "mean_beta": 0.091319,
-    "mean_var_removed_pct": 33.67
+    "mean_abs_r_after": 0.0303,
+    "mean_beta_norm": 0.273894,
+    "mean_var_removed_pct": 33.88
   },
   "HbO_HbR_correlation": {
     "mean_r_before": 0.4244,
-    "mean_r_after": -0.0047,
+    "mean_r_after": 0.0341,
     "n_in_target_range": 1,
     "n_total_pairs": 24
   }

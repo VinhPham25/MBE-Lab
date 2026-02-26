@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
-**Last Updated:** February 25, 2026  
-**Current Week:** Week 7-8 (Stage C In Progress)  
-**Current Stage:** Audit Issue 1 Complete — 5-region HRF plots + 100 s window generated  
-**Next Milestone:** Audit Issue 2 — Short-channel regression model alignment
+**Last Updated:** February 26, 2026  
+**Current Week:** Week 7-8 (Stage C Audit In Progress)  
+**Current Stage:** Audit Issues 1, 2, 6 Complete — Gaussian-basis OLS implemented, all 14 subjects reprocessed  
+**Next Milestone:** Audit Issue 3 — CNR no-pruning branch
 
 ---
 
@@ -11,12 +11,13 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation (Audit Track)
-- **Active Stage:** Audit Issue 1 ✅ → Next: Audit Issue 2
-- **Completion:** 85%+ (81 original tasks + Issue 1 audit tasks complete)
+- **Active Stage:** Audit Issues 1, 2, 6 ✅ → Next: Audit Issue 3
+- **Completion:** 88%+ (81 original tasks + Issues 1, 2, 6 audit tasks complete)
 - **Blockers:** None
-- **Latest Achievement:** Audit Issue 1 complete — 5-region HRF extraction + 100 s epoch window implemented; all 14 subjects re-extracted; 4 output plots generated in `outputs/stage_c_validation/hrf/Expert-Novice/group/` (hrf_plot_HbO.png, hrf_plot_HbR.png, hrf_plot_5region_HbO.png, hrf_plot_5region_HbR.png); morphological mismatch documented (21/28 physiology checks pass; key discrepancies: unit mismatch μM vs μM*mm, group contrast direction in PFC/M1); see AUDIT_PROGRESS.md §1.5.
+- **Latest Achievement:** Audit Issue 2 complete — Gaussian-basis OLS implemented; `06_ols_regression.py` fully rewritten; all 14 subjects reprocessed; Stage C HRF outputs regenerated. Expert > Novice M1 contrast now in correct direction; M1 Expert HbO amplitude +36% improvement; 19/28 physiology checks pass. See AUDIT_PROGRESS.md §2.
 
 ### Recent Changes
+- [2026-02-26] ✅ **Audit Issue 2 complete** — Gaussian-basis OLS regression implemented in `06_ols_regression.py`. Key changes: `build_gaussian_basis_matrix()` creates K Gaussian-convolved regressors from short channel signal; `apply_ols_regression()` uses `lstsq` to solve K-dimensional OLS instead of scalar β; parameters: 3 Gaussians, σ=1.0 s, spacing=1.5 s; all 14 subjects reprocessed; Stage C HRF outputs regenerated; Expert > Novice M1 group contrast now correct; M1 Expert HbO +0.151→+0.206 μM; see AUDIT_PROGRESS.md §2.
 - [2026-02-25] ✅ **Audit Issue 6 complete** — Unit audit: MNE outputs mol/L → μM; paper reports μM*mm (Homer3 convention); empirical ratio ≈ 1.0–1.5× (no conversion needed). Added `audit_mbll_units()` + unit constants to `05_mbll.py`; updated y-axis labels to "μM [paper: μM*mm]"; corrected config `expected_hbo_amplitude` from [0.35, 1] → [0.01, 0.50] μM.
 - [2026-02-25] ✅ **Audit Issue 1 complete** (tasks 1.1–1.5) — Added `build_region_map_5()` (5-region: Left Lat PFC/Central PFC/Right Lat PFC/Left Medial M1/SMA) to `01_hrf_extraction.py`; changed default tmax from 30 → 100 s; added stale-cache invalidation in `02_group_hrf_analysis.py`; added `generate_hrf_plots_5region()` (Figure 3c 2-row mosaic layout) to `03_hrf_visualization.py`; all 14 subjects re-extracted; 4 plots saved; morphological mismatch documented in `AUDIT_PROGRESS.md §1.5`.
 - [2026-02-25] ✅ Section 4.4 complete (tasks 4.4.1–4.4.4) — built `code/stage_c_validation/04_calculate_cnr.py`; per-subject peak amplitudes extracted in 5–15 s window for all 14 subjects (cached); CNR = |μ₁−μ₂|/√(σ₁²+σ₂²) computed per long channel; Expert n=8, Novice n=6; 24 HbO + 24 HbR = 48 valid channels; HbO median CNR=0.175, HbR median CNR=0.258, pooled median=0.240, max=0.634; 0% channels above threshold (1.0) — consistent with grand-mean attenuation; box plot (Figure 4i style) saved with pending slots for future studies; `cnr_Expert-Novice.csv`, `cnr_boxplot.png`, `cnr_summary.json` in `outputs/stage_c_validation/cnr/`.
@@ -33,8 +34,9 @@
 - [2026-02-21] ✅ Tasks 3.6.6 - 3.7.4 have been manually verified and approved; preprocessing output is a continuous time series with HbO/HbR channels and long-/short-separation channels stored in .fif file; .fif maintains event markers. The full preprocessing pipeline from B1-B6 is complete and stored per subject in 06_ols_regression.py, which includes error handling and progress logging.
 
 ### Next Steps
-1. **Audit Issue 2** — Short-channel regression model parity (Gaussian-basis OLS vs scalar OLS)
-2. Section 4.5 — Statistical Validation (deferred): t-test + Cohen's d for Expert vs Novice
+1. **Audit Issue 3** — CNR no-pruning branch (exclude channel pruning for technical validation)
+2. **Audit Issue 4** — CNR method parity (group-HRF-based mode)
+3. Section 4.5 — Statistical Validation (deferred): t-test + Cohen's d for Expert vs Novice
 ---
 
 ## 📋 DESIGN REQUIREMENTS SUMMARY

@@ -9,8 +9,8 @@
     -25.0,
     0.0
   ],
-  "hbo_peak_uM": 0.013142347648660858,
-  "hbr_trough_uM": -0.0827443179497388,
+  "hbo_peak_uM": 0.0507631858449791,
+  "hbr_trough_uM": -0.08410955632967938,
   "hbo_morphology_pass": true,
   "hbr_morphology_pass": true,
   "overall_morphology_pass": true,

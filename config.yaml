@@ -134,10 +134,15 @@ stage_b:
     hb_range_max: 100   # μM - Flag if outside this range
     typical_range: 50   # μM - Typical task response range
     
-  # Step B6: Short-Channel Regression
+  # Step B6: Short-Channel Regression (Gaussian-basis OLS)
+  # Paper: "consecutive sequence of Gaussian basis functions via ordinary least squares"
+  # Reference: Kamat et al. (2023) ASTaUND; Homer2 hmrR_GLM convention
   short_channel_regression:
-    method: "OLS"  # Ordinary Least Squares
+    method: "gaussian_basis_OLS"
     short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
+    n_gaussians: 3                  # number of consecutive Gaussian basis functions
+    gaussian_std_s: 1.0             # Gaussian width (std) in seconds
+    gaussian_spacing_s: 1.5         # center-to-center spacing in seconds
     
   # Data Saving
   outputs:

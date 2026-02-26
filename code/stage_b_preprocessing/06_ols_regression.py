@@ -1,11 +1,12 @@
 """
-Stage B — Step B6: Short-Channel Regression (OLS)
+Stage B — Step B6: Short-Channel Regression (Gaussian-Basis OLS)
 Purpose: Remove scalp hemodynamics from long-separation fNIRS channels by
          regressing out the most-correlated short-separation channel signal
-         (Ordinary Least Squares, per-channel).
+         using a consecutive sequence of Gaussian basis functions via
+         Ordinary Least Squares (paper-faithful implementation).
 
 Task coverage:
-  3.6.1 — OLS regression: most-correlated short-ch selection + beta estimation
+  3.6.1 — OLS regression: most-correlated short-ch selection + Gaussian-basis β estimation
   3.6.2 — Channel count verification (25 long + 8 short for Expert/Novice)
   3.6.3 — Before/after comparison plots (Before = After + Removed)
   3.6.4 — Correlation reduction metrics (long–short and HbO/HbR pair correlations)
@@ -13,35 +14,38 @@ Task coverage:
 
 Algorithm
 ---------
-Short-channel regression (Saager & Berger 2008; Scholkmann et al. 2014):
+Gaussian-Basis OLS short-channel regression (Kamat et al. 2023; Homer2 convention):
 
   For each long-separation channel L of type T (HbO or HbR):
     1. Collect all short-separation channels {S_i} of the same type T.
-        - Ex: for a long HbO channel, the algorithm only looks at the 8 short HbO channels available
     2. Compute Pearson r(L, S_i) for each S_i; select S* = argmax |r|.
-        - Not all short channels are the same because of where they sit on the head.
-        - By calculating the pearson coefficient between the long channel and every short channel, it finds the short channel that is most correlated with the noise in the long channel.
-    3. Estimate OLS slope:
-          β = Cov(L, S*) / Var(S*)
-          - Cov(L, S*) = covariance between the long channel and the most correlated short channel
-          - Var(S*) = variance of the most correlated short channel
-          - After identifying the most correlated short channel, we need to scale that noise before subtracting it
-          - β = scaling factor; for every 1 unit of change in the short channel, how many units of change in the long channel are there?
-            - Ex: β = 1.2 means the noise in the long channel is 1.2 times the noise in the short channel
-    4. Subtract scalp noise:
-          L_corrected = L − β · S*
-          - Subtract the scaled noise in the short channel from the long channel to get the corrected long channel
+    3. Build K Gaussian temporal basis functions g_1, ..., g_K:
+         g_k(t) = exp(-0.5 * (t - τ_k)² / σ²),  τ_k = (k-1) × spacing_s
+       Each is a shifted Gaussian of width σ (std_s), evenly spaced in time.
+    4. Create K regressors by convolving S* with each basis function:
+         r_k(t) = (S* ⊛ g_k)(t)
+    5. Build design matrix X ∈ ℝ^(n_times × K) where X[:, k] = r_k.
+    6. Solve OLS via least-squares:
+         β = argmin ||L - X·β||²  (solved with np.linalg.lstsq)
+    7. Corrected signal:
+         L_corrected = L − X · β
 
   Short channels are NOT corrected — they serve as scalp-noise references only.
 
-Rationale: Short-separation channels (< 15 mm source-detector distance) sample
-primarily scalp hemodynamics (cardiac, respiratory, vasomotor oscillations).
-Long channels pick up brain activation plus the same scalp fluctuations.  OLS
-regression removes the shared scalp component while preserving brain signal.
+Rationale: The Gaussian-basis expansion allows the model to capture a smooth,
+time-varying impulse response between the short channel (scalp hemodynamics)
+and the long channel (scalp + brain signal), rather than a static scalar β.
+This better removes cardiac, respiratory, and vasomotor oscillations whose
+coupling to the long channel may vary across the recording.
 
-Short-channel threshold : 15 mm (config: stage_b.short_channel_regression.short_separation_threshold)
-Upstream               : 05_mbll.py  (output: raw_haemo, haemo .fif)
-Reference              : PROGRESS.md Section 3.6; PROJECT.md Section 5.7
+Parameters (config stage_b.short_channel_regression):
+  short_separation_threshold : 15 mm
+  n_gaussians                : 3      (consecutive Gaussian basis functions)
+  gaussian_std_s             : 1.0 s  (width of each basis function)
+  gaussian_spacing_s         : 1.5 s  (spacing between consecutive centers)
+
+Reference: Kamat et al. (2023) ASTaUND; Homer2 hmrR_GLM documentation.
+Upstream : 05_mbll.py  (output: raw_haemo, haemo .fif)
 """
 
 import json
@@ -77,6 +81,12 @@ run_mbll = _b5.run_mbll
 # Constants
 # ---------------------------------------------------------------------------
 SHORT_SEP_THRESHOLD_MM = 15.0   # channels with separation < 15 mm = short-separation
+
+# Gaussian basis defaults (Homer2-equivalent; paper: "consecutive sequence of
+# Gaussian basis functions via OLS")
+DEFAULT_N_GAUSSIANS       = 3     # number of consecutive basis functions
+DEFAULT_GAUSSIAN_STD_S    = 1.0   # Gaussian width (std) in seconds
+DEFAULT_GAUSSIAN_SPACING_S = 1.5  # center-to-center spacing in seconds
 
 
 # ===========================================================================
@@ -200,22 +210,80 @@ def identify_channel_separation(
 
 
 # ===========================================================================
-# Task 3.6.1 — OLS short-channel regression
+# Gaussian basis helpers
+# ===========================================================================
+
+def build_gaussian_basis_matrix(
+    s_sig: np.ndarray,
+    sfreq: float,
+    n_gaussians: int = DEFAULT_N_GAUSSIANS,
+    gaussian_std_s: float = DEFAULT_GAUSSIAN_STD_S,
+    gaussian_spacing_s: float = DEFAULT_GAUSSIAN_SPACING_S,
+) -> np.ndarray:
+    """
+    Build a (n_times, n_gaussians) design matrix from a short-channel signal
+    expanded through a consecutive sequence of Gaussian temporal basis functions.
+
+    Each column k is produced by convolving s_sig with a Gaussian g_k whose
+    center is shifted by (k-1) * gaussian_spacing_s seconds.  The result
+    models the short-channel contribution to a long channel through a smooth,
+    time-varying impulse response (basis function expansion) rather than a
+    static scalar multiplier.
+
+    Parameters
+    ----------
+    s_sig : np.ndarray, shape (n_times,)
+        Short-channel hemoglobin signal (mol/L).
+    sfreq : float
+        Sampling frequency in Hz.
+    n_gaussians : int
+        Number of consecutive Gaussian basis functions.
+    gaussian_std_s : float
+        Width (standard deviation) of each Gaussian in seconds.
+    gaussian_spacing_s : float
+        Center-to-center spacing between consecutive Gaussians in seconds.
+
+    Returns
+    -------
+    X : np.ndarray, shape (n_times, n_gaussians)
+        Design matrix; each column is s_sig convolved with one Gaussian kernel.
+    """
+    std_samp = gaussian_std_s * sfreq
+    X = np.zeros((len(s_sig), n_gaussians))
+
+    for k in range(n_gaussians):
+        center_samp = k * gaussian_spacing_s * sfreq
+        half_len = int(4.0 * std_samp + center_samp) + 1
+        t_kernel = np.arange(-half_len, half_len + 1, dtype=float)
+        kernel = np.exp(-0.5 * (t_kernel - center_samp) ** 2 / (std_samp ** 2))
+        kernel /= kernel.sum()
+        X[:, k] = np.convolve(s_sig, kernel, mode='same')
+
+    return X
+
+
+# ===========================================================================
+# Task 3.6.1 — Gaussian-basis OLS short-channel regression
 # ===========================================================================
 
 def apply_ols_regression(
     raw_haemo,
     short_threshold_mm: float = SHORT_SEP_THRESHOLD_MM,
+    n_gaussians: int = DEFAULT_N_GAUSSIANS,
+    gaussian_std_s: float = DEFAULT_GAUSSIAN_STD_S,
+    gaussian_spacing_s: float = DEFAULT_GAUSSIAN_SPACING_S,
     verbose: bool = True,
 ) -> tuple:
     """
-    Task 3.6.1: Apply OLS short-channel regression to all long-separation channels.
+    Task 3.6.1: Apply Gaussian-basis OLS short-channel regression to all
+    long-separation channels.
 
     For each long channel L:
       1. Select all short channels of the same type (HbO or HbR).
       2. Find S* = argmax |Pearson r(L, S_i)|.
-      3. Compute β = Cov(L, S*) / Var(S*)  (OLS slope).
-      4. Corrected signal: L_corrected = L − β · S*.
+      3. Build Gaussian basis design matrix X ∈ ℝ^(n_times × K) from S*.
+      4. Solve OLS: β = lstsq(X, L).
+      5. Corrected signal: L_corrected = L − X · β.
 
     Short channels are copied unchanged into the output Raw object.
 
@@ -225,16 +293,22 @@ def apply_ols_regression(
         Hemoglobin data (Step B5 output). Units: mol/L.
     short_threshold_mm : float
         Source-detector separation threshold (mm).
+    n_gaussians : int
+        Number of Gaussian temporal basis functions (paper: "consecutive sequence").
+    gaussian_std_s : float
+        Gaussian width in seconds.
+    gaussian_spacing_s : float
+        Center-to-center spacing between consecutive Gaussians in seconds.
     verbose : bool
 
     Returns
     -------
     raw_corrected : mne.io.Raw
-        Deep copy of raw_haemo with long channels OLS-corrected.
+        Deep copy of raw_haemo with long channels Gaussian-basis-OLS-corrected.
     reg_results : pd.DataFrame
         Per-long-channel results:
           channel, ch_type, dist_mm, best_short_ch, pearson_r_before,
-          pearson_r_after, beta, var_removed_frac.
+          pearson_r_after, beta_norm, var_removed_frac, n_gaussians.
     """
     short_idx, long_idx, dists_mm, count_summary = identify_channel_separation(
         raw_haemo,
@@ -242,95 +316,77 @@ def apply_ols_regression(
         verbose=verbose,
     )
 
+    sfreq     = raw_haemo.info['sfreq']
     data      = raw_haemo.get_data().copy()   # (n_ch, n_times)
     ch_names  = raw_haemo.ch_names
     ch_types  = raw_haemo.get_channel_types()
 
-    # Short-channel lookup by type
     short_hbo = [(i, ch_names[i]) for i in short_idx if ch_types[i] == 'hbo']
     short_hbr = [(i, ch_names[i]) for i in short_idx if ch_types[i] == 'hbr']
     short_by_type = {'hbo': short_hbo, 'hbr': short_hbr}
 
     if verbose:
         print("\n" + "=" * 70)
-        print("TASK 3.6.1 — OLS SHORT-CHANNEL REGRESSION")
+        print("TASK 3.6.1 — GAUSSIAN-BASIS OLS SHORT-CHANNEL REGRESSION")
         print("=" * 70)
         n_long_hbo = sum(1 for i in long_idx if ch_types[i] == 'hbo')
         n_long_hbr = sum(1 for i in long_idx if ch_types[i] == 'hbr')
         print(f"  Correcting {n_long_hbo} HbO + {n_long_hbr} HbR long channels")
         print(f"  Using {len(short_hbo)} HbO + {len(short_hbr)} HbR short channels")
-        print(f"  Method: OLS  |  β = Cov(L, S*) / Var(S*)")
-        print(f"  Correction:  L_corrected = L − β · S*")
+        print(f"  Method: Gaussian-basis OLS")
+        print(f"  Basis:  {n_gaussians} Gaussians, "
+              f"σ = {gaussian_std_s:.1f} s, spacing = {gaussian_spacing_s:.1f} s")
+        print(f"  Model:  L_corrected = L − X·β  "
+              f"(X ∈ ℝ^(n_times × {n_gaussians}))")
         print()
 
     records = []
 
     for li in long_idx:
-        L_sig   = data[li]
+        L_sig   = data[li].ravel()
         ct      = ch_types[li]
         sc_list = short_by_type.get(ct, [])
 
         if not sc_list:
-            records.append({
-                'channel':          ch_names[li],
-                'ch_type':          ct,
-                'dist_mm':          round(float(dists_mm[li]), 2),
-                'best_short_ch':    None,
-                'pearson_r_before': np.nan,
-                'pearson_r_after':  np.nan,
-                'beta':             np.nan,
-                'var_removed_frac': np.nan,
-            })
+            records.append(_null_record(ch_names[li], ct, dists_mm[li], n_gaussians))
             continue
 
-        L_sig = L_sig.ravel()   # ensure 1D
-
         # Step 2: find most correlated short channel (by |r|)
-        # Skip short channels with zero variance (bad/flat channels)
         best_r, best_si, best_sname = 0.0, None, None
         for si, sname in sc_list:
             S_cand = data[si].ravel()
-            if np.std(S_cand, ddof=1) < 1e-15:   # flat / bad channel — skip
+            if np.std(S_cand, ddof=1) < 1e-15:
                 continue
-            r, _ = stats.pearsonr(L_sig.ravel(), S_cand)
+            r, _ = stats.pearsonr(L_sig, S_cand)
             if np.isnan(r):
                 continue
             if abs(r) > abs(best_r):
                 best_r, best_si, best_sname = r, si, sname
 
-        # No valid (non-flat) short channel found for this type → skip regression
         if best_si is None:
-            records.append({
-                'channel':          ch_names[li],
-                'ch_type':          ct,
-                'dist_mm':          round(float(dists_mm[li]), 2),
-                'best_short_ch':    None,
-                'pearson_r_before': np.nan,
-                'pearson_r_after':  np.nan,
-                'beta':             np.nan,
-                'var_removed_frac': np.nan,
-            })
+            records.append(_null_record(ch_names[li], ct, dists_mm[li], n_gaussians))
             continue
 
         S_sig = data[best_si].ravel()
-        L_sig = L_sig.ravel()
 
-        # Step 3: OLS slope β = Cov(L, S*) / Var(S*)
-        # Equivalent: β = r · std(L) / std(S)  (avoids np.cov 2D broadcasting issues)
-        std_L = np.std(L_sig, ddof=1)
-        std_S = np.std(S_sig, ddof=1)
-        beta  = best_r * (std_L / std_S) if std_S > 0 else 0.0
+        # Step 3: Gaussian basis design matrix
+        X = build_gaussian_basis_matrix(
+            S_sig, sfreq, n_gaussians, gaussian_std_s, gaussian_spacing_s,
+        )
 
-        # Step 4: corrected signal
-        L_corr = L_sig - beta * S_sig
+        # Step 4: OLS via least-squares (numerically stable)
+        betas, _, _, _ = np.linalg.lstsq(X, L_sig, rcond=None)
 
-        # Post-regression correlation (should approach 0 with the short channel)
+        # Step 5: corrected signal
+        L_corr = L_sig - X @ betas
+
+        # Post-regression correlation with S* (should approach 0)
         r_after, _ = stats.pearsonr(L_corr, S_sig)
 
         # Fraction of variance removed
-        var_before   = np.var(L_sig,  ddof=1)
-        var_after_ch = np.var(L_corr, ddof=1)
-        var_removed  = max(0.0, (var_before - var_after_ch) / var_before)
+        var_before  = np.var(L_sig,  ddof=1)
+        var_after_v = np.var(L_corr, ddof=1)
+        var_removed = max(0.0, (var_before - var_after_v) / var_before)
 
         data[li] = L_corr
 
@@ -341,34 +397,48 @@ def apply_ols_regression(
             'best_short_ch':    best_sname,
             'pearson_r_before': round(float(best_r), 4),
             'pearson_r_after':  round(float(r_after), 4),
-            'beta':             round(float(beta), 6),
+            'beta_norm':        round(float(np.linalg.norm(betas)), 6),
             'var_removed_frac': round(float(var_removed), 4),
+            'n_gaussians':      n_gaussians,
         })
 
     reg_results = pd.DataFrame(records)
 
-    # Build corrected Raw object (deep copy, replace data matrix)
     raw_corrected = raw_haemo.copy()
     raw_corrected._data = data
 
     if verbose:
-        hbo_df = reg_results[reg_results['ch_type'] == 'hbo'].dropna(subset=['beta'])
-        hbr_df = reg_results[reg_results['ch_type'] == 'hbr'].dropna(subset=['beta'])
+        hbo_df = reg_results[reg_results['ch_type'] == 'hbo'].dropna(subset=['beta_norm'])
+        hbr_df = reg_results[reg_results['ch_type'] == 'hbr'].dropna(subset=['beta_norm'])
         print(f"  {'Type':5}  {'|r| before':>12}  {'|r| after':>10}  "
-              f"{'mean β':>10}  {'var removed':>12}")
+              f"{'‖β‖':>10}  {'var removed':>12}")
         print(f"  {'-'*55}")
         for label, df in [('HbO', hbo_df), ('HbR', hbr_df)]:
             print(
                 f"  {label:5}  "
                 f"{df['pearson_r_before'].abs().mean():>12.4f}  "
                 f"{df['pearson_r_after'].abs().mean():>10.4f}  "
-                f"{df['beta'].abs().mean():>10.4f}  "
+                f"{df['beta_norm'].abs().mean():>10.4f}  "
                 f"{df['var_removed_frac'].mean() * 100:>11.1f}%"
             )
-        print("\n  ✅ OLS regression complete.")
+        print("\n  ✅ Gaussian-basis OLS regression complete.")
         print("=" * 70 + "\n")
 
     return raw_corrected, reg_results
+
+
+def _null_record(ch_name: str, ct: str, dist_mm: float, n_gaussians: int) -> dict:
+    return {
+        'channel':          ch_name,
+        'ch_type':          ct,
+        'dist_mm':          round(float(dist_mm), 2),
+        'best_short_ch':    None,
+        'pearson_r_before': np.nan,
+        'pearson_r_after':  np.nan,
+        'beta_norm':        np.nan,
+        'var_removed_frac': np.nan,
+        'n_gaussians':      n_gaussians,
+    }
 
 
 # ===========================================================================
@@ -387,57 +457,24 @@ def _plot_before_after_one_type(
     subject_id: str,
     output_dir: Path,
 ) -> Path:
-    """
-    Internal helper: produce a 3-row × n_plot-column before/after figure for
-    one channel type (HbO or HbR) and save it.
-
-    Parameters
-    ----------
-    ch_type : str
-        Channel type ('hbo' or 'hbr').
-    long_df : pd.DataFrame
-        DataFrame of long-separation channels of the given type, with regression results.
-    data_before : np.ndarray
-        Raw data matrix before regression (channels × samples).
-    data_after : np.ndarray
-        Data matrix after regression (channels × samples).
-    ch_names : list
-        List of channel names (matching data arrays).
-    times : np.ndarray
-        Array of time points (seconds).
-    n_samples : int
-        Number of samples to plot (time window).
-    n_plot : int
-        Number of long channels to plot (columns in figure).
-    subject_id : str
-        Subject identifier (for figure title and filename).
-    output_dir : Path
-        Output directory to save the figure.
-
-    Returns
-    -------
-    fig_path : Path
-        Path to the saved figure file.
-    """
     is_hbo   = ch_type == 'hbo'
-    # Colour palette differs between HbO (reds) and HbR (blues)
     if is_hbo:
-        main_color    = '#d62728'   # red
-        after_color   = '#8c1a1a'   # dark red
-        removed_color = '#ff7f0e'   # orange  (removed noise for HbO)
+        main_color    = '#d62728'
+        after_color   = '#8c1a1a'
+        removed_color = '#ff7f0e'
         short_color   = 'steelblue'
         type_label    = 'HbO'
     else:
-        main_color    = '#1f77b4'   # blue
-        after_color   = '#0a3d6b'   # dark blue
-        removed_color = '#17becf'   # cyan  (removed noise for HbR)
+        main_color    = '#1f77b4'
+        after_color   = '#0a3d6b'
+        removed_color = '#17becf'
         short_color   = 'coral'
         type_label    = 'HbR'
 
     row_labels = [
         f'Before Regression [{type_label}]',
         f'After Regression [{type_label}]',
-        f'Removed Noise (β · S*) [{type_label}]',
+        f'Removed Noise (X·β) [{type_label}]',
     ]
     row_colors = [main_color, after_color, removed_color]
 
@@ -457,7 +494,7 @@ def _plot_before_after_one_type(
         short_ch  = row['best_short_ch']
         r_before  = row['pearson_r_before']
         r_after   = row['pearson_r_after']
-        beta      = row['beta']
+        beta_norm = row['beta_norm']
         var_rem   = row['var_removed_frac'] * 100
 
         ch_idx      = ch_names.index(ch_name)
@@ -468,7 +505,7 @@ def _plot_before_after_one_type(
         sig_removed = sig_before - sig_after
 
         axes[0, col].set_title(
-            f'{ch_name}\nr={r_before:.3f}  |  β={beta:.4f}',
+            f'{ch_name}\nr={r_before:.3f}  |  ‖β‖={beta_norm:.4f}',
             fontsize=9,
         )
 
@@ -479,11 +516,9 @@ def _plot_before_after_one_type(
             row_labels,
         ):
             ax = axes[ax_row, col]
-            # Main signal line — labelled for legend
             ax.plot(times, sig, color=color, lw=0.8,
                     label=f'{ch_name} ({rl.split("[")[0].strip()})')
 
-            # Overlay matched short channel on Before (row 0) and Removed (row 2)
             if short_idx_v is not None and ax_row != 1:
                 s_sig = data_before[short_idx_v, :n_samples].ravel() * 1e6
                 ax2 = ax.twinx()
@@ -491,7 +526,6 @@ def _plot_before_after_one_type(
                          alpha=0.6, label=f'{short_ch} (Short-ch ref)')
                 ax2.set_ylabel(short_ch, fontsize=6, color=short_color)
                 ax2.tick_params(axis='y', labelsize=6, colors=short_color)
-                # Combine legend from both axes
                 lines1, labels1 = ax.get_legend_handles_labels()
                 lines2, labels2 = ax2.get_legend_handles_labels()
                 ax.legend(lines1 + lines2, labels1 + labels2,
@@ -509,7 +543,6 @@ def _plot_before_after_one_type(
 
         axes[2, col].set_xlabel('Time [s]', fontsize=8)
 
-        # Annotate variance removed on After row
         axes[1, col].annotate(
             f'var removed: {var_rem:.1f}%\nr_after: {r_after:.3f}',
             xy=(0.02, 0.95), xycoords='axes fraction',
@@ -518,7 +551,8 @@ def _plot_before_after_one_type(
         )
 
     fig.suptitle(
-        f'Subject {subject_id} — OLS Short-Channel Regression: Before vs After [{type_label}]\n'
+        f'Subject {subject_id} — Gaussian-Basis OLS Short-Channel Regression: '
+        f'Before vs After [{type_label}]\n'
         f'(Before = After + Removed Noise)',
         fontsize=11, fontweight='bold', y=1.01,
     )
@@ -541,39 +575,7 @@ def plot_before_after_regression(
     verbose: bool = True,
 ) -> tuple:
     """
-    Task 3.6.3: Before/after OLS regression comparison visualization.
-
-    Produces two separate figures — one for HbO and one for HbR — each with
-    n_channels representative long channels sampled across the |r| range.
-
-    Layout per figure: 3 rows × n_channels columns
-      Row 1 — Before regression   (coloured line + short-ch overlay)
-      Row 2 — After regression    (corrected signal)
-      Row 3 — Removed noise       (Before − After = β · S*)
-
-    All lines are labelled; short-channel reference is shown on twin axes
-    in rows 1 and 3 with a combined legend.
-
-    Parameters
-    ----------
-    raw_haemo : mne.io.Raw
-        Uncorrected hemoglobin data.
-    raw_corrected : mne.io.Raw
-        OLS-corrected hemoglobin data.
-    reg_results : pd.DataFrame
-        Output of apply_ols_regression().
-    subject_id : str
-    output_dir : Path
-    n_channels : int
-        Number of long channels per type to plot (evenly sampled by |r|).
-    t_window : float
-        Time (s) of data to display.
-    verbose : bool
-
-    Returns
-    -------
-    fig_path_hbo : Path
-    fig_path_hbr : Path
+    Task 3.6.3: Before/after Gaussian-basis OLS regression comparison visualization.
     """
     sfreq     = raw_haemo.info['sfreq']
     n_samples = int(min(t_window * sfreq, raw_haemo.n_times))
@@ -628,42 +630,17 @@ def calculate_correlation_reduction(
     verbose: bool = True,
 ) -> tuple:
     """
-    Task 3.6.4: Quantify how well OLS regression reduced scalp noise.
+    Task 3.6.4: Quantify how well Gaussian-basis OLS regression reduced scalp noise.
 
-    Two complementary metrics:
-
-    (A) Long–short channel correlation
-        r(L, S*) before → r(L_corrected, S*) after.
-        Successful regression drives |r_after| toward 0.
-
-    (B) HbO / HbR intra-channel correlation
-        r(HbO_i, HbR_i) for each long channel pair, before vs after.
-        Scalp noise inflates this correlation (both go in same direction).
-        After regression, brain signal dominates: expect more negative r
-        (inverse HbO/HbR relationship), target range ≈ −0.5 to −1.
-
-    Parameters
-    ----------
-    raw_haemo : mne.io.Raw
-    raw_corrected : mne.io.Raw
-    reg_results : pd.DataFrame
-    subject_id : str
-    output_dir : Path
-    verbose : bool
-
-    Returns
-    -------
-    corr_df : pd.DataFrame
-        Per long-channel: channel, ch_type, r_long_short_before,
-        r_long_short_after, hbo_hbr_r_before, hbo_hbr_r_after.
-    fig_path : Path
+    Two metrics:
+    (A) Long–short channel correlation: r(L, S*) before → r(L_corrected, S*) after.
+    (B) HbO/HbR intra-channel correlation: more negative after = brain signal dominates.
     """
     data_before = raw_haemo.get_data()
     data_after  = raw_corrected.get_data()
     ch_names    = raw_haemo.ch_names
     ch_types    = raw_haemo.get_channel_types()
 
-    # Build HbO/HbR pairing by base channel name
     def _base(ch):
         return ch.replace(' hbo', '').replace(' hbr', '')
 
@@ -688,9 +665,6 @@ def calculate_correlation_reduction(
         r_ls_bef = row['pearson_r_before']
         r_ls_aft = row['pearson_r_after']
 
-        # HbO/HbR pair correlation — computed for both HbO and HbR rows
-        # (symmetric: r(HbO, HbR) == r(HbR, HbO), just looked up from the
-        #  other channel's perspective)
         hbo_hbr_before = np.nan
         hbo_hbr_after  = np.nan
         if ct == 'hbo' and base in hbr_base:
@@ -707,21 +681,19 @@ def calculate_correlation_reduction(
             hbo_hbr_after  = round(float(r2), 4)
 
         records.append({
-            'channel':            ch,
-            'ch_type':            ct,
-            'best_short_ch':      short_n,
+            'channel':             ch,
+            'ch_type':             ct,
+            'best_short_ch':       short_n,
             'r_long_short_before': round(float(r_ls_bef), 4),
             'r_long_short_after':  round(float(r_ls_aft), 4),
-            'hbo_hbr_r_before':   hbo_hbr_before,
-            'hbo_hbr_r_after':    hbo_hbr_after,
+            'hbo_hbr_r_before':    hbo_hbr_before,
+            'hbo_hbr_r_after':     hbo_hbr_after,
         })
 
     corr_df = pd.DataFrame(records)
 
-    # --- Visualization -------------------------------------------------------
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
-    # Panel A: Long–short correlation before vs after
     ax = axes[0]
     hbo_corr = corr_df[corr_df['ch_type'] == 'hbo'].dropna(
         subset=['r_long_short_before'])
@@ -746,7 +718,6 @@ def calculate_correlation_reduction(
     ax.legend(fontsize=9)
     ax.set_xlim(lims); ax.set_ylim(lims)
 
-    # Annotate mean shift
     all_bef = corr_df['r_long_short_before'].abs().mean()
     all_aft = corr_df['r_long_short_after'].abs().mean()
     ax.annotate(
@@ -756,8 +727,6 @@ def calculate_correlation_reduction(
         bbox=dict(boxstyle='round', fc='lightyellow', ec='gray', alpha=0.8),
     )
 
-    # Panel B: HbO/HbR pair correlation before vs after
-    # Use HbO rows only to avoid double-counting each pair (HbO and HbR share r)
     ax = axes[1]
     pair_df = corr_df[corr_df['ch_type'] == 'hbo'].dropna(
         subset=['hbo_hbr_r_before'])
@@ -792,7 +761,7 @@ def calculate_correlation_reduction(
     )
 
     fig.suptitle(
-        f'Subject {subject_id} — OLS Regression Effectiveness',
+        f'Subject {subject_id} — Gaussian-Basis OLS Regression Effectiveness',
         fontsize=12, fontweight='bold',
     )
     plt.tight_layout()
@@ -819,7 +788,7 @@ def calculate_correlation_reduction(
         print(f"  Channels in target range (r ≤ −0.5): "
               f"{target_ch}/{len(pair_df)}")
         if target_ok:
-            print(f"  ✅ Mean HbO/HbR correlation ({mean_aft:.3f}) is in target range "
+            print(f"  ✅ Mean HbO/HbR correlation ({mean_aft:.3f}) in target range "
                   f"[−0.5, −1.0]")
         else:
             print(f"  ⚠  Mean HbO/HbR correlation ({mean_aft:.3f}) is above −0.5 target.")
@@ -842,49 +811,52 @@ def save_regression_data(
     corr_df: pd.DataFrame,
     subject_id: str,
     output_dir: Path,
+    n_gaussians: int = DEFAULT_N_GAUSSIANS,
+    gaussian_std_s: float = DEFAULT_GAUSSIAN_STD_S,
+    gaussian_spacing_s: float = DEFAULT_GAUSSIAN_SPACING_S,
     verbose: bool = True,
 ) -> tuple:
     """
-    Save OLS regression outputs:
-      - <subject>_ols_haemo_raw.fif   : corrected hemoglobin data
-      - <subject>_ols_reg_results.csv : per-channel regression metadata
+    Save Gaussian-basis OLS regression outputs:
+      - <subject>_ols_haemo_raw.fif      : corrected hemoglobin data
+      - <subject>_ols_reg_results.csv    : per-channel regression metadata
       - <subject>_ols_corr_reduction.csv : correlation before/after
-      - <subject>_ols_summary.json    : summary statistics
+      - <subject>_ols_summary.json       : summary statistics
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Corrected haemo .fif
     fif_path = output_dir / f'{subject_id}_ols_haemo_raw.fif'
     raw_corrected.save(str(fif_path), overwrite=True, verbose=False)
 
-    # Regression metadata CSV
     reg_csv = output_dir / f'{subject_id}_ols_reg_results.csv'
     reg_results.to_csv(str(reg_csv), index=False)
 
-    # Correlation reduction CSV
     corr_csv = output_dir / f'{subject_id}_ols_corr_reduction.csv'
     corr_df.to_csv(str(corr_csv), index=False)
 
-    # Summary JSON
-    hbo_r = reg_results[reg_results['ch_type'] == 'hbo'].dropna(subset=['beta'])
-    hbr_r = reg_results[reg_results['ch_type'] == 'hbr'].dropna(subset=['beta'])
+    hbo_r = reg_results[reg_results['ch_type'] == 'hbo'].dropna(subset=['beta_norm'])
+    hbr_r = reg_results[reg_results['ch_type'] == 'hbr'].dropna(subset=['beta_norm'])
     pair_df = corr_df[corr_df['ch_type'] == 'hbo'].dropna(
         subset=['hbo_hbr_r_before'])
 
     summary = {
-        'n_long_channels_corrected': len(reg_results.dropna(subset=['beta'])),
+        'regression_method': 'gaussian_basis_OLS',
+        'n_gaussians':       n_gaussians,
+        'gaussian_std_s':    gaussian_std_s,
+        'gaussian_spacing_s': gaussian_spacing_s,
+        'n_long_channels_corrected': len(reg_results.dropna(subset=['beta_norm'])),
         'n_short_channels_used': reg_results['best_short_ch'].nunique(),
         'HbO_regression': {
             'mean_abs_r_before':    round(float(hbo_r['pearson_r_before'].abs().mean()), 4),
             'mean_abs_r_after':     round(float(hbo_r['pearson_r_after'].abs().mean()),  4),
-            'mean_beta':            round(float(hbo_r['beta'].mean()), 6),
+            'mean_beta_norm':       round(float(hbo_r['beta_norm'].mean()), 6),
             'mean_var_removed_pct': round(float(hbo_r['var_removed_frac'].mean() * 100), 2),
         },
         'HbR_regression': {
             'mean_abs_r_before':    round(float(hbr_r['pearson_r_before'].abs().mean()), 4),
             'mean_abs_r_after':     round(float(hbr_r['pearson_r_after'].abs().mean()),  4),
-            'mean_beta':            round(float(hbr_r['beta'].mean()), 6),
+            'mean_beta_norm':       round(float(hbr_r['beta_norm'].mean()), 6),
             'mean_var_removed_pct': round(float(hbr_r['var_removed_frac'].mean() * 100), 2),
         },
         'HbO_HbR_correlation': {
@@ -919,20 +891,23 @@ def run_ols_regression(
     n_components: float = 0.99,
     min_channels_flagged: int = 10,
     ppf_dict: dict = None,
+    n_gaussians: int = DEFAULT_N_GAUSSIANS,
+    gaussian_std_s: float = DEFAULT_GAUSSIAN_STD_S,
+    gaussian_spacing_s: float = DEFAULT_GAUSSIAN_SPACING_S,
     verbose: bool = True,
 ) -> dict:
     """
-    Task 3.6.5: Full OLS short-channel regression pipeline for one subject.
+    Task 3.6.5: Full Gaussian-basis OLS short-channel regression pipeline for
+    one subject.
 
     Chain: B1 (OD) → B2 (bandpass) → B3 (motion detect) → B4 (rPCA)
-           → B5 (Beer-Lambert) → B6 (OLS regression) → save.
+           → B5 (Beer-Lambert) → B6 (Gaussian-basis OLS regression) → save.
 
     Parameters
     ----------
     dataset_name : str
     subject_id   : str
     short_threshold_mm : float
-        Source-detector separation threshold (mm) for short-channel classification.
     n_components : float
         rPCA variance threshold (passed to B4).
     min_channels_flagged : int
@@ -940,7 +915,12 @@ def run_ols_regression(
     ppf_dict : dict, optional
         {wavelength_nm: ppf_value} for Beer-Lambert (passed to B5).
         Defaults to TechEn CW6 values {690: 6.4, 830: 5.8}.
-        Pass NIRx values {760: 6.0, 850: 6.0} for tES studies (Section 3.9).
+    n_gaussians : int
+        Number of Gaussian basis functions.
+    gaussian_std_s : float
+        Gaussian width in seconds.
+    gaussian_spacing_s : float
+        Spacing between consecutive Gaussian centers in seconds.
     verbose : bool
 
     Returns
@@ -948,21 +928,20 @@ def run_ols_regression(
     results : dict
         {
           'raw_haemo'    : mne.io.Raw  (uncorrected, from B5),
-          'raw_corrected': mne.io.Raw  (OLS-corrected),
+          'raw_corrected': mne.io.Raw  (Gaussian-basis OLS-corrected),
           'reg_results'  : pd.DataFrame,
           'corr_df'      : pd.DataFrame,
           'output_dir'   : Path,
           'fif_path'     : Path,
-          'fig_hbo'      : Path  (HbO before/after plot),
-          'fig_hbr'      : Path  (HbR before/after plot),
-          'fig_corr'     : Path  (correlation reduction plot),
+          'fig_hbo'      : Path,
+          'fig_hbr'      : Path,
+          'fig_corr'     : Path,
         }
     """
     print("\n" + "=" * 70)
-    print(f"STAGE B — STEP B6: OLS SHORT-CHANNEL REGRESSION  |  Subject: {subject_id}")
+    print(f"STAGE B — STEP B6: GAUSSIAN-BASIS OLS REGRESSION  |  Subject: {subject_id}")
     print("=" * 70)
 
-    # ---- Steps B1–B5: MBLL-converted haemo data --------------------------------
     print("\n[1/5] Running upstream pipeline (B1→B2→B3→B4→B5)...")
     b5_results = run_mbll(
         dataset_name,
@@ -974,15 +953,16 @@ def run_ols_regression(
     )
     raw_haemo = b5_results['raw_haemo']
 
-    # ---- 3.6.1 + 3.6.2 OLS regression ----------------------------------------
-    print("[2/5] Applying OLS short-channel regression (Tasks 3.6.1, 3.6.2)...")
+    print("[2/5] Applying Gaussian-basis OLS short-channel regression (Tasks 3.6.1, 3.6.2)...")
     raw_corrected, reg_results = apply_ols_regression(
         raw_haemo,
         short_threshold_mm = short_threshold_mm,
+        n_gaussians        = n_gaussians,
+        gaussian_std_s     = gaussian_std_s,
+        gaussian_spacing_s = gaussian_spacing_s,
         verbose            = verbose,
     )
 
-    # ---- 3.6.3 Before/after visualization -------------------------------------
     output_dir = get_output_path('stage_b', f'ols_regression/{subject_id}')
     print("[3/5] Creating before/after comparison plots (Task 3.6.3)...")
     fig_hbo, fig_hbr = plot_before_after_regression(
@@ -994,7 +974,6 @@ def run_ols_regression(
         verbose    = verbose,
     )
 
-    # ---- 3.6.4 Correlation reduction ------------------------------------------
     print("[4/5] Calculating correlation reduction (Task 3.6.4)...")
     corr_df, fig_corr = calculate_correlation_reduction(
         raw_haemo, raw_corrected, reg_results,
@@ -1003,25 +982,29 @@ def run_ols_regression(
         verbose    = verbose,
     )
 
-    # ---- Save -----------------------------------------------------------------
     print("[5/5] Saving outputs...")
     fif_path, reg_csv, corr_csv, json_path = save_regression_data(
         raw_corrected, reg_results, corr_df,
-        subject_id = subject_id,
-        output_dir = output_dir,
-        verbose    = verbose,
+        subject_id        = subject_id,
+        output_dir        = output_dir,
+        n_gaussians       = n_gaussians,
+        gaussian_std_s    = gaussian_std_s,
+        gaussian_spacing_s = gaussian_spacing_s,
+        verbose           = verbose,
     )
 
-    # ---- Console summary ------------------------------------------------------
-    hbo_r = reg_results[reg_results['ch_type'] == 'hbo'].dropna(subset=['beta'])
-    hbr_r = reg_results[reg_results['ch_type'] == 'hbr'].dropna(subset=['beta'])
+    hbo_r = reg_results[reg_results['ch_type'] == 'hbo'].dropna(subset=['beta_norm'])
+    hbr_r = reg_results[reg_results['ch_type'] == 'hbr'].dropna(subset=['beta_norm'])
     pair_df = corr_df[corr_df['ch_type'] == 'hbo'].dropna(
         subset=['hbo_hbr_r_before'])
 
     print("\n" + "=" * 70)
     print(f"✅ Step B6 complete for subject {subject_id}")
-    print(f"\n  Short-separation threshold   : < {short_threshold_mm:.0f} mm")
-    print(f"  Long channels corrected      : {len(reg_results.dropna(subset=['beta']))}")
+    print(f"\n  Regression method            : Gaussian-basis OLS")
+    print(f"  Basis: {n_gaussians} Gaussians, σ = {gaussian_std_s:.1f} s, "
+          f"spacing = {gaussian_spacing_s:.1f} s")
+    print(f"  Short-separation threshold   : < {short_threshold_mm:.0f} mm")
+    print(f"  Long channels corrected      : {len(reg_results.dropna(subset=['beta_norm']))}")
     print(f"\n  HbO  mean |r| before/after   : "
           f"{hbo_r['pearson_r_before'].abs().mean():.4f}  →  "
           f"{hbo_r['pearson_r_after'].abs().mean():.4f}")
