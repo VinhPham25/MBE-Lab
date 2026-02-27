@@ -81,7 +81,8 @@ extract_epochs           = _hrf.extract_epochs
 get_long_channel_names   = _hrf.get_long_channel_names
 _harmonise_evoked        = _grp._harmonise_evoked
 _extract_peak_amplitudes = _cnr._extract_peak_amplitudes
-compute_cnr              = _cnr.compute_cnr
+compute_cnr              = _cnr.compute_cnr              # legacy peak-based (Task 4.2)
+compute_group_hrf_cnr    = _cnr.compute_group_hrf_cnr   # paper-faithful (Task 4.1 / 4.4)
 plot_cnr_boxplot         = _cnr.plot_cnr_boxplot
 save_cnr_csv             = _cnr.save_cnr_csv
 COMPARISON_REGISTRY      = _cnr.COMPARISON_REGISTRY
@@ -253,8 +254,37 @@ def _load_or_compute_techval_evoked(
 
 
 # ===========================================================================
-# Task 3.4 — Collect group peaks from techval evokeds
+# Evoked collection helpers for techval branch
 # ===========================================================================
+
+def collect_all_techval_evokeds(
+    subjects: list[str],
+    techval_fif_dir: Path,
+    hrf_cache_dir: Path,
+    dataset_name: str,
+    ppf_dict: dict,
+    config: dict,
+    target_sfreq: float = 25.0,
+) -> list[mne.Evoked]:
+    """
+    Load (or compute) techval-branch Evokeds for all subjects in a group.
+
+    Returns a list of harmonised Evoked objects ready for grand-averaging.
+    Used by the paper-faithful group-HRF CNR path (Task 4.1 / 4.4).
+    """
+    evokeds: list[mne.Evoked] = []
+    for sid in subjects:
+        ev = _load_or_compute_techval_evoked(
+            sid, techval_fif_dir, hrf_cache_dir,
+            dataset_name, ppf_dict, config,
+        )
+        if ev is None:
+            print(f"    [{sid}] ⚠ skipped (no data)")
+            continue
+        ev = _harmonise_evoked(ev, target_sfreq)
+        evokeds.append(ev)
+    return evokeds
+
 
 def collect_techval_group_peaks(
     subjects: list[str],
@@ -270,7 +300,9 @@ def collect_techval_group_peaks(
 ) -> dict[str, list[float]]:
     """
     Load (or compute) techval-branch Evokeds for all subjects in a group
-    and collect per-channel peak amplitudes for CNR computation.
+    and collect per-channel peak amplitudes.
+
+    Legacy peak-based path — kept for Task 4.2 method comparison.
     """
     group_peaks: dict[str, list[float]] = {ch: [] for ch in long_channels}
 
@@ -306,12 +338,14 @@ def run_techval_cnr_analysis(
     force_recompute: bool = False,
 ) -> dict:
     """
-    Full Issue 3 pipeline.
+    Issues 3 + 4 technical validation CNR pipeline.
 
     1. Preprocess all subjects through techval branch (OD → BP → MBLL).
     2. Extract and cache per-subject trial-averaged evokeds.
-    3. Compute channel-wise Expert vs Novice CNR.
-    4. Overwrite outputs/stage_c_validation/cnr/ with new values.
+    3. Compute CNR using group-HRF method (primary, Task 4.1 / 4.4).
+    4. Compute legacy peak-based CNR for comparison (Task 4.2).
+    5. Save method comparison report (Task 4.3).
+    6. Overwrite outputs/stage_c_validation/cnr/ with new values.
 
     Parameters
     ----------
@@ -345,9 +379,10 @@ def run_techval_cnr_analysis(
 
     # ── Banner ────────────────────────────────────────────────────────────────
     print(f"\n{'='*64}")
-    print(f"  Issue 3 — Technical Validation CNR")
+    print(f"  Issues 3+4 — Technical Validation CNR  (group-HRF method)")
     print(f"  Pipeline: Intensity → OD → 0.01–0.5 Hz BP → MBLL")
     print(f"  Excluded: Stage A pruning | rPCA | OLS regression")
+    print(f"  CNR method: group-HRF (paper-faithful, Task 4.1)")
     print(f"  Study   : {study_display}  |  "
           f"Comparison: {' vs '.join(groups.keys())}")
     print(f"  Peak window: {peak_window[0]}–{peak_window[1]} s")
@@ -374,21 +409,38 @@ def run_techval_cnr_analysis(
         )
     raw_ref = mne.io.read_raw_fif(ref_fif, preload=False, verbose=False)
     hbo_long, hbr_long = get_long_channel_names(raw_ref)
-    n_total = len(raw_ref.ch_names)
     print(f"\n  Step 2 — Channel inventory (techval branch, no pruning)")
-    print(f"  Total channels: {n_total}  |  "
+    print(f"  Total channels: {len(raw_ref.ch_names)}  |  "
           f"Long HbO: {len(hbo_long)}  Long HbR: {len(hbr_long)}")
 
-    # ── Step 3: Compute CNR from techval evokeds ──────────────────────────────
+    # ── Step 3: Load all evokeds for group-HRF CNR (Task 4.1) ────────────────
     group_names = list(groups.keys())
     g1_name, g2_name = group_names[0], group_names[1]
+
+    print(f"\n  Step 3 — Loading evokeds for group-HRF CNR …")
+    g1_evokeds = collect_all_techval_evokeds(
+        groups[g1_name], techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
+    )
+    g2_evokeds = collect_all_techval_evokeds(
+        groups[g2_name], techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
+    )
+    print(f"  {g1_name}: {len(g1_evokeds)} subjects | "
+          f"{g2_name}: {len(g2_evokeds)} subjects")
+
+    # ── Step 4: Compute CNR (group-HRF primary + legacy comparison) ───────────
+    print(f"\n  Step 4 — CNR computation")
     rows: list[dict] = []
 
-    print(f"\n  Step 3 — CNR computation")
     for chromo, long_chs in [("hbo", hbo_long), ("hbr", hbr_long)]:
         label = "HbO" if chromo == "hbo" else "HbR"
         print(f"\n  [CNR — {label}]")
 
+        # ── Group-HRF CNR (paper-faithful, primary) ───────────────────────────
+        ghrf_cnr, ghrf_meta = compute_group_hrf_cnr(
+            g1_evokeds, g2_evokeds, long_chs, chromo, peak_window,
+        )
+
+        # ── Legacy peak-based CNR (Task 4.2, comparison) ─────────────────────
         g1_peaks = collect_techval_group_peaks(
             groups[g1_name], long_chs, chromo, peak_window,
             techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
@@ -397,33 +449,53 @@ def run_techval_cnr_analysis(
             groups[g2_name], long_chs, chromo, peak_window,
             techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
         )
+        legacy_cnr_vals = compute_cnr(g1_peaks, g2_peaks)
 
-        cnr_vals = compute_cnr(g1_peaks, g2_peaks)
-
-        for ch, cnr_val in cnr_vals.items():
-            vals1 = np.array([v for v in g1_peaks.get(ch, []) if not np.isnan(v)])
-            vals2 = np.array([v for v in g2_peaks.get(ch, []) if not np.isnan(v)])
+        # ── Per-channel rows ──────────────────────────────────────────────────
+        for ch in sorted(set(long_chs)):
+            m = ghrf_meta.get(ch, {})
+            cnr_val = ghrf_cnr.get(ch, np.nan)
+            leg_val = legacy_cnr_vals.get(ch, np.nan)
             rows.append({
-                "channel":          ch,
-                "chromophore":      label,
-                "cnr":              round(cnr_val, 4) if not np.isnan(cnr_val) else np.nan,
-                f"{g1_name}_n":     len(vals1),
-                f"{g1_name}_mu":    round(float(vals1.mean()), 4) if len(vals1) >= 1 else np.nan,
-                f"{g1_name}_sigma": round(float(vals1.std(ddof=1)), 4) if len(vals1) >= 2 else np.nan,
-                f"{g2_name}_n":     len(vals2),
-                f"{g2_name}_mu":    round(float(vals2.mean()), 4) if len(vals2) >= 1 else np.nan,
-                f"{g2_name}_sigma": round(float(vals2.std(ddof=1)), 4) if len(vals2) >= 2 else np.nan,
+                "channel":              ch,
+                "chromophore":          label,
+                "cnr":                  round(cnr_val, 4) if np.isfinite(cnr_val) else np.nan,
+                f"{g1_name}_ga_peak":   round(m.get("mu1", np.nan), 4) if np.isfinite(m.get("mu1", np.nan)) else np.nan,
+                f"{g2_name}_ga_peak":   round(m.get("mu2", np.nan), 4) if np.isfinite(m.get("mu2", np.nan)) else np.nan,
+                f"{g1_name}_n":         m.get("n1", 0),
+                f"{g1_name}_sigma":     round(m.get("sigma1", np.nan), 4) if np.isfinite(m.get("sigma1", np.nan)) else np.nan,
+                f"{g2_name}_n":         m.get("n2", 0),
+                f"{g2_name}_sigma":     round(m.get("sigma2", np.nan), 4) if np.isfinite(m.get("sigma2", np.nan)) else np.nan,
+                "legacy_cnr":           round(leg_val, 4) if np.isfinite(leg_val) else np.nan,
             })
 
-        valid_cnr = [v for v in cnr_vals.values() if not np.isnan(v)]
-        if valid_cnr:
-            print(f"    {label}: {len(valid_cnr)} valid channels | "
-                  f"median={np.median(valid_cnr):.3f}  "
-                  f"mean={np.mean(valid_cnr):.3f}  "
-                  f"max={np.max(valid_cnr):.3f}")
+        # Per-chromophore stats
+        valid_ghrf = [v for v in ghrf_cnr.values() if np.isfinite(v)]
+        valid_leg  = [v for v in legacy_cnr_vals.values() if np.isfinite(v)]
+        if valid_ghrf:
+            print(f"    {label} [group-HRF primary] : {len(valid_ghrf)} channels | "
+                  f"median={np.median(valid_ghrf):.3f}  max={np.max(valid_ghrf):.3f}")
+        if valid_leg:
+            print(f"    {label} [legacy peak-based]  : {len(valid_leg)} channels | "
+                  f"median={np.median(valid_leg):.3f}  max={np.max(valid_leg):.3f}")
 
     df_cnr = pd.DataFrame(rows)
-    all_cnr = df_cnr["cnr"].dropna().values
+    all_ghrf = df_cnr["cnr"].dropna().values
+    all_leg  = df_cnr["legacy_cnr"].dropna().values
+
+    # ── Task 4.3 — Method comparison report ───────────────────────────────────
+    print(f"\n  Task 4.3 — Method Comparison (Technical Validation Branch):")
+    print(f"  {'Method':<28} {'Median':>8}  {'Mean':>8}  {'Max':>8}")
+    print(f"  {'-'*48}")
+    g_med = round(float(np.median(all_ghrf)), 4) if len(all_ghrf) > 0 else None
+    g_mn  = round(float(np.mean(all_ghrf)),   4) if len(all_ghrf) > 0 else None
+    g_mx  = round(float(np.max(all_ghrf)),    4) if len(all_ghrf) > 0 else None
+    l_med = round(float(np.median(all_leg)),  4) if len(all_leg) > 0 else None
+    l_mn  = round(float(np.mean(all_leg)),    4) if len(all_leg) > 0 else None
+    l_mx  = round(float(np.max(all_leg)),     4) if len(all_leg) > 0 else None
+    print(f"  {'Group-HRF (paper-faithful)':<28} {str(g_med):>8}  {str(g_mn):>8}  {str(g_mx):>8}")
+    print(f"  {'Legacy peak-based':<28} {str(l_med):>8}  {str(l_mn):>8}  {str(l_mx):>8}")
+    print(f"  {'Paper target (Figure 4i)':<28} {'~0.45':>8}  {'—':>8}  {'>2.25':>8}")
 
     cnr_meta = {
         "comparison":            f"{g1_name} vs {g2_name}",
@@ -434,11 +506,12 @@ def run_techval_cnr_analysis(
         "peak_window_s":         list(peak_window),
         "n_channels_hbo":        len(hbo_long),
         "n_channels_hbr":        len(hbr_long),
-        "n_valid_cnr":           int(len(all_cnr)),
-        "median_cnr":            round(float(np.median(all_cnr)), 4) if len(all_cnr) > 0 else None,
-        "mean_cnr":              round(float(np.mean(all_cnr)), 4) if len(all_cnr) > 0 else None,
-        "max_cnr":               round(float(np.max(all_cnr)), 4) if len(all_cnr) > 0 else None,
-        "pct_above_1.0":         round(float((all_cnr >= 1.0).mean() * 100), 1) if len(all_cnr) > 0 else None,
+        "cnr_method":            "group_hrf",
+        "n_valid_cnr":           int(len(all_ghrf)),
+        "median_cnr":            g_med,
+        "mean_cnr":              g_mn,
+        "max_cnr":               g_mx,
+        "pct_above_1.0":         round(float((all_ghrf >= 1.0).mean() * 100), 1) if len(all_ghrf) > 0 else None,
         "preprocessing_branch":  "technical_validation",
         "channel_pruning":       False,
         "rpca_correction":       False,
@@ -454,12 +527,15 @@ def run_techval_cnr_analysis(
     csv_path = cnr_out_dir / f"cnr_{study_display}.csv"
     save_cnr_csv(df_cnr, csv_path)
 
-    # ── Box plot ──────────────────────────────────────────────────────────────
-    valid_cnr_list = df_cnr["cnr"].dropna().tolist()
+    # ── Box plot — use group-HRF CNR as primary (Task 4.4) ───────────────────
+    valid_cnr_list = df_cnr["cnr"].dropna().tolist()   # group-HRF values
     comparison_label = f"{g1_name} vs {g2_name}"
-    plot_data: dict = {}
+
+    # Always include current study in plot_data regardless of registry
+    plot_data: dict = {comparison_label: valid_cnr_list}
     for lbl, val in comparison_registry.items():
-        plot_data[lbl] = valid_cnr_list if lbl == comparison_label else val
+        if lbl != comparison_label:
+            plot_data[lbl] = val
 
     cnr_threshold = float(
         config.get("stage_c", {}).get("cnr", {}).get("threshold_detectable", 1.0)
@@ -481,11 +557,11 @@ def run_techval_cnr_analysis(
         json.dump(summary, f, indent=2)
     print(f"  Saved: cnr_summary.json")
 
-    # ── Console report ─────────────────────────────────────────────────────────
-    pct_above = (all_cnr >= cnr_threshold).mean() * 100 if len(all_cnr) > 0 else 0
+    # ── Console report ────────────────────────────────────────────────────────
+    pct_above = (all_ghrf >= cnr_threshold).mean() * 100 if len(all_ghrf) > 0 else 0
     print(f"\n{'='*64}")
-    print(f"  Issue 3 — Technical Validation CNR Complete")
     print(f"  Branch   : no pruning | no rPCA | no OLS")
+    print(f"  CNR      : group-HRF method")
     print(f"  Channels : {len(hbo_long)} HbO + {len(hbr_long)} HbR = "
           f"{len(hbo_long) + len(hbr_long)} total")
     print(f"  Valid CNR: {cnr_meta['n_valid_cnr']}")

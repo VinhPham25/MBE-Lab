@@ -1,7 +1,7 @@
 # AUDIT_PROGRESS.md - ASTaUND Reproduction Audit PRD
 
-**Last Updated:** February 26, 2026  
-**Current Phase:** Audit Execution — Issues 1, 2, 3, and 6 Complete  
+**Last Updated:** February 27, 2026  
+**Current Phase:** Audit Execution — Issues 1, 2, 3, 4, and 6 Complete  
 **Current Focus:** Stage B/Stage C parity to ASTaUND paper (Figure 3c and Figure 4i replication)
 
 ---
@@ -15,6 +15,7 @@
 - **Primary Success Metric:** Reproduce paper-consistent HRF morphology and CNR distribution under paper-aligned processing assumptions
 
 ### Recent Changes
+- [2026-02-27] ✅ **Issue 4 complete** — Group-HRF CNR implemented as primary method in `04_calculate_cnr.py` and `04_technical_validation_cnr.py`. New `compute_group_hrf_cnr()` uses peak of grand-average HRF trace (not mean of per-subject peaks) as numerator; inter-subject std as denominator. Legacy peak-based method kept as `legacy_cnr` column for comparison. Group-HRF techval CNR: median=0.202, max=0.689; full-preprocess CNR: median=0.234, max=0.677. Paper targets (median ~0.45, max >2.25) not yet met; gap attributed to Issue 5 (missing post-correction low-pass stage) or deeper HRF window differences.
 - [2026-02-26] ✅ **Issue 3 complete** — Technical Validation CNR branch implemented in `04_technical_validation_cnr.py`; processes raw SNIRF → OD → BP → MBLL (no channel pruning, no rPCA, no OLS); all 14/14 subjects processed; CNR recomputed on full 48 long channels. New values: median=0.194, max=0.668. Remaining gap vs paper targets (median ~0.45, max >2.25) attributed to CNR method mismatch (Issue 4).
 - [2026-02-26] ✅ **Issue 2 complete** — Gaussian-basis OLS implemented in `06_ols_regression.py`; all 14 subjects reprocessed; Stage C HRF outputs regenerated. Key result: Expert > Novice M1 contrast now in correct direction; M1 Expert HbO amplitude improved (+0.151 → +0.206 μM); 19/28 physiology checks pass.
 - [2026-02-25] ✅ **Issue 6 complete** — Unit audit: no conversion needed; μM ≈ μM*mm numerically; added `audit_mbll_units()` to `05_mbll.py`; updated config thresholds and plot labels.
@@ -23,8 +24,8 @@
 - [2026-02-25] Re-ranked issues into strict implementation order (1 = first, 12 = last) and updated priorities per requested ranking.
 
 ### Next Milestone
-1. Complete Issue 4 (CNR method: peak-based → group-HRF-based) to achieve Figure 4i parity.
-2. Complete ranked Issues 1-4 and produce first paper-faithful Figure 3c/4i comparison pack.
+1. Complete Issue 5 (missing post-rPCA/regression low-pass stage) to further close Figure 4i CNR gap.
+2. Complete ranked Issues 5–6 and produce first paper-faithful Figure 3c/4i comparison pack.
 
 ---
 
@@ -239,15 +240,41 @@
 
 ---
 
-### Issue 4 - CNR method mismatch (peak-based subject summaries vs group-HRF method)
+### Issue 4 - CNR method mismatch (peak-based subject summaries vs group-HRF method) ✅ COMPLETE
 **Priority:** P0
+**Completed:** 2026-02-27
 
-- [ ] **4.1** Implement paper-faithful CNR computation path based on group HRFs.
-- [ ] **4.2** Keep legacy peak-based CNR as alternate mode for comparison only.
-- [ ] **4.3** Produce method comparison report (legacy vs paper-faithful) for Expert/Novice.
-- [ ] **4.4** Lock paper-faithful method as primary validation output.
+- [x] **4.1** (2026-02-27) Implemented paper-faithful group-HRF CNR in `compute_group_hrf_cnr()` in `04_calculate_cnr.py`.
+  - Numerator: |peak(grand_avg_g1[c]) − peak(grand_avg_g2[c])| — peak extracted from the grand-average HRF trace, not the mean of per-subject peaks.
+  - Denominator: √(σ_g1² + σ_g2²) — inter-subject std of individual peak amplitudes.
+  - Grand-average computed via `mne.grand_average()` (channels absent from any subject are excluded).
+  - Also added `collect_all_evokeds()` helper to load all per-subject Evokeds for grand-averaging.
+- [x] **4.2** (2026-02-27) Legacy peak-based CNR (`compute_cnr()`) preserved and called alongside group-HRF path.
+  - Both `04_calculate_cnr.py` and `04_technical_validation_cnr.py` compute both methods per run.
+  - Output DataFrame includes both `cnr` (group-HRF primary) and `legacy_cnr` (peak-based comparison) columns.
+- [x] **4.3** (2026-02-27) Method comparison table printed to console and recorded in summary JSON.
+  - Nested `legacy_peak_based` dict in each `*_summary.json` file.
+- [x] **4.4** (2026-02-27) Group-HRF method locked as primary for all CNR outputs.
+  - `cnr_boxplot.png` and `cnr_Expert-Novice.csv` use group-HRF CNR.
+  - `full_preprocess_cnr_boxplot.png` and `full_preprocess_cnr_Expert-Novice.csv` use group-HRF CNR.
+  - Same changes applied symmetrically to `04_technical_validation_cnr.py`.
 
-**Acceptance Criteria:** Default CNR generation follows technical validation language from ASTaUND.
+**CNR Comparison Report (post-Issue-4):**
+
+| Metric | Techval (group-HRF, primary) | Techval (legacy peak-based) | Full Preprocess (group-HRF) | Full Preprocess (legacy) | Paper Target |
+|--------|------------------------------|-----------------------------|-----------------------------|--------------------------|--------------|
+| Median CNR | **0.2016** | 0.1942 | **0.2339** | 0.2639 | ~0.45 |
+| Mean CNR | 0.244 | 0.2219 | 0.23 | 0.2712 | — |
+| Max CNR | **0.6888** | 0.6683 | **0.6769** | 0.6342 | >2.25 |
+| n valid | 40 | 48 | 40 | 48 | — |
+
+**Key observations:**
+1. Group-HRF method gives slightly higher median than legacy for techval branch (0.202 vs 0.194): grand-average peaks are cleaner since inter-subject noise is averaged out.
+2. n_valid drops from 48 → 40 for group-HRF: `mne.grand_average()` drops channels absent from any single subject (8 channels lost), conservative but correct.
+3. Paper targets (median ~0.45, max > 2.25) still not met. The method difference (peak-of-mean vs mean-of-peaks) accounts for only a small uplift; the remaining gap likely reflects Issue 5 (missing post-denoising low-pass stage) or a difference in how the paper defines the HRF comparison window.
+4. Full preprocessing pipeline shows higher group-HRF CNR median (0.2339) vs techval (0.2016): consistent with rPCA+OLS improving SNR in the denoised branch.
+
+**Acceptance Criteria:** Default CNR generation follows group-HRF method from paper technical validation. ✓
 
 ---
 
@@ -371,7 +398,7 @@
 - [x] Issue 1 ✅ (2026-02-25)
 - [x] Issue 2 ✅ (2026-02-26)
 - [x] Issue 3 ✅ (2026-02-26)
-- [ ] Issue 4
+- [x] Issue 4 ✅ (2026-02-27)
 - [ ] Issue 5
 - [x] Issue 6 ✅ (2026-02-25)
 

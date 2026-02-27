@@ -10,11 +10,19 @@
   ],
   "n_channels_hbo": 24,
   "n_channels_hbr": 24,
-  "n_valid_cnr": 48,
-  "median_cnr": 0.2639,
-  "mean_cnr": 0.2712,
-  "max_cnr": 0.6342,
+  "cnr_method": "group_hrf",
+  "n_valid_cnr": 40,
+  "median_cnr": 0.2339,
+  "mean_cnr": 0.23,
+  "max_cnr": 0.6769,
   "pct_above_1.0": 0.0,
+  "legacy_peak_based": {
+    "cnr_method": "peak_based",
+    "n_valid_cnr": 48,
+    "median_cnr": 0.2639,
+    "mean_cnr": 0.2712,
+    "max_cnr": 0.6342
+  },
   "cnr_threshold_detectable": 1.0,
   "outputs": {
     "cnr_csv": "outputs/stage_c_validation/cnr/full_preprocess_cnr_Expert-Novice.csv",
