@@ -3,7 +3,7 @@ Stage B — Step B6: Short-Channel Regression (Gaussian-Basis OLS)
 Purpose: Remove scalp hemodynamics from long-separation fNIRS channels by
          regressing out the most-correlated short-separation channel signal
          using a consecutive sequence of Gaussian basis functions via
-         Ordinary Least Squares (paper-faithful implementation).
+         Ordinary Least Squares.
 
 Task coverage:
   3.6.1 — OLS regression: most-correlated short-ch selection + Gaussian-basis β estimation

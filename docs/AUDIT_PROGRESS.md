@@ -1,7 +1,7 @@
 # AUDIT_PROGRESS.md - ASTaUND Reproduction Audit PRD
 
 **Last Updated:** February 26, 2026  
-**Current Phase:** Audit Execution — Issues 1, 2, and 6 Complete  
+**Current Phase:** Audit Execution — Issues 1, 2, 3, and 6 Complete  
 **Current Focus:** Stage B/Stage C parity to ASTaUND paper (Figure 3c and Figure 4i replication)
 
 ---
@@ -15,6 +15,7 @@
 - **Primary Success Metric:** Reproduce paper-consistent HRF morphology and CNR distribution under paper-aligned processing assumptions
 
 ### Recent Changes
+- [2026-02-26] ✅ **Issue 3 complete** — Technical Validation CNR branch implemented in `04_technical_validation_cnr.py`; processes raw SNIRF → OD → BP → MBLL (no channel pruning, no rPCA, no OLS); all 14/14 subjects processed; CNR recomputed on full 48 long channels. New values: median=0.194, max=0.668. Remaining gap vs paper targets (median ~0.45, max >2.25) attributed to CNR method mismatch (Issue 4).
 - [2026-02-26] ✅ **Issue 2 complete** — Gaussian-basis OLS implemented in `06_ols_regression.py`; all 14 subjects reprocessed; Stage C HRF outputs regenerated. Key result: Expert > Novice M1 contrast now in correct direction; M1 Expert HbO amplitude improved (+0.151 → +0.206 μM); 19/28 physiology checks pass.
 - [2026-02-25] ✅ **Issue 6 complete** — Unit audit: no conversion needed; μM ≈ μM*mm numerically; added `audit_mbll_units()` to `05_mbll.py`; updated config thresholds and plot labels.
 - [2026-02-25] ✅ **Issue 1 complete** — All 5 sub-tasks (1.1–1.5) implemented and outputs generated.
@@ -22,7 +23,8 @@
 - [2026-02-25] Re-ranked issues into strict implementation order (1 = first, 12 = last) and updated priorities per requested ranking.
 
 ### Next Milestone
-1. Complete ranked Issues 1-4 and produce first paper-faithful Figure 3c/4i comparison pack.
+1. Complete Issue 4 (CNR method: peak-based → group-HRF-based) to achieve Figure 4i parity.
+2. Complete ranked Issues 1-4 and produce first paper-faithful Figure 3c/4i comparison pack.
 
 ---
 
@@ -38,7 +40,7 @@
 
 1. **Issue 1**: HRF target mismatch — **P0**
 2. **Issue 2**: Short-channel regression model differs from paper — **P0**
-3. **Issue 3**: CNR uses channel-pruned preprocessing outputs — **P0**
+3. **Issue 3**: CNR uses channel pruned and denoised outputs — **P0**
 4. **Issue 4**: CNR method mismatch — **P0**
 5. **Issue 5**: Missing explicit low-pass stage after rPCA/systemic correction — **P0**
 6. **Issue 6**: Potential unit/scaling mismatch — **P0**
@@ -83,7 +85,7 @@
 
 ### Gate 3: CNR Method Parity
 - [ ] CNR computed with paper-aligned method (group-HRF-based mode).
-- [ ] CNR run performed with channel pruning excluded.
+- [x] CNR run performed with channel pruning excluded. (2026-02-26 — Issue 3)
 - [ ] Expert vs Novice CNR distribution shape and range are materially closer to Figure 4i.
 
 ---
@@ -195,15 +197,45 @@
 
 ---
 
-### Issue 3 - CNR currently uses channel-pruned preprocessing outputs
+### Issue 3 - CNR Pipeline Alignment with Technical Validation ✅ COMPLETE
 **Priority:** P0
+**Completed:** 2026-02-26
 
-- [ ] **3.1** Create no-pruning preprocessing branch for CNR validation runs.
-- [ ] **3.2** Ensure same processing chain otherwise (only pruning policy changed).
-- [ ] **3.3** Recompute Expert/Novice CNR with no-pruning branch.
-- [ ] **3.4** Compare distribution changes vs Figure 4i target.
+- [x] **3.1** (2026-02-26) Defined Technical Validation branch in new script `04_technical_validation_cnr.py`.
+  - Branch loads raw SNIRF directly (no Stage A 80–140 dB channel exclusions)
+  - All 66 channels included in preprocessing; long-channel filtering applied downstream
+  - Cache path: `outputs/stage_c_validation/techval_branch/expert-novice/sub-{id}_techval_raw.fif`
+- [x] **3.2** (2026-02-26) Excluded rPCA (B4) and Gaussian-basis OLS (B6) from CNR path.
+  - Only B1 (OD) → B2 (0.01–0.5 Hz bandpass) → B5 (MBLL) applied
+  - `preprocessing_branch: "technical_validation"` metadata tag written to `cnr_summary.json`
+- [x] **3.3** (2026-02-26) Confirmed active pipeline: Intensity → OD → 0.01–0.5 Hz Bandpass → MBLL.
+  - Implemented in `preprocess_subject_techval()` using MNE-native calls
+  - PPF values preserved: {690: 6.4, 830: 5.8} (Kamat et al. 2023)
+- [x] **3.4** (2026-02-26) Recomputed Expert/Novice CNR with full unpruned dataset.
+  - 14/14 subjects processed; 24 HbO + 24 HbR = 48 long channels
+  - Evokeds cached in `outputs/stage_c_validation/techval_branch/hrf/Expert-Novice/`
+  - CNR outputs saved to `outputs/stage_c_validation/cnr/` (replacing previous values)
+- [x] **3.5** (2026-02-26) Compared new vs previous CNR values.
 
-**Acceptance Criteria:** CNR technical validation path explicitly excludes channel pruning.
+**CNR Comparison Report (post-Issue-3):**
+
+| Metric | Previous (Stage B: pruning + rPCA + OLS) | Technical Validation Branch (no pruning, no rPCA, no OLS) | Paper Target (Figure 4i) |
+|--------|------------------------------------------|-----------------------------------------------------------|--------------------------|
+| Median CNR | 0.2395 | **0.194** | ~0.45 |
+| Mean CNR | ~0.220 | 0.222 | — |
+| Max CNR | 0.634 | **0.668** | > 2.25 |
+| % ≥ 1.0 | 0% | 0% | — |
+| HbO median | — | 0.127 | — |
+| HbR median | — | 0.273 | — |
+| n channels | 48 | 48 | — |
+
+**Key observations:**
+1. Median CNR decreased slightly (0.240 → 0.194): removing rPCA/OLS leaves more physiological noise in denominator, reducing CNR for most channels.
+2. Max CNR increased slightly (0.634 → 0.668): consistent with paper claim that undenoised data reveals higher peak-CNR channels.
+3. Neither value approaches paper targets (median ~0.45, max > 2.25): remaining gap is due to **Issue 4** (CNR method mismatch — peak-based subject summaries vs. paper's group-HRF-based method).
+4. Top channels: S5_D9 hbr (0.668), S5_D10 hbr (0.585), S5_D7 hbr (0.566), S3_D4 hbo (0.538).
+
+**Acceptance Criteria:** CNR technical validation path explicitly excludes channel pruning and advanced denoising (rPCA/OLS). Final CNR box plot includes all channels and represents the "raw-ish" state of the data as intended by the paper's Figure 4i. ✓
 
 ---
 
@@ -338,7 +370,7 @@
 ### P0 Critical
 - [x] Issue 1 ✅ (2026-02-25)
 - [x] Issue 2 ✅ (2026-02-26)
-- [ ] Issue 3
+- [x] Issue 3 ✅ (2026-02-26)
 - [ ] Issue 4
 - [ ] Issue 5
 - [x] Issue 6 ✅ (2026-02-25)

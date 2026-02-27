@@ -11,13 +11,22 @@
   "n_channels_hbo": 24,
   "n_channels_hbr": 24,
   "n_valid_cnr": 48,
-  "median_cnr": 0.2395,
-  "mean_cnr": 0.2398,
-  "max_cnr": 0.6339,
+  "median_cnr": 0.1942,
+  "mean_cnr": 0.2219,
+  "max_cnr": 0.6683,
   "pct_above_1.0": 0.0,
+  "preprocessing_branch": "technical_validation",
+  "channel_pruning": false,
+  "rpca_correction": false,
+  "ols_regression": false,
+  "bandpass_hz": [
+    0.01,
+    0.5
+  ],
+  "paper_quote": "no channels have been excluded from the analysis provided here and no denoising methods have been used prior to analysis",
   "cnr_threshold_detectable": 1.0,
   "outputs": {
-    "cnr_csv": "outputs/stage_c_validation/cnr/cnr_Expert-Novice.csv",
-    "cnr_boxplot": "outputs/stage_c_validation/cnr/cnr_boxplot.png"
+    "cnr_csv": "/Users/vinhpham/Desktop/Local GitHub/MBE-Lab/outputs/stage_c_validation/cnr/cnr_Expert-Novice.csv",
+    "cnr_boxplot": "/Users/vinhpham/Desktop/Local GitHub/MBE-Lab/outputs/stage_c_validation/cnr/cnr_boxplot.png"
   }
 }

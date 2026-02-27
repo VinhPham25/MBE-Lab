@@ -1,4 +1,5 @@
 """
+04_calculate_cnr.py
 Stage C — Step C2: CNR Calculation and Visualization
 Purpose: Compute channel-wise Contrast-to-Noise Ratio (CNR) between two groups
          using per-subject HRF peak amplitudes, then produce a box-plot that
@@ -36,9 +37,9 @@ Box-plot design (Figure 4i style)
     `COMPARISON_REGISTRY` at the bottom of this file.
 
 Outputs (outputs/stage_c_validation/cnr/)
-  cnr_Expert-Novice.csv          — per-channel CNR (HbO + HbR rows)
-  cnr_boxplot.png                — box plot (Figure 4i style)
-  cnr_summary.json               — group stats and pass/fail flags
+  full_preprocess_cnr_Expert-Novice.csv  — per-channel CNR (HbO + HbR rows)
+  full_preprocess_cnr_boxplot.png        — box plot (Figure 4i style)
+  cnr_summary.json                       — group stats and pass/fail flags
 
 Upstream : 01_hrf_extraction.py  (run_hrf_extraction, build_region_map,
                                    _is_short_sep, get_long_channel_names)
@@ -99,10 +100,11 @@ GROUPS: dict[str, list[str]] = {
 # When other studies are processed, add their CNR arrays here so they appear
 # on the box plot automatically.
 COMPARISON_REGISTRY: dict[str, list[float] | None] = {
-    "Expert vs Novice":   None,   # computed by this script
-    "Trainee vs Control": None,   # Section 5.1 — Learning Curve (pending)
-    "Sham vs tDCS":       None,   # Section 5.3 — Long-term tES (pending)
-    "Sham vs tRNS":       None,   # Section 5.3 — Long-term tES (pending)
+    "Expert vs Novice":                    None,   # computed by 04_technical_validation_cnr.py
+    "Fully Preprocessed Expert vs Novice": None,   # computed by this script
+    "Trainee vs Control":                  None,   # Section 5.1 — Learning Curve (pending)
+    "Sham vs tDCS":                        None,   # Section 5.3 — Long-term tES (pending)
+    "Sham vs tRNS":                        None,   # Section 5.3 — Long-term tES (pending)
 }
 
 
@@ -296,7 +298,7 @@ def run_expert_novice_cnr(
 
     all_cnr = df_cnr["cnr"].dropna().values
     cnr_meta = {
-        "comparison":        f"{g1_name} vs {g2_name}",
+        "comparison":        f"Fully Preprocessed {g1_name} vs {g2_name}",
         "group1":            g1_name,
         "group2":            g2_name,
         "group1_n_subjects": len(groups[g1_name]),
@@ -477,13 +479,13 @@ def run_cnr_analysis(
     )
 
     # ── 4.4.4 — Save CSV ─────────────────────────────────────────────────────
-    csv_name = f"cnr_{study_display}.csv"
+    csv_name = f"full_preprocess_cnr_{study_display}.csv"  # changed: added full_preprocess_ prefix
     csv_path = out_dir / csv_name
     save_cnr_csv(df_cnr, csv_path)
 
     # ── 4.4.3 — Build comparison dict and plot ───────────────────────────────
     valid_cnr = df_cnr["cnr"].dropna().tolist()
-    comparison_label = f"{list(groups.keys())[0]} vs {list(groups.keys())[1]}"
+    comparison_label = f"Fully Preprocessed {list(groups.keys())[0]} vs {list(groups.keys())[1]}"  # changed: added "Fully Preprocessed" prefix
 
     # Merge current study into registry (deep copy to avoid mutating module-level)
     plot_data: dict[str, list[float] | None] = {}
@@ -493,7 +495,7 @@ def run_cnr_analysis(
         else:
             plot_data[label] = val
 
-    plot_path = out_dir / "cnr_boxplot.png"
+    plot_path = out_dir / "full_preprocess_cnr_boxplot.png"  # changed: added full_preprocess_ prefix
     plot_cnr_boxplot(plot_data, plot_path, cnr_threshold=cnr_threshold)
 
     # ── Summary JSON ──────────────────────────────────────────────────────────
@@ -505,10 +507,10 @@ def run_cnr_analysis(
             "cnr_boxplot": str(plot_path),
         },
     }
-    summary_path = out_dir / "cnr_summary.json"
+    summary_path = out_dir / "full_preprocess_cnr_summary.json"  # changed: added full_preprocess_ prefix
     with open(summary_path, "w") as f:
         json.dump(summary, f, indent=2)
-    print(f"  Saved: cnr_summary.json")
+    print(f"  Saved: full_preprocess_cnr_summary.json")
 
     # ── Console report ────────────────────────────────────────────────────────
     all_cnr = df_cnr["cnr"].dropna().values

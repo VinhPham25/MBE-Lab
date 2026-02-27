@@ -28,16 +28,18 @@ This review compares the current pipeline against the ASTaUND paper description 
 - Potential solution:
   - Implement the Gaussian-basis OLS approach (Homer-equivalent) for short-channel regression.
 
-### 3) CNR path currently includes channel pruning, but paper says exclude pruning for this validation
-- Discrepancy:
-  - Paper technical validation explicitly says CNR HRFs are computed **excluding channel pruning**.
-  - Current CNR uses Stage B outputs where Stage A 80–140 dB exclusions are applied.
+### 3) CNR Path Misalignment with Technical Validation Criteria
+- Discrepancy:The paper's technical validation (Figure 4i) is designed to assess raw data quality; it explicitly states that "no channels have been excluded" and "no denoising methods have been used" prior to this analysis.
+  - The current reproduced CNR is calculated using the full Stage B output, which incorrectly applies channel pruning (80–140 dB exclusion) and advanced denoising (rPCA and Gaussian-basis OLS regression
 - Evidence:
-  - Stage B provenance includes B1 signal-amplitude exclusion; Stage C reads those outputs.
+  - Current reproduced CNR shows a median of ~0.25 and a max of ~0.6, while the paper's raw-data validation shows a median of ~0.45 and a max > 2.25.
+  The inclusion of denoising (rPCA/OLS) in the current path explains the narrower range and lack of high-CNR outliers compared to the paper's raw assessment.
 - Why this matters:
-  - Pruning changes channel population and variance structure, biasing CNR downward/upward depending on removed channels.
-- Potential solution:
-  - Build a dedicated “CNR-validation” preprocessing branch with no channel pruning.
+  - Pruning and denoising alter the variance and mean structure, biasing the CNR and preventing direct comparison with the paper's technical assessment.
+- Action Plan (Implementation of Validation Branch)
+  - Build a dedicated code/stage_c_validation/04_technical_validation_cnr.py script.
+  - Included Steps: Intensity -> OD, 0.01–0.5 Hz Bandpass Filter, and MBLL
+  - Excluded Steps: No Stage A channel pruning, no rPCA motion correction, and no Short-Channel Regression.
 
 ### 4) CNR computation method differs from paper technical-validation description
 - Discrepancy:
