@@ -231,7 +231,7 @@ def verify_od_range(
     """
     Task 3.1.4: Verify OD data quality per channel using three checks.
 
-    MNE's optical_density() computes OD = -log(I / mean(I)), which
+    MNE's optical_density() computes OD = -ln(I / mean(I)), which
     normalises each channel by its own time-mean.  As a result the
     per-channel mean OD is always approximately 0, and three quality checks
     are applied:

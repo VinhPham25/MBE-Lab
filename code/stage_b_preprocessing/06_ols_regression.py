@@ -64,6 +64,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import get_output_path, get_stage_params, load_config
 
 # ---------------------------------------------------------------------------
+# Load config once at import time — all tunable constants derive from here
+# ---------------------------------------------------------------------------
+_CONFIG = load_config()
+_SCR_CFG = _CONFIG.get("stage_b", {}).get("short_channel_regression", {})
+_RPCA_CFG = _CONFIG.get("stage_b", {}).get("rpca", {})
+
+# ---------------------------------------------------------------------------
 # Import Step B5 pipeline via importlib
 # ---------------------------------------------------------------------------
 import importlib.util
@@ -78,15 +85,16 @@ _spec_b5.loader.exec_module(_b5)
 run_mbll = _b5.run_mbll
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constants — sourced from config.yaml stage_b.short_channel_regression
 # ---------------------------------------------------------------------------
-SHORT_SEP_THRESHOLD_MM = 15.0   # channels with separation < 15 mm = short-separation
+SHORT_SEP_THRESHOLD_MM   = float(_SCR_CFG.get("short_separation_threshold", 15.0))
+DEFAULT_N_GAUSSIANS      = int(  _SCR_CFG.get("n_gaussians",               3))
+DEFAULT_GAUSSIAN_STD_S   = float(_SCR_CFG.get("gaussian_std_s",            1.0))
+DEFAULT_GAUSSIAN_SPACING_S = float(_SCR_CFG.get("gaussian_spacing_s",      1.5))
 
-# Gaussian basis defaults (Homer2-equivalent; paper: "consecutive sequence of
-# Gaussian basis functions via OLS")
-DEFAULT_N_GAUSSIANS       = 3     # number of consecutive basis functions
-DEFAULT_GAUSSIAN_STD_S    = 1.0   # Gaussian width (std) in seconds
-DEFAULT_GAUSSIAN_SPACING_S = 1.5  # center-to-center spacing in seconds
+# rPCA defaults — sourced from config.yaml stage_b.rpca
+_DEFAULT_N_COMPONENTS      = float(_RPCA_CFG.get("n_components",         0.99))
+_DEFAULT_MIN_CHANNELS      = int(  _RPCA_CFG.get("min_channels_flagged", 10))
 
 
 # ===========================================================================
@@ -888,8 +896,8 @@ def run_ols_regression(
     dataset_name: str,
     subject_id: str,
     short_threshold_mm: float = SHORT_SEP_THRESHOLD_MM,
-    n_components: float = 0.99,
-    min_channels_flagged: int = 10,
+    n_components: float = _DEFAULT_N_COMPONENTS,
+    min_channels_flagged: int = _DEFAULT_MIN_CHANNELS,
     ppf_dict: dict = None,
     n_gaussians: int = DEFAULT_N_GAUSSIANS,
     gaussian_std_s: float = DEFAULT_GAUSSIAN_STD_S,

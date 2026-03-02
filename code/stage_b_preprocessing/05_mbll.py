@@ -61,6 +61,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import get_output_path, get_stage_params, load_config
 
 # ---------------------------------------------------------------------------
+# Load config once at import time — PPF and range constants derive from here
+# ---------------------------------------------------------------------------
+_CONFIG = load_config()
+_BL_CFG   = _CONFIG.get("stage_b", {}).get("beer_lambert", {})
+_RPCA_CFG = _CONFIG.get("stage_b", {}).get("rpca", {})
+
+# ---------------------------------------------------------------------------
 # Import Step B4 pipeline via importlib
 # ---------------------------------------------------------------------------
 import importlib.util
@@ -75,10 +82,32 @@ _spec_b4.loader.exec_module(_b4)
 run_rpca_correction = _b4.run_rpca_correction
 
 # ---------------------------------------------------------------------------
-# TechEn PPF constants
+# PPF constants — sourced from config.yaml datasets.*. ppf
 # ---------------------------------------------------------------------------
-TECHEN_PPF = {690: 6.4, 830: 5.8}    # partial path-length factors (paper values)
-NIRX_PPF   = {760: 6.0, 850: 6.0}    # NIRx defaults (used for tES datasets)
+def _get_ppf(dataset_key: str) -> dict:
+    """Return PPF dict for the given dataset key from config."""
+    ppf_raw = _CONFIG.get("datasets", {}).get(dataset_key, {}).get("ppf", {})
+    if isinstance(ppf_raw, dict):
+        return {int(k): float(v) for k, v in ppf_raw.items()}
+    return {}
+
+
+TECHEN_PPF = _get_ppf("expert_novice")   # TechEn CW6 PPF values from config
+NIRX_PPF   = _get_ppf("short_term_tes")  # NIRx PPF values from config
+
+# Fallback if config is missing (should not occur in normal operation)
+if not TECHEN_PPF:
+    TECHEN_PPF = {690: 6.4, 830: 5.8}
+if not NIRX_PPF:
+    NIRX_PPF = {760: 6.0, 850: 6.0}
+
+# Hemoglobin range thresholds — sourced from config.yaml stage_b.beer_lambert
+_HB_TYPICAL_UM = float(_BL_CFG.get("typical_range",  50.0))
+_HB_FLAG_UM    = float(_BL_CFG.get("hb_range_max",  100.0))
+
+# rPCA defaults — sourced from config.yaml stage_b.rpca
+_DEFAULT_N_COMPONENTS = float(_RPCA_CFG.get("n_components",         0.99))
+_DEFAULT_MIN_CHANNELS = int(  _RPCA_CFG.get("min_channels_flagged", 10))
 
 # ---------------------------------------------------------------------------
 # Unit Analysis — Issue 6 (AUDIT_PROGRESS.md)
@@ -206,8 +235,8 @@ def apply_beer_lambert(
 
 def verify_hb_ranges(
     raw_haemo,
-    typical_range_um: float = 50.0,
-    flag_threshold_um: float = 100.0,
+    typical_range_um: float = _HB_TYPICAL_UM,
+    flag_threshold_um: float = _HB_FLAG_UM,
     verbose: bool = True,
 ) -> pd.DataFrame:
     """
@@ -554,8 +583,8 @@ def run_mbll(
     dataset_name: str,
     subject_id: str,
     ppf_dict: dict = None,
-    n_components: float = 0.99,
-    min_channels_flagged: int = 10,
+    n_components: float = _DEFAULT_N_COMPONENTS,
+    min_channels_flagged: int = _DEFAULT_MIN_CHANNELS,
     verbose: bool = True,
 ) -> dict:
     """
@@ -589,7 +618,7 @@ def run_mbll(
         }
     """
     if ppf_dict is None:
-        ppf_dict = TECHEN_PPF
+        ppf_dict = _get_ppf(dataset_name) or TECHEN_PPF
 
     print("\n" + "=" * 70)
     print(f"STAGE B — STEP B5: MODIFIED BEER-LAMBERT LAW  |  Subject: {subject_id}")

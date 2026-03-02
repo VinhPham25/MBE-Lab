@@ -53,6 +53,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import get_output_path, get_stage_params, load_config
 
 # ---------------------------------------------------------------------------
+# Load config once at import time — all tunable constants derive from here
+# ---------------------------------------------------------------------------
+_CONFIG = load_config()
+_RPCA_CFG = _CONFIG.get("stage_b", {}).get("rpca", {})
+_B3_CFG   = _CONFIG.get("stage_b", {}).get("motion_detection", {})
+
+_DEFAULT_N_COMPONENTS    = float(_RPCA_CFG.get("n_components",         0.99))
+_DEFAULT_MIN_CHANNELS    = int(  _RPCA_CFG.get("min_channels_flagged", 10))
+_DEFAULT_AMP_THRESH      = float(_B3_CFG.get("AMPthresh",  5.0))
+_DEFAULT_STDEV_THRESH    = float(_B3_CFG.get("tStdev",    20.0))
+_DEFAULT_T_MOTION        = float(_B3_CFG.get("tMotion",    0.5))
+_DEFAULT_T_MASK          = float(_B3_CFG.get("t_mask",     0.5))
+
+# ---------------------------------------------------------------------------
 # Import Step B3 functions via importlib (avoid circular imports)
 # ---------------------------------------------------------------------------
 import importlib.util
@@ -76,8 +90,8 @@ run_bandpass_filter     = _b3.run_bandpass_filter   # re-exported from B2 inside
 def apply_rpca_correction(
     raw_od_filt,
     motion_results: dict,
-    n_components: float = 0.97,
-    min_channels_flagged: int = 1,
+    n_components: float = _DEFAULT_N_COMPONENTS,
+    min_channels_flagged: int = _DEFAULT_MIN_CHANNELS,
     verbose: bool = True,
 ) -> tuple:
     """
@@ -449,10 +463,10 @@ def verify_motion_reduction(
     raw_od_corrected,
     motion_results_before: dict,
     stats_before: pd.DataFrame,
-    amp_thresh: float = 5.0,
-    stdev_thresh: float = 20.0,
-    t_motion: float = 0.5,
-    t_mask: float = 0.5,
+    amp_thresh: float = _DEFAULT_AMP_THRESH,
+    stdev_thresh: float = _DEFAULT_STDEV_THRESH,
+    t_motion: float = _DEFAULT_T_MOTION,
+    t_mask: float = _DEFAULT_T_MASK,
     verbose: bool = True,
 ) -> tuple:
     """
@@ -722,10 +736,10 @@ def tune_rpca_parameters(
     output_dir: Path,
     n_components_grid: list = None,
     min_channels_grid: list = None,
-    amp_thresh: float = 5.0,
-    stdev_thresh: float = 20.0,
-    t_motion: float = 0.5,
-    t_mask: float = 0.5,
+    amp_thresh: float = _DEFAULT_AMP_THRESH,
+    stdev_thresh: float = _DEFAULT_STDEV_THRESH,
+    t_motion: float = _DEFAULT_T_MOTION,
+    t_mask: float = _DEFAULT_T_MASK,
     verbose: bool = True,
 ) -> tuple:
     """
@@ -1022,8 +1036,8 @@ def save_corrected_od(
 def run_rpca_correction(
     dataset_name: str,
     subject_id: str,
-    n_components: float = 0.97,
-    min_channels_flagged: int = 1,
+    n_components: float = _DEFAULT_N_COMPONENTS,
+    min_channels_flagged: int = _DEFAULT_MIN_CHANNELS,
     verbose: bool = True,
 ) -> dict:
     """
@@ -1056,9 +1070,6 @@ def run_rpca_correction(
           'output_dir':        Path,
         }
     """
-    config    = load_config()
-    b3_params = get_stage_params('stage_b', config)['motion_detection']
-
     print("\n" + "=" * 70)
     print(f"STAGE B — STEP B4: rPCA MOTION CORRECTION  |  Subject: {subject_id}")
     print("=" * 70)
@@ -1068,15 +1079,17 @@ def run_rpca_correction(
     b2_results  = run_bandpass_filter(dataset_name, subject_id, verbose=False)
     raw_od_filt = b2_results['raw_od_filt']
 
-    # ---- Step B3: motion detection (dual criterion) ------------------------
-    print("[2/3] Detecting motion artifacts (dual criterion, use_amp_only=False)...")
+    # ---- Step B3: motion detection (parameters from config) ----------------
+    use_amp_only = bool(_B3_CFG.get("use_amp_only", False))
+    print(f"[2/3] Detecting motion artifacts "
+          f"({'amplitude-only' if use_amp_only else 'dual criterion'})...")
     motion_results = detect_motion_artifacts(
         raw_od_filt,
-        amp_thresh   = float(b3_params.get('AMPthresh', 5.0)),
-        stdev_thresh = float(b3_params['tStdev']),    # 20.0
-        t_motion     = float(b3_params['tMotion']),   # 0.5
-        t_mask       = 0.5,
-        use_amp_only = False,   # dual criterion → 17.4% for A1
+        amp_thresh   = _DEFAULT_AMP_THRESH,
+        stdev_thresh = _DEFAULT_STDEV_THRESH,
+        t_motion     = _DEFAULT_T_MOTION,
+        t_mask       = _DEFAULT_T_MASK,
+        use_amp_only = use_amp_only,
         verbose      = verbose,
     )
     stats_before = compute_motion_stats(motion_results, raw_od_filt, verbose=verbose)
@@ -1118,17 +1131,12 @@ def run_rpca_correction(
 
     # ---- 3.4.3 Post-correction motion verification -------------------------
     print("[5/7] Verifying motion reduction post-rPCA (Task 3.4.3)...")
-    b3_params = get_stage_params('stage_b', config)['motion_detection']
     stats_after, comparison_df, reduction_summary = verify_motion_reduction(
         raw_od_filt,
         raw_od_corrected,
         motion_results,
         stats_before,
-        amp_thresh   = float(b3_params.get('AMPthresh', 5.0)),
-        stdev_thresh = float(b3_params['tStdev']),
-        t_motion     = float(b3_params['tMotion']),
-        t_mask       = 0.5,
-        verbose      = verbose,
+        verbose = verbose,
     )
 
     # ---- 3.4.4 Effectiveness documentation ---------------------------------
@@ -1208,6 +1216,5 @@ if __name__ == '__main__':
     run_rpca_correction(
         dataset_name = 'expert_novice',
         subject_id   = 'A1',
-        n_components = 0.97,
         verbose      = True,
     )

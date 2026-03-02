@@ -148,8 +148,8 @@ MBE-Lab/
 | Motion tMotion | 0.5 | Amplitude threshold |
 | Motion tStdev | 20 | Standard deviation multiplier |
 | Bandpass Filter | 0.01-0.5 Hz | Remove drift and noise |
-| rPCA Variance | 0.97 | Motion correction |
-| Epoch Window | -5 to +30 s | HRF extraction |
+| rPCA Variance | 0.97 | Motion correction | Note, adjusted from 0.97 to 0.99 for rPCA after hyperparameter tuning
+| Epoch Window | -25 to +100 s | HRF extraction |
 | HRF Peak Window | 5-15 s | CNR calculation |
 
 ---
@@ -239,19 +239,6 @@ python code/stage_c_validation/run_validation.py --dataset Expert_Novice
 - Motion ratio matches Figure 4b,d,f,h
 - HRF morphology matches Figure 3c,3d
 - CNR values match Figure 4i
-
----
-
-## Timeline
-
-- **Week 0:** Environment setup ✓
-- **Week 1-2:** Stage A implementation
-- **Week 3-4:** Stage B core pipeline
-- **Week 5-6:** Stage B completion + scaling
-- **Week 7-8:** Stage C validation
-- **Week 9-10:** Multi-dataset extension
-
-**Target Completion:** ~10 weeks
 
 ---
 

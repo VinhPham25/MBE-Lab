@@ -3,3 +3,6 @@ BIDS/
 .venv/
 __pycache__/
 techval_branch/
+outputs/
+stage_b_preprocessing/
+stage_c_validation/

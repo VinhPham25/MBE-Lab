@@ -37,6 +37,18 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import get_output_path, get_stage_params, load_config
 
+# ---------------------------------------------------------------------------
+# Load config once at import time — all tunable constants derive from here
+# ---------------------------------------------------------------------------
+_CONFIG = load_config()
+_B3_CFG = _CONFIG.get("stage_b", {}).get("motion_detection", {})
+
+_DEFAULT_AMP_THRESH   = float(_B3_CFG.get("AMPthresh",   5.0))
+_DEFAULT_STDEV_THRESH = float(_B3_CFG.get("tStdev",     20.0))
+_DEFAULT_T_MOTION     = float(_B3_CFG.get("tMotion",     0.5))
+_DEFAULT_T_MASK       = float(_B3_CFG.get("t_mask",      0.5))
+_DEFAULT_USE_AMP_ONLY = bool( _B3_CFG.get("use_amp_only", False))
+
 # Import Step B2 pipeline to obtain filtered OD
 import importlib.util
 _spec = importlib.util.spec_from_file_location(
@@ -194,11 +206,11 @@ def _expand_mask_to_signal(
 
 def detect_motion_artifacts(
     raw_od_filt,
-    amp_thresh: float = 5.0,
-    stdev_thresh: float = 20.0,
-    t_motion: float = 0.5,
-    t_mask: float = 0.5,
-    use_amp_only: bool = True,
+    amp_thresh: float = _DEFAULT_AMP_THRESH,
+    stdev_thresh: float = _DEFAULT_STDEV_THRESH,
+    t_motion: float = _DEFAULT_T_MOTION,
+    t_mask: float = _DEFAULT_T_MASK,
+    use_amp_only: bool = _DEFAULT_USE_AMP_ONLY,
     verbose: bool = True,
 ) -> dict:
     """
@@ -604,22 +616,11 @@ def run_motion_detection(
           'csv_path':       Path,
         }
     """
-    # =========================================================================
-    # MOTION DETECTION CRITERION — TOGGLE HERE
-    #
-    # True  → Amplitude-only (AMPthresh = 5.0 OD units)
-    #         Recommended for filtered OD (0.01–0.5 Hz).
-    #         Result on A1: ~0% flagged  ✓ matches Stage A expectation.
-    #
-    # False → Homer3 dual-criterion (AMPthresh + STDEVthresh × std_diff)
-    #         Original Homer3 method, designed for unfiltered OD.
-    #         Result on A1: ~17.4% flagged (stdev leg over-sensitive on
-    #         filtered data; may represent ground truth for noisier subjects).
-    # =========================================================================
-    USE_AMP_ONLY: bool = False   # <-- CHANGE THIS TO SWITCH METHODS
-
-    config = load_config()
-    b3_params = get_stage_params('stage_b', config)['motion_detection']
+    # Motion detection criterion is configured via config.yaml
+    # stage_b.motion_detection.use_amp_only:
+    #   false (default) → Homer3 dual criterion (AMPthresh + STDEVthresh × std_diff)
+    #   true            → Amplitude-only (AMPthresh OD units)
+    # To change the method, edit config.yaml and re-run.
 
     print("\n" + "=" * 70)
     print(f"STAGE B — STEP B3: MOTION DETECTION  |  Subject: {subject_id}")
@@ -632,11 +633,6 @@ def run_motion_detection(
     # ---- 3.3.1 Detect motion artifacts -------------------------------------
     motion_results = detect_motion_artifacts(
         raw_od_filt,
-        amp_thresh=5.0,
-        stdev_thresh=float(b3_params['tStdev']),
-        t_motion=float(b3_params['tMotion']),
-        t_mask=0.5,
-        use_amp_only=USE_AMP_ONLY,
         verbose=verbose,
     )
 

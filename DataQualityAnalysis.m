@@ -37,7 +37,7 @@ for k = 1 : length(theFiles)
        SubjectSNR.(subj)=subjSNR;
        SubjectMR.(subj)=subjMR;  
      end
-%     if k==length(theFiles)
+%     if k==length(theFiles)git 
 %       SubjectSNR.(prevsubj)=subjSNR;
 %       SubjectMR.(prevsubj)=subjMR;  
 %    end

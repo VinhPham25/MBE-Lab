@@ -1,4 +1,10 @@
 """
+
+If changing parameters from config.yaml, run:
+python code/stage_c_validation/04_technical_validation_cnr.py --force
+
+This forces a rewrite of the cached .fif and evoked files, so the new parameters will be used.
+
 04_technical_validation_cnr.py
 Stage C — Technical Validation CNR Branch (Issue 3)
 Purpose: Compute Expert/Novice CNR using a minimal preprocessing branch
@@ -58,6 +64,11 @@ from utils import get_snirf_files, load_config
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+# ---------------------------------------------------------------------------
+# Load config once at import time — all tunable constants derive from here
+# ---------------------------------------------------------------------------
+_CONFIG = load_config()
+
 
 # ---------------------------------------------------------------------------
 # Dynamic imports of Stage C helpers
@@ -89,18 +100,42 @@ COMPARISON_REGISTRY      = _cnr.COMPARISON_REGISTRY
 
 
 # ---------------------------------------------------------------------------
-# Study / group constants
+# Study / group constants — sourced from config.yaml
 # ---------------------------------------------------------------------------
 
 STUDY         = "expert_novice"
-STUDY_FOLDER  = "expert-novice"
-STUDY_DISPLAY = "Expert-Novice"
-PPF_DICT      = {690: 6.4, 830: 5.8}   # TechEn CW6 PPF (Kamat et al. 2023)
+_DS_CFG       = _CONFIG.get("datasets", {}).get(STUDY, {})
+STUDY_FOLDER  = _DS_CFG.get("output_folder", "expert-novice")
+STUDY_DISPLAY = _DS_CFG.get("name", "Expert-Novice")
 
-GROUPS: dict[str, list[str]] = {
-    "Expert": ["A1", "A2", "R7", "R8", "R9", "R10", "R11", "R12"],
-    "Novice": ["R1", "R2", "R3", "R4", "R5", "R6"],
-}
+# PPF from config.yaml datasets.expert_novice.ppf
+_ppf_raw = _DS_CFG.get("ppf", {})
+PPF_DICT: dict = (
+    {int(k): float(v) for k, v in _ppf_raw.items()}
+    if isinstance(_ppf_raw, dict) else {690: 6.4, 830: 5.8}
+)
+
+# Groups from config.yaml datasets.expert_novice.groups
+_groups_raw = _DS_CFG.get("groups", {})
+GROUPS: dict[str, list[str]] = (
+    {grp: list(subs) for grp, subs in _groups_raw.items()}
+    if _groups_raw else {
+        "Expert": ["A1", "A2", "R7", "R8", "R9", "R10", "R11", "R12"],
+        "Novice": ["R1", "R2", "R3", "R4", "R5", "R6"],
+    }
+)
+
+# Peak window from config.yaml stage_c.cnr.peak_window
+_CNR_CFG = _CONFIG.get("stage_c", {}).get("cnr", {})
+_PEAK_WINDOW_DEFAULT: tuple[float, float] = tuple(
+    float(v) for v in _CNR_CFG.get("peak_window", [5.0, 15.0])
+)
+
+# Bandpass filter params from config.yaml stage_b.filter
+_FILT_CFG = _CONFIG.get("stage_b", {}).get("filter", {})
+_BP_L_FREQ   = float(_FILT_CFG.get("l_freq",  0.01))
+_BP_H_FREQ   = float(_FILT_CFG.get("h_freq",  0.5))
+_BP_METHOD   = str(_FILT_CFG.get("method",   "iir"))
 
 
 # ===========================================================================
@@ -112,8 +147,9 @@ def preprocess_subject_techval(
     dataset_name: str,
     ppf_dict: dict,
     out_dir: Path,
-    l_freq: float = 0.01,
-    h_freq: float = 0.5,
+    l_freq: float = _BP_L_FREQ,
+    h_freq: float = _BP_H_FREQ,
+    method: str = _BP_METHOD,
     force_recompute: bool = False,
 ) -> Path:
     """
@@ -121,7 +157,7 @@ def preprocess_subject_techval(
 
     Steps (paper-aligned):
       B1  Intensity → Optical Density
-      B2  Bandpass filter 0.01 – 0.5 Hz IIR
+      B2  Bandpass filter (l_freq–h_freq Hz, method from config.yaml)
       # Note, bandpass filter is still applied since it performs signal deconditioning:
         1. Removes DC drift (high-pass component)
         2. Eliminates non-physiological frequencies (low-pass component)
@@ -153,7 +189,7 @@ def preprocess_subject_techval(
 
     # B2: Bandpass filter
     raw_od_filt = raw_od.copy().filter(
-        l_freq=l_freq, h_freq=h_freq, method="iir", verbose=False
+        l_freq=l_freq, h_freq=h_freq, method=method, verbose=False
     )
 
     # B5: Modified Beer-Lambert Law
@@ -265,6 +301,7 @@ def collect_all_techval_evokeds(
     ppf_dict: dict,
     config: dict,
     target_sfreq: float = 25.0,
+    force_recompute: bool = False,
 ) -> list[mne.Evoked]:
     """
     Load (or compute) techval-branch Evokeds for all subjects in a group.
@@ -277,6 +314,7 @@ def collect_all_techval_evokeds(
         ev = _load_or_compute_techval_evoked(
             sid, techval_fif_dir, hrf_cache_dir,
             dataset_name, ppf_dict, config,
+            force_recompute=force_recompute,
         )
         if ev is None:
             print(f"    [{sid}] ⚠ skipped (no data)")
@@ -297,6 +335,7 @@ def collect_techval_group_peaks(
     ppf_dict: dict,
     config: dict,
     target_sfreq: float = 25.0,
+    force_recompute: bool = False,
 ) -> dict[str, list[float]]:
     """
     Load (or compute) techval-branch Evokeds for all subjects in a group
@@ -310,6 +349,7 @@ def collect_techval_group_peaks(
         ev = _load_or_compute_techval_evoked(
             sid, techval_fif_dir, hrf_cache_dir,
             dataset_name, ppf_dict, config,
+            force_recompute=force_recompute,
         )
         if ev is None:
             print(f"    [{sid}] ⚠ skipped (no data)")
@@ -333,7 +373,7 @@ def run_techval_cnr_analysis(
     study_folder: str = STUDY_FOLDER,
     study_display: str = STUDY_DISPLAY,
     ppf_dict: dict = PPF_DICT,
-    peak_window: tuple[float, float] = (5.0, 15.0),
+    peak_window: tuple[float, float] = _PEAK_WINDOW_DEFAULT,
     comparison_registry: dict | None = None,
     force_recompute: bool = False,
 ) -> dict:
@@ -380,7 +420,7 @@ def run_techval_cnr_analysis(
     # ── Banner ────────────────────────────────────────────────────────────────
     print(f"\n{'='*64}")
     print(f"  Issues 3+4 — Technical Validation CNR  (group-HRF method)")
-    print(f"  Pipeline: Intensity → OD → 0.01–0.5 Hz BP → MBLL")
+    print(f"  Pipeline: Intensity → OD → {_BP_L_FREQ}–{_BP_H_FREQ} Hz BP ({_BP_METHOD}) → MBLL")
     print(f"  Excluded: Stage A pruning | rPCA | OLS regression")
     print(f"  CNR method: group-HRF (paper-faithful, Task 4.1)")
     print(f"  Study   : {study_display}  |  "
@@ -395,6 +435,7 @@ def run_techval_cnr_analysis(
         try:
             preprocess_subject_techval(
                 sid, study, ppf_dict, techval_fif_dir,
+                method=_BP_METHOD,
                 force_recompute=force_recompute,
             )
         except Exception as exc:
@@ -420,9 +461,11 @@ def run_techval_cnr_analysis(
     print(f"\n  Step 3 — Loading evokeds for group-HRF CNR …")
     g1_evokeds = collect_all_techval_evokeds(
         groups[g1_name], techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
+        force_recompute=force_recompute,
     )
     g2_evokeds = collect_all_techval_evokeds(
         groups[g2_name], techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
+        force_recompute=force_recompute,
     )
     print(f"  {g1_name}: {len(g1_evokeds)} subjects | "
           f"{g2_name}: {len(g2_evokeds)} subjects")
@@ -444,10 +487,12 @@ def run_techval_cnr_analysis(
         g1_peaks = collect_techval_group_peaks(
             groups[g1_name], long_chs, chromo, peak_window,
             techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
+            force_recompute=force_recompute,
         )
         g2_peaks = collect_techval_group_peaks(
             groups[g2_name], long_chs, chromo, peak_window,
             techval_fif_dir, hrf_cache_dir, study, ppf_dict, config,
+            force_recompute=force_recompute,
         )
         legacy_cnr_vals = compute_cnr(g1_peaks, g2_peaks)
 
@@ -497,6 +542,11 @@ def run_techval_cnr_analysis(
     print(f"  {'Legacy peak-based':<28} {str(l_med):>8}  {str(l_mn):>8}  {str(l_mx):>8}")
     print(f"  {'Paper target (Figure 4i)':<28} {'~0.45':>8}  {'—':>8}  {'>2.25':>8}")
 
+    # Retrieve actual filter params used in this techval branch
+    first_fif = techval_fif_dir / f"sub-{list(groups.values())[0][0]}_techval_raw.fif"
+    _actual_l_freq = _BP_L_FREQ
+    _actual_h_freq = _BP_H_FREQ
+
     cnr_meta = {
         "comparison":            f"{g1_name} vs {g2_name}",
         "group1":                g1_name,
@@ -516,7 +566,8 @@ def run_techval_cnr_analysis(
         "channel_pruning":       False,
         "rpca_correction":       False,
         "ols_regression":        False,
-        "bandpass_hz":           [0.01, 0.5],
+        "bandpass_hz":           [_actual_l_freq, _actual_h_freq],
+        "bandpass_method":       _BP_METHOD,
         "paper_quote": (
             "no channels have been excluded from the analysis provided here "
             "and no denoising methods have been used prior to analysis"
@@ -579,4 +630,12 @@ def run_techval_cnr_analysis(
 # ===========================================================================
 
 if __name__ == "__main__":
-    run_techval_cnr_analysis()
+    import argparse
+    parser = argparse.ArgumentParser(description="Technical Validation CNR pipeline")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Force recompute all cached .fif and evoked files (required when "
+             "config.yaml parameters change, e.g. bandpass h_freq)",
+    )
+    args = parser.parse_args()
+    run_techval_cnr_analysis(force_recompute=args.force)

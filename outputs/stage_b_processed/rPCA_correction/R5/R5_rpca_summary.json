@@ -1,9 +1,0 @@
-{
-  "n_flagged": 7595,
-  "pct_flagged_union": 19.73,
-  "n_components_used": 24,
-  "variance_removed_pct": 99.17,
-  "n_good_channels": 50,
-  "n_components_param": 0.99,
-  "min_channels_flagged": 10
-}

@@ -69,45 +69,51 @@ run_ols_regression = _b6.run_ols_regression
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+
 # ===========================================================================
-# Study-level parameter table (Task 3.8.1)
+# Build study metadata from config.yaml (Task 3.8.1)
 # ===========================================================================
 
-#: Per-study metadata: output folder name, BIDS task label, system, PPF dict.
-#: tES entries are stubs — Section 3.9 will finalise their parameters.
-STUDY_META: dict = {
-    "expert_novice": {
-        "output_folder": "expert-novice",
-        "task_name":     "ExpNovPatternCutting",
-        "system":        "TechEn_CW6",
-        "ppf_dict":      {690: 6.4, 830: 5.8},
-    },
-    "learning_curve": {
-        "output_folder": "learning-curve",
-        "task_name":     "LearningCurve",
-        "system":        "TechEn_CW6",
-        "ppf_dict":      {690: 6.4, 830: 5.8},
-    },
-    "short_term_tes": {
-        "output_folder": "short-term-tES",
-        "task_name":     "ShortTermtES",
-        "system":        "NIRx_NIRScout",
-        # Placeholder — Section 3.9 will validate NIRx-specific PPF values
-        "ppf_dict":      {760: 6.0, 850: 6.0},
-    },
-    "long_term_tes": {
-        "output_folder": "long-term-tES",
-        "task_name":     "LongTermtES",
-        "system":        "NIRx_NIRScout",
-        # Placeholder — Section 3.9 will validate NIRx-specific PPF values
-        "ppf_dict":      {760: 6.0, 850: 6.0},
-    },
-}
+def _build_study_meta(config: dict) -> dict:
+    """
+    Construct the per-study metadata table from config.yaml.
 
-# Default rPCA parameters (tuned in Section 3.4.5)
-DEFAULT_N_COMPONENTS:    float = 0.99
-DEFAULT_MIN_CHANNELS:    int   = 10
-SHORT_SEP_THRESHOLD_MM:  float = 15.0
+    Reads bids_task, output_folder, system, and ppf from each dataset entry
+    so that changes to config.yaml automatically propagate here.
+    """
+    datasets = config["datasets"]
+    meta = {}
+    for key, ds in datasets.items():
+        ppf_raw = ds.get("ppf", {})
+        if isinstance(ppf_raw, dict):
+            ppf_dict = {int(k): float(v) for k, v in ppf_raw.items()}
+        else:
+            ppf_dict = {}
+        meta[key] = {
+            "output_folder": ds.get("output_folder", key.replace("_", "-")),
+            "task_name":     ds.get("bids_task", key),
+            "system":        ds.get("system", ""),
+            "ppf_dict":      ppf_dict,
+        }
+    return meta
+
+
+_CONFIG = load_config()
+STUDY_META: dict = _build_study_meta(_CONFIG)
+
+# rPCA parameters — sourced from config.yaml stage_b.rpca
+_RPCA_CFG = _CONFIG.get("stage_b", {}).get("rpca", {})
+DEFAULT_N_COMPONENTS:   float = float(_RPCA_CFG.get("n_components", 0.99))
+DEFAULT_MIN_CHANNELS:   int   = int(_RPCA_CFG.get("min_channels_flagged", 10))
+
+# Short-channel separation threshold — sourced from config.yaml stage_b.short_channel_regression
+_SCR_CFG = _CONFIG.get("stage_b", {}).get("short_channel_regression", {})
+SHORT_SEP_THRESHOLD_MM: float = float(_SCR_CFG.get("short_separation_threshold", 15.0))
+
+# SNR thresholds — sourced from config.yaml stage_a.snr
+_SNR_CFG = _CONFIG.get("stage_a", {}).get("snr", {})
+_SNR_LOW:  float = float(_SNR_CFG.get("threshold_low",  80.0))
+_SNR_HIGH: float = float(_SNR_CFG.get("threshold_high", 140.0))
 
 
 # ===========================================================================
@@ -146,8 +152,8 @@ def _ensure_exclusion_list(dataset_name: str, subject_id: str) -> dict:
     )
 
     # MNE NIRS requirement: both wavelengths of a source-detector pair must be
-    # consistently marked bad.  If only one wavelength fails the 80-140 dB
-    # criterion, we expand the exclusion to cover the whole pair.
+    # consistently marked bad.  If only one wavelength fails the SNR criterion,
+    # we expand the exclusion to cover the whole pair.
     def _pair_base(ch_name: str) -> str:
         for suffix in (" 690", " 830", " 760", " 850"):
             if ch_name.endswith(suffix):
@@ -156,8 +162,9 @@ def _ensure_exclusion_list(dataset_name: str, subject_id: str) -> dict:
 
     amp_db_map = dict(zip(ch_names, amp_db))
 
-    # Channels directly failing the threshold
-    direct_bad = {ch for ch, a in amp_db_map.items() if a < 80 or a > 140}
+    # Channels directly failing the threshold (thresholds from config)
+    direct_bad = {ch for ch, a in amp_db_map.items()
+                  if a < _SNR_LOW or a > _SNR_HIGH}
 
     # Expand to full pairs: if either wavelength is bad, mark both bad
     bad_pair_bases = {_pair_base(ch) for ch in direct_bad}
@@ -168,10 +175,10 @@ def _ensure_exclusion_list(dataset_name: str, subject_id: str) -> dict:
     excl_reasons  = {}
     for ch in bad_channels:
         a = amp_db_map[ch]
-        if a < 80:
-            excl_reasons[ch] = "below_80db"
-        elif a > 140:
-            excl_reasons[ch] = "above_140db"
+        if a < _SNR_LOW:
+            excl_reasons[ch] = f"below_{_SNR_LOW:.0f}db"
+        elif a > _SNR_HIGH:
+            excl_reasons[ch] = f"above_{_SNR_HIGH:.0f}db"
         else:
             # Paired with a channel that failed; exclude for NIRS consistency
             partner_failed = [
@@ -186,7 +193,7 @@ def _ensure_exclusion_list(dataset_name: str, subject_id: str) -> dict:
         "bad_channels":      sorted(bad_channels),
         "good_channels":     sorted(good_channels),
         "exclusion_reasons": excl_reasons,
-        "thresholds_db":     {"low": 80.0, "high": 140.0},
+        "thresholds_db":     {"low": _SNR_LOW, "high": _SNR_HIGH},
         "stage_a_note": (
             "Generated inline by 07_preprocess_study.py batch script. "
             "Stage A documentation only: channels listed as exclusion candidates "
@@ -545,6 +552,11 @@ def save_provenance_log(
     # Sort PPF dict for serialisation
     ppf_serialisable = {str(k): v for k, v in ppf_dict.items()}
 
+    b3_params = b_params.get("motion_detection", {})
+    bl_params = b_params.get("beer_lambert", {})
+    scr_params = b_params.get("short_channel_regression", {})
+    snr_params = config.get("stage_a", {}).get("snr", {})
+
     provenance = {
         "study_name":         study_folder,
         "dataset_key":        dataset_name,
@@ -559,8 +571,8 @@ def save_provenance_log(
         "failed_subjects":    failed,
         "parameters": {
             "B1_signal_amplitude_exclusion": {
-                "low_db":  80.0,
-                "high_db": 140.0,
+                "low_db":  float(snr_params.get("threshold_low",  80.0)),
+                "high_db": float(snr_params.get("threshold_high", 140.0)),
             },
             "B2_bandpass_filter": {
                 "l_freq":  b_params.get("filter", {}).get("l_freq", 0.01),
@@ -568,32 +580,30 @@ def save_provenance_log(
                 "method":  b_params.get("filter", {}).get("method", "iir"),
             },
             "B3_motion_detection": {
-                "AMPthresh":             5.0,
-                "STDEVthresh_multiplier": 20,
-                "use_amp_only":          False,
-                "note": (
-                    "Dual criterion applied to filtered OD. "
-                    "use_amp_only=False retains the STDEV criterion. "
-                    "See PROGRESS.md Section 3.3 for rationale."
-                ),
+                "AMPthresh":              float(b3_params.get("AMPthresh", 5.0)),
+                "STDEVthresh_multiplier": float(b3_params.get("tStdev", 20.0)),
+                "tMotion":                float(b3_params.get("tMotion", 0.5)),
+                "t_mask":                 float(b3_params.get("t_mask", 0.5)),
+                "use_amp_only":           bool(b3_params.get("use_amp_only", False)),
             },
             "B4_rPCA": {
-                "n_components":        n_components,
+                "n_components":         n_components,
                 "min_channels_flagged": min_channels_flagged,
-                "note": (
-                    f"Tuned parameters: n_comp={n_components} (99.2% variance), "
-                    f"min_ch={min_channels_flagged} (34.5% mask). "
-                    "See PROGRESS.md Section 3.4.5 for tuning sweep results."
-                ),
             },
             "B5_beer_lambert": {
                 "ppf_values":  ppf_serialisable,
                 "system":      system,
-                "hb_range_um": {"min": -100, "max": 100},
+                "hb_range_um": {
+                    "min": float(bl_params.get("hb_range_min", -100)),
+                    "max": float(bl_params.get("hb_range_max",  100)),
+                },
             },
             "B6_short_channel_regression": {
-                "method":                "OLS",
-                "short_sep_threshold_mm": SHORT_SEP_THRESHOLD_MM,
+                "method":                scr_params.get("method", "gaussian_basis_OLS"),
+                "short_sep_threshold_mm": float(scr_params.get("short_separation_threshold", 15.0)),
+                "n_gaussians":           int(scr_params.get("n_gaussians", 3)),
+                "gaussian_std_s":        float(scr_params.get("gaussian_std_s", 1.0)),
+                "gaussian_spacing_s":    float(scr_params.get("gaussian_spacing_s", 1.5)),
                 "selection_criterion":   "max |Pearson r(long, short)|",
             },
         },
@@ -786,14 +796,14 @@ if __name__ == "__main__":
         "--n_components",
         type=float,
         default=DEFAULT_N_COMPONENTS,
-        help=f"rPCA variance threshold (default {DEFAULT_N_COMPONENTS})",
+        help=f"rPCA variance threshold (default {DEFAULT_N_COMPONENTS} from config.yaml stage_b.rpca.n_components)",
     )
     #Ex: python code/stage_b_preprocessing/07_preprocess_study.py --min_channels 10
     parser.add_argument(
         "--min_channels",
         type=int,
         default=DEFAULT_MIN_CHANNELS,
-        help=f"rPCA min channels flagged in union mask to be considered for PCA(default {DEFAULT_MIN_CHANNELS})",
+        help=f"rPCA min channels flagged in union mask (default {DEFAULT_MIN_CHANNELS} from config.yaml stage_b.rpca.min_channels_flagged)",
     )
     #Ex: python code/stage_b_preprocessing/07_preprocess_study.py --subjects A1 R10
     parser.add_argument(

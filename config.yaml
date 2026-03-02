@@ -10,6 +10,11 @@ datasets:
   expert_novice:
     name: "Expert-Novice"
     system: "TechEn_CW6"
+    bids_task: "ExpNovPatternCutting"   # BIDS task label for output filenames
+    output_folder: "expert-novice"      # Stage B processed data subfolder
+    groups:
+      Expert: ["A1", "A2", "R7", "R8", "R9", "R10", "R11", "R12"]
+      Novice: ["R1", "R2", "R3", "R4", "R5", "R6"]
     sfreq: 25.0  # Hz (verified from actual data - 25 Hz, not 20 Hz as in PRD)
     wavelengths: [690, 830]  # nm
     n_long_channels: 25
@@ -25,6 +30,8 @@ datasets:
   learning_curve:
     name: "Learning-Curve"
     system: "TechEn_CW6"
+    bids_task: "LearningCurve"
+    output_folder: "learning-curve"
     sfreq: 20  # Hz
     wavelengths: [690, 830]  # nm
     n_long_channels: 25
@@ -40,11 +47,15 @@ datasets:
   short_term_tes:
     name: "Short-Term-tES"
     system: "NIRx_NIRScout"
+    bids_task: "ShortTermtES"
+    output_folder: "short-term-tES"
     sfreq: 7.8125  # Hz
     wavelengths: [760, 850]  # nm
     n_long_channels: 28
     n_short_channels: 8
-    ppf: "default"  # Use mne-nirs default values for NIRx
+    ppf:  # Placeholder — Section 3.9 will validate NIRx-specific PPF values
+      760: 6.0
+      850: 6.0
     coverage: ["PFC", "M1", "SMA"]
     n_subjects: 12
     subjects: ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"]
@@ -53,11 +64,15 @@ datasets:
   long_term_tes:
     name: "Long-Term-tES"
     system: "NIRx_NIRScout"
+    bids_task: "LongTermtES"
+    output_folder: "long-term-tES"
     sfreq: 7.8125  # Hz
     wavelengths: [760, 850]  # nm
     n_long_channels: 28
     n_short_channels: 8
-    ppf: "default"  # Use mne-nirs default values for NIRx
+    ppf:  # Placeholder — Section 3.9 will validate NIRx-specific PPF values
+      760: 6.0
+      850: 6.0
     coverage: ["PFC", "M1", "SMA"]
     n_subjects: 21
     groups:
@@ -111,21 +126,24 @@ stage_b:
     
   # Step B2: Bandpass Filtering
   filter:
-    l_freq: 0.01  # Hz - Low cutoff (remove slow drift)
+    l_freq: 0.001  # Hz - Low cutoff (remove slow drift)
     h_freq: 0.5   # Hz - High cutoff (remove high-frequency noise)
     method: "iir"  # IIR filter method
     
   # Step B3: Motion Artifact Detection (on OD)
   motion_detection:
-    # Reuse Stage A motion parameters
-    tMotion: 0.5
-    tStdev: 20
+    tMotion: 0.5        # Detection window width in seconds (Homer3 default)
+    tStdev: 20          # Derivative-std multiplier for dual criterion (Homer3 default)
+    AMPthresh: 5.0      # Absolute OD-change threshold (Homer3 default, OD units)
+    t_mask: 0.5         # Temporal buffer around detected events (seconds)
+    use_amp_only: false # false = Homer3 dual criterion; true = amplitude only
     
   # Step B4: Recursive PCA (rPCA) Motion Correction
   rpca:
-    n_components: 0.97  # Retain 97% of variance
-    window_size: 50  # Samples per window (adjust based on sampling rate)
-    max_iterations: 10  # Maximum number of recursive iterations
+    n_components: 0.99      # Variance threshold — tuning-optimal (Section 3.4.5)
+    min_channels_flagged: 10  # Vote threshold for motion mask — tuning-optimal (Section 3.4.5)
+    window_size: 50           # Samples per window (informational; not used in current implementation)
+    max_iterations: 10        # Max recursive iterations (informational; not used in current implementation)
     
   # Step B5: Modified Beer-Lambert Law
   beer_lambert:
