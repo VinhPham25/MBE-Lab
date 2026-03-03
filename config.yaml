@@ -126,7 +126,7 @@ stage_b:
     
   # Step B2: Bandpass Filtering
   filter:
-    l_freq: 0.001  # Hz - Low cutoff (remove slow drift)
+    l_freq: 0.001 # Hz - Low cutoff (remove slow drift)
     h_freq: 0.5   # Hz - High cutoff (remove high-frequency noise)
     method: "iir"  # IIR filter method
     
@@ -140,8 +140,8 @@ stage_b:
     
   # Step B4: Recursive PCA (rPCA) Motion Correction
   rpca:
-    n_components: 0.99      # Variance threshold — tuning-optimal (Section 3.4.5)
-    min_channels_flagged: 10  # Vote threshold for motion mask — tuning-optimal (Section 3.4.5)
+    n_components: 0.97      # Variance threshold — tuning-optimal (Section 3.4.5)
+    min_channels_flagged: 5  # Vote threshold for motion mask — tuning-optimal (Section 3.4.5)
     window_size: 50           # Samples per window (informational; not used in current implementation)
     max_iterations: 10        # Max recursive iterations (informational; not used in current implementation)
     
