@@ -84,7 +84,7 @@ fprintf('OD conversion complete. Range: [%.3f, %.3f]\n', ...
 
 fprintf('\n=== STEP 3: Bandpass Filter ===\n');
 
-hpf = 0.01;  % High-pass cutoff (Hz)
+hpf = 0.001;  % High-pass cutoff (Hz)
 lpf = 0.50;  % Low-pass cutoff (Hz)
 
 dod_filt = hmrR_BandpassFilt(dod, hpf, lpf);
