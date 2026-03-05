@@ -141,11 +141,16 @@ stage_b:
     use_amp_only: false # false = Homer3 dual criterion; true = amplitude only
     
   # Step B4: Recursive PCA (rPCA) Motion Correction
+  # Homer3 reference: hmrR_MotionCorrectPCArecurse.m + hmrR_MotionCorrectPCA.m
+  # Audit fixes (reproduced_matlab_comparison.md §B4):
+  #   4a — iterative: re-detect after each PCA pass, up to max_iterations
+  #   4b — full-signal: motion subspace fitted on flagged segments, removed from ALL time points
+  #   4c — OR-union mask: any channel flagged → that time point enters the mask (min_channels_flagged=1)
+  #   4d — nSV=0.97 (Yucel et al. Homer3 default)
   rpca:
-    n_components: 0.97      # Variance threshold — tuning-optimal (Section 3.4.5)
-    min_channels_flagged: 5  # Vote threshold for motion mask — tuning-optimal (Section 3.4.5)
-    window_size: 50           # Samples per window (informational; not used in current implementation)
-    max_iterations: 10        # Max recursive iterations (informational; not used in current implementation)
+    n_components: 0.97       # nSV: variance fraction to remove (Homer3/Yucel et al. default: 0.97)
+    max_iterations: 5        # Homer3 default maxIter: 5 (Yucel et al.)
+    min_channels_flagged: 1  # 1 = OR-union (Homer3 hmrR_MotionArtifact parity); >1 = vote threshold
     
   # Step B5: Modified Beer-Lambert Law
   beer_lambert:

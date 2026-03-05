@@ -1,9 +1,9 @@
 # PROGRESS.md - ASTaUND Phase 1 Implementation
 
-**Last Updated:** February 26, 2026  
-**Current Week:** Week 7-8 (Stage C Audit In Progress)  
-**Current Stage:** Audit Issues 1, 2, 6 Complete — Gaussian-basis OLS implemented, all 14 subjects reprocessed  
-**Next Milestone:** Audit Issue 3 — CNR no-pruning branch
+**Last Updated:** March 5, 2026  
+**Current Week:** Week 7-8 (Stage B Audit In Progress)  
+**Current Stage:** Audit Issues 1, 2, 6 Complete; B4 rPCA Homer3-faithful rewrite complete — needs re-run on all 14 subjects  
+**Next Milestone:** Re-run 07_preprocess_study.py with Homer3-faithful B4; then Audit Issue 3 — CNR no-pruning branch
 
 ---
 
@@ -11,12 +11,13 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation (Audit Track)
-- **Active Stage:** Audit Issues 1, 2, 6 ✅ → Next: Audit Issue 3
-- **Completion:** 88%+ (81 original tasks + Issues 1, 2, 6 audit tasks complete)
-- **Blockers:** None
-- **Latest Achievement:** Audit Issue 2 complete — Gaussian-basis OLS implemented; `06_ols_regression.py` fully rewritten; all 14 subjects reprocessed; Stage C HRF outputs regenerated. Expert > Novice M1 contrast now in correct direction; M1 Expert HbO amplitude +36% improvement; 19/28 physiology checks pass. See AUDIT_PROGRESS.md §2.
+- **Active Stage:** B4 rPCA audit fix complete ✅ → Re-run batch pipeline → Audit Issue 3
+- **Completion:** 88%+ (81 original tasks + Issues 1, 2, 6 audit tasks complete; B4 rewrite complete)
+- **Blockers:** None — needs re-run of `07_preprocess_study.py` to regenerate all 14 subjects with Homer3-faithful rPCA
+- **Latest Achievement:** B4 rPCA fully rewritten to match Homer3 `hmrR_MotionCorrectPCArecurse`: iterative correction (up to 5 passes), full-signal projection removal (not flagged-only), OR-union mask, nSV=0.97. Config + all downstream fallback defaults updated. Tuning sweep disabled in batch runs.
 
 ### Recent Changes
+- [2026-03-05] ✅ **B4 rPCA Homer3-faithful rewrite** — `04_rPCA_motion_correct.py` fully rewritten. Four audit fixes: (4a) iterative up to maxIter=5 with motion re-detection between passes; (4b) motion subspace fitted on flagged segments, subtracted from full signal via `data -= V_k @ V_k.T @ data`; (4c) OR-union mask (any channel flagged → global flag, Homer3 `hmrR_MotionArtifact` parity); (4d) nSV=0.97. `run_tuning=False` added to skip 20-pass diagnostic sweep during batch. Config: `n_components: 0.97`, `min_channels_flagged: 1`, `max_iterations: 5`. Fallback defaults updated in `05_mbll.py`, `06_ols_regression.py`, `07_preprocess_study.py`. All 14 subjects need re-processing.
 - [2026-02-26] ✅ **Audit Issue 2 complete** — Gaussian-basis OLS regression implemented in `06_ols_regression.py`. Key changes: `build_gaussian_basis_matrix()` creates K Gaussian-convolved regressors from short channel signal; `apply_ols_regression()` uses `lstsq` to solve K-dimensional OLS instead of scalar β; parameters: 3 Gaussians, σ=1.0 s, spacing=1.5 s; all 14 subjects reprocessed; Stage C HRF outputs regenerated; Expert > Novice M1 group contrast now correct; M1 Expert HbO +0.151→+0.206 μM; see AUDIT_PROGRESS.md §2.
 - [2026-02-25] ✅ **Audit Issue 6 complete** — Unit audit: MNE outputs mol/L → μM; paper reports μM*mm (Homer3 convention); empirical ratio ≈ 1.0–1.5× (no conversion needed). Added `audit_mbll_units()` + unit constants to `05_mbll.py`; updated y-axis labels to "μM [paper: μM*mm]"; corrected config `expected_hbo_amplitude` from [0.35, 1] → [0.01, 0.50] μM.
 - [2026-02-25] ✅ **Audit Issue 1 complete** (tasks 1.1–1.5) — Added `build_region_map_5()` (5-region: Left Lat PFC/Central PFC/Right Lat PFC/Left Medial M1/SMA) to `01_hrf_extraction.py`; changed default tmax from 30 → 100 s; added stale-cache invalidation in `02_group_hrf_analysis.py`; added `generate_hrf_plots_5region()` (Figure 3c 2-row mosaic layout) to `03_hrf_visualization.py`; all 14 subjects re-extracted; 4 plots saved; morphological mismatch documented in `AUDIT_PROGRESS.md §1.5`.
@@ -263,19 +264,20 @@ Two options were considered if the threshold was too low, and too many motion ar
 
 However, both of these options require finding a new value for STDEVthresh or AMPthresh that captures the motion correctly, which is arbitrary. Note, only using AMPthresh = 5.0 resulted in no motion artifacts being found, meaning Option 2 could have undershot the detection of motion artifacts. Therefore, in the detect_motion_artifact() function, there exists a parameter labeled use_amp_only: bool = True, which can be toggled to determine if the motion detection function utilizes the original threshold or the amplitude specific one. Additionally, for the full pipeline function run_motion_detect(), USE_AMP_ONLY: bool = False is a boolean that can be toggled to adjust the time-series and .csv outputs. 
 
-#### 3.4 Recursive PCA Motion Correction (Step B4)
-- [x] **3.4.1** (2026-02-20) Implement rPCA algorithm: global PCA on union motion mask (dual criterion, use_amp_only=False), remove high-variance components (21 PCs, 97.2% variance = motion subspace), keep low-variance neural residual (2.8%); n_components=0.97; A1: union mask 99.9% (inevitable with 60 ch each flagging ~15% → (1−0.15)^60 ≈ 0.01% chance all-clean); corrected OD saved to `outputs/stage_b_processed/rPCA_correction/A1/`
+#### 3.4 Recursive PCA Motion Correction (Step B4) ✅ REVISED (2026-03-05)
+- [x] **3.4.1** (2026-02-20) Initial implementation: single-pass PCA on union motion mask; corrected only flagged samples; n_components=0.97; A1: 21 PCs, 97.2% variance removed, 30.3% dual-criterion MR reduction.
+- [x] **3.4.1 REVISED** (2026-03-05) `04_rPCA_motion_correct.py` fully rewritten to match Homer3 `hmrR_MotionCorrectPCArecurse` + `hmrR_MotionCorrectPCA`. Four audit discrepancies corrected (see `docs/reproduced_matlab_comparison.md §B4`):
+  - **4a — Iterative:** now loops up to `max_iterations=5` (Homer3 default). After each PCA pass, `detect_motion_artifacts()` re-runs on the corrected signal; the loop only continues if motion is still present. Previously single-pass.
+  - **4b — Full-signal projection removal:** PCA is fitted on motion-flagged segments to identify the motion subspace (`C = X'X`, SVD eigenvectors), but the projection is then subtracted from **all** time points (`data -= V_k @ V_k.T @ data`). Previously only flagged samples were replaced with their PCA residuals; global correlated noise in unflagged regions was never removed.
+  - **4c — OR-union mask:** `min_channels_flagged=1` (Homer3 `hmrR_MotionArtifact` parity): any good channel flagged at time t → t enters the mask. Previously used a vote threshold (≥10 channels) which was far more conservative. Config updated: `min_channels_flagged: 1`.
+  - **4d — nSV=0.97:** Homer3/Yucel et al. default confirmed. Config corrected from 0.99 → 0.97.
+  - New private helpers: `_build_motion_mask()`, `_apply_pca_single_pass()`, `_impute_nan()`.
+  - `run_tuning=False` parameter added to `run_rpca_correction()`: tuning sweep is now skipped during batch processing (was running 20 extra rPCA passes per subject with no effect on the correction output).
+- [x] **3.4.2** (2026-02-20) Before/after visualization preserved; updated title to show iterations and Homer3-faithful label.
+- [x] **3.4.3** (2026-02-20) Post-correction motion verification (re-run dual + amplitude-only criterion on corrected OD) preserved.
+- [x] **3.4.4** (2026-02-20) Effectiveness documentation (motion comparison CSV + effectiveness JSON) preserved.
 
-Note, the union mask covers almost 100% of the recording because each channel independently flags samples, so it's extremely likely that the mask will cover the entire time signal. This means rPCA is applied globally rather than locally on only the "bad" signals. Some suggestions for improvement that should be considered:
-1) Improving the motion detection algorithm. For subject A1, 17.4% of samples are detected as noise. If we can clarify the criteria/treshold for defining motion, this percentage could decrease and thus decrease the coverage of the union mask.
-2) Modify the OR mask with a summation threshold. Only include a time point as having motion if > X channels simulatenously flag this motion.
-3) Apply grouped union (masks for anatomical clusters / groups of channels (Ex: frontal channels, motor chanells, etc.)). This is because noise in the front region might not affect the channels in the back.
-
-- [x] **3.4.2** (2026-02-20) Before/after comparison visualization: 4 channels (2 highest-motion, 2 lowest-motion), 3-panel layout (Before | After | Removed), first 300 s, red shading for union motion mask, per-channel variance-removed annotation; saved `A1_rpca_before_after.png`
-- [x] **3.4.3** (2026-02-20) Re-ran Homer3 dual criterion on rPCA-corrected OD: mean MR 15.6%→10.9% (30.3% relative reduction); amplitude-only 0.0% (no large OD spikes remain); 34/60 channels improved, 26/60 worse (relative STDEVthresh still fires on low-variance residual — expected behavior)
-- [x] **3.4.4** (2026-02-20) A1 effectiveness: dual reduction 4.7 pp absolute (30.3% relative); amplitude criterion fully cleared; confirmed rPCA removes dominant motion subspace leaving physiological residual; saved `A1_rpca_motion_reduction.png`, `A1_rpca_motion_comparison.csv`, `A1_rpca_effectiveness.json`
-
-#### Motion Reduction Performance (Default Configuration)
+#### Motion Reduction Performance (Original single-pass, pre-audit — for reference)
 | Metric | Before rPCA | After rPCA |
 | :--- | :--- | :--- |
 | **Mean motion ratio (dual criterion)** | 15.6% | 10.9% |
@@ -284,28 +286,32 @@ Note, the union mask covers almost 100% of the recording because each channel in
 | **Channels improved / total** | — | **34/60** |
 | **Channels worse** | — | 26/60 |
 
-The amplitude crtierion indicates large-motion artifacts were removed with 30.3% relative reduction in dual-criterion (STDEV thresh and ampltidue) flagging overall. 26 channels worsened because STDEVthresh is relative based on the equation max_diff > std_diff x 20. After rPCA, the signal's derivative std decreases significantly because most noise is removed. The smaller mc_thresh makes the criterion more sensitive and flags normal physiological noise as motion. This relates to the same sensitivity problem documented in Section 3.3 but is now applied to corrected data. This metric has been noted and will be revisited.
+⚠ These metrics were produced by the original (pre-audit) implementation and will change after re-running with the Homer3-faithful algorithm. The 26 channels that worsened reflect the relative STDEVthresh sensitivity problem (documented §3.3): after rPCA, derivative std shrinks, making the threshold over-sensitive to normal physiology.
 
-- [x] **3.4.5** (2026-02-20) Parameter tuning sweep: grid over n_components=[0.90,0.95,0.97,0.99] × min_channels_flagged=[1,3,5,10,15] (20 configs total); key finding: vote-threshold mask (min_ch>1) dramatically outperforms OR-union — at min_ch=10 (34.5% mask), MR drops from 15.6% to 0.77% (95.1% reduction) with n_comp=0.99; amplitude-only=0.0% for all configs; optimal = n_comp=0.99, min_ch=10; saved `A1_rpca_tuning_results.csv`, `A1_rpca_tuning_heatmap.png`
+- [x] **3.4.5** (2026-02-20) Parameter tuning sweep: grid over n_components=[0.90,0.95,0.97,0.99] × min_channels_flagged=[1,3,5,10,15] (20 configs); saved `A1_rpca_tuning_results.csv`, `A1_rpca_tuning_heatmap.png`. **Note:** these results were produced under the old single-pass, flagged-samples-only algorithm. They informed the choice of n_comp=0.99, min_ch=10 as the empirical optimum, but that optimum is no longer the operating config — the Homer3-faithful defaults (n_comp=0.97, min_ch=1, max_iter=5) are now used per the audit. The tuning sweep is available on demand (`run_tuning=True`) but is disabled during batch runs.
 
-#### Parameter Sensitivity Analysis
-| n_comp | min_ch (Majority) | Mask % | PCs | Var rem | MR_dual | MR_amp | Reduction | Notes |
+#### Parameter Sensitivity Analysis (pre-audit, single-pass algorithm — historical)
+| n_comp | min_ch | Mask % | PCs | Var rem | MR_dual | MR_amp | Reduction | Notes |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 0.90 | 1 | 99.9% | 15 | 90.5% | 13.0% | 0.0% | 16.7% | |
 | 0.90 | 10 | 34.5% | 14 | 90.2% | 1.84% | 0.0% | 88.2% | |
 | 0.95 | 10 | 34.5% | 18 | 95.2% | 1.47% | 0.0% | 90.6% | |
-| **0.97** | **1** | **99.9%** | **21** | **97.2%** | **10.9%** | **0.0%** | **30.3%** | **Default (Baseline)** |
+| **0.97** | **1** | **99.9%** | **21** | **97.2%** | **10.9%** | **0.0%** | **30.3%** | Homer3 default (current) |
 | 0.97 | 10 | 34.5% | 21 | 97.3% | 1.25% | 0.0% | 92.0% | |
-| **0.99** | **10** | **34.5%** | **26** | **99.2%** | **0.77%** | **0.0%** | **95.1%** | **Optimal Configuration** |
+| 0.99 | 10 | 34.5% | 26 | 99.2% | 0.77% | 0.0% | 95.1% | Previous "optimal" |
 | 0.99 | 1 | 99.9% | 25 | 99.0% | 9.03% | 0.0% | 42.2% | |
 
-Note: when using amplitude-only, post-rPCA MR = 0.0%
-
-Optimal Dual Threshold Parameters
-n_components         = 0.99   (26 PCs removed, 99.2% variance) (increased from 0.97)
-min_channels_flagged = 10     (34.5% mask — only correct where ≥10/60 channels agree) (increased from 1)
-Post-correction MR   = 0.77%  (dual criterion)
-Reduction            = 95.1%  (vs 30.3% with default n=0.97, min_ch=1)
+**B4 Audit Fix Summary (2026-03-05)**
+```
+Algorithm change    : single-pass → iterative (up to maxIter=5, Homer3 default)
+Correction scope    : flagged samples only → full signal (all time points)
+Mask construction   : vote threshold (≥min_ch) → OR-union (any channel = global flag)
+nSV                 : 0.99 → 0.97  (Homer3/Yucel et al. default)
+Tuning in batch     : ran 20×/subject (wasted) → disabled; on-demand via run_tuning=True
+Config changes      : n_components: 0.97 | min_channels_flagged: 1 | max_iterations: 5
+Files changed       : 04_rPCA_motion_correct.py (rewrite), config.yaml, 05_mbll.py,
+                      06_ols_regression.py, 07_preprocess_study.py (fallback defaults)
+```
 
 #### 3.5 Modified Beer-Lambert Law (Step B5) ✅ COMPLETE
 - [x] **3.5.1** (2026-02-20) Implemented `apply_beer_lambert()` using MNE `beer_lambert_law(raw, ppf=(6.4, 5.8))` — tuple PPF for wavelength-specific values (MNE ≥1.7 feature); 690 nm PPF=6.4, 830 nm PPF=5.8 (TechEn paper values); output: 66 haemo channels (33 HbO + 33 HbR), type mol/L

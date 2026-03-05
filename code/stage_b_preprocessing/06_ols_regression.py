@@ -1094,7 +1094,8 @@ def run_ols_regression(
     if n_components is None:
         n_components = float(rpca_cfg.get("n_components", 0.97))
     if min_channels_flagged is None:
-        min_channels_flagged = int(rpca_cfg.get("min_channels_flagged", 5))
+        # Homer3-faithful default: OR-union (min_channels_flagged=1)
+        min_channels_flagged = int(rpca_cfg.get("min_channels_flagged", 1))
 
     glm_params = get_glm_params(
         short_threshold_mm=short_threshold_mm,

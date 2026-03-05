@@ -102,9 +102,11 @@ _CONFIG = load_config()
 STUDY_META: dict = _build_study_meta(_CONFIG)
 
 # rPCA parameters — sourced from config.yaml stage_b.rpca
+# Homer3-faithful values (audit fix): nSV=0.97, OR-union mask (min_ch=1), maxIter=5
 _RPCA_CFG = _CONFIG.get("stage_b", {}).get("rpca", {})
-DEFAULT_N_COMPONENTS:   float = float(_RPCA_CFG.get("n_components", 0.99))
-DEFAULT_MIN_CHANNELS:   int   = int(_RPCA_CFG.get("min_channels_flagged", 10))
+DEFAULT_N_COMPONENTS:   float = float(_RPCA_CFG.get("n_components",         0.97))
+DEFAULT_MIN_CHANNELS:   int   = int(  _RPCA_CFG.get("min_channels_flagged", 1))
+DEFAULT_MAX_ITER:       int   = int(  _RPCA_CFG.get("max_iterations",       5))
 
 # Short-channel separation threshold — sourced from config.yaml stage_b.short_channel_regression
 _SCR_CFG = _CONFIG.get("stage_b", {}).get("short_channel_regression", {})
@@ -716,7 +718,8 @@ def run_preprocess_study(
     print(f"  Subjects:       {len(subjects)}")
     print(f"  PPF values:     {ppf_dict}")
     print(f"  rPCA params:    n_components={n_components}, "
-          f"min_channels_flagged={min_channels_flagged}")
+          f"min_channels_flagged={min_channels_flagged}, "
+          f"max_iterations={DEFAULT_MAX_ITER}  (Homer3-faithful)")
     print(f"  Output dir:     {study_dir}")
     print(f"  BIDS naming:    sub-{{id}}_task-{task_name}_desc-preprocessed_nirs_raw.fif")
     print("=" * 70 + "\n")
