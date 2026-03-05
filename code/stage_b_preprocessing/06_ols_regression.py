@@ -32,7 +32,6 @@ from typing import Any
 import mne
 import numpy as np
 import pandas as pd
-from scipy import stats
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils import get_output_path, load_config
@@ -66,6 +65,8 @@ _DOC_DEFAULTS = {
 
 
 class GlmParams:
+    """Container object for GLM parameter values used by Step B6."""
+
     def __init__(
         self,
         *,
@@ -78,6 +79,32 @@ class GlmParams:
         glm_solve_method: int,
         event_ids: list[int],
     ) -> None:
+        """
+        Build a GLM parameter bundle.
+
+        Parameters
+        ----------
+        trange : tuple[float, float]
+            HRF time window in seconds as `(t_pre, t_post)`.
+        gaussian_std_s : float
+            Gaussian basis function standard deviation in seconds.
+        gaussian_step_s : float
+            Spacing between consecutive Gaussian basis centers in seconds.
+        short_sep_threshold_mm : float
+            Distance threshold in millimeters for short-separation channels.
+        flag_nuisance_r_method : int
+            Short-channel selection mode: `0=nearest`, `1=max correlation`, `2=mean`.
+        drift_order : int
+            Polynomial drift order for nuisance drift regressors.
+        glm_solve_method : int
+            GLM solver code (currently OLS = 1).
+        event_ids : list[int]
+            Event IDs used as stimulus conditions.
+
+        Returns
+        -------
+        None
+        """
         self.trange = trange
         self.gaussian_std_s = gaussian_std_s
         self.gaussian_step_s = gaussian_step_s
@@ -89,11 +116,38 @@ class GlmParams:
 
     @property
     def n_basis(self) -> int:
+        """
+        Compute the number of Gaussian basis functions implied by settings.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        int
+            Number of basis functions used in the HRF model.
+        """
         span = self.trange[1] - self.trange[0]
         return int(math.floor(span / self.gaussian_step_s) - 1)
 
 
 def _safe_float(v: Any, default: float) -> float:
+    """
+    Safely cast a value to float with fallback.
+
+    Parameters
+    ----------
+    v : Any
+        Value to parse.
+    default : float
+        Fallback value when parsing fails.
+
+    Returns
+    -------
+    float
+        Parsed float, or `default` on failure.
+    """
     try:
         return float(v)
     except (TypeError, ValueError):
@@ -101,6 +155,21 @@ def _safe_float(v: Any, default: float) -> float:
 
 
 def _safe_int(v: Any, default: int) -> int:
+    """
+    Safely cast a value to int with fallback.
+
+    Parameters
+    ----------
+    v : Any
+        Value to parse.
+    default : int
+        Fallback value when parsing fails.
+
+    Returns
+    -------
+    int
+        Parsed int, or `default` on failure.
+    """
     try:
         return int(v)
     except (TypeError, ValueError):
@@ -108,6 +177,19 @@ def _safe_int(v: Any, default: int) -> int:
 
 
 def _resolve_event_ids_from_config(cfg: dict) -> list[int]:
+    """
+    Resolve condition event IDs from config with sensible fallbacks.
+
+    Parameters
+    ----------
+    cfg : dict
+        Parsed `config.yaml` dictionary.
+
+    Returns
+    -------
+    list[int]
+        Sorted event IDs for GLM stimulus onsets.
+    """
     # Preferred location (new GLM-specific key)
     scr_cfg = cfg.get("stage_b", {}).get("short_channel_regression", {})
     event_ids = scr_cfg.get("event_ids", None)
@@ -141,12 +223,21 @@ def get_glm_params(
     gaussian_step_s: float | None = None,
 ) -> GlmParams:
     """
-    Resolve GLM parameters from config.yaml each call.
+    Resolve B6 GLM parameters from overrides and `config.yaml`.
 
-    Priority order:
-      1) explicit function args
-      2) config.yaml keys
-      3) doc-grounded defaults
+    Parameters
+    ----------
+    short_threshold_mm : float | None
+        Optional override for short-separation threshold in mm.
+    gaussian_std_s : float | None
+        Optional override for Gaussian standard deviation in seconds.
+    gaussian_step_s : float | None
+        Optional override for Gaussian basis spacing in seconds.
+
+    Returns
+    -------
+    GlmParams
+        Validated GLM parameter bundle used by this module.
     """
     cfg = load_config()
     scr_cfg = cfg.get("stage_b", {}).get("short_channel_regression", {})
@@ -171,8 +262,7 @@ def get_glm_params(
         else _safe_float(scr_cfg.get("gaussian_std_s", _DOC_DEFAULTS["gaussian_std_s"]), _DOC_DEFAULTS["gaussian_std_s"])
     )
 
-    # Prefer GLM-specific key `gaussian_step_s`; fall back to legacy key if present.
-    step_from_cfg = scr_cfg.get("gaussian_step_s", scr_cfg.get("gaussian_spacing_s", _DOC_DEFAULTS["gaussian_step_s"]))
+    step_from_cfg = scr_cfg.get("gaussian_step_s", _DOC_DEFAULTS["gaussian_step_s"])
     step_s = float(gaussian_step_s) if gaussian_step_s is not None else _safe_float(step_from_cfg, _DOC_DEFAULTS["gaussian_step_s"])
 
     short_sep = (
@@ -216,6 +306,21 @@ def identify_channel_separation(
     raw_haemo: mne.io.BaseRaw,
     short_threshold_mm: float,
 ) -> tuple[list[int], list[int], np.ndarray]:
+    """
+    Classify channels as short- vs long-separation using optode distance.
+
+    Parameters
+    ----------
+    raw_haemo : mne.io.BaseRaw
+        Hemoglobin raw object containing probe geometry.
+    short_threshold_mm : float
+        Short-separation distance threshold in millimeters.
+
+    Returns
+    -------
+    tuple[list[int], list[int], np.ndarray]
+        `short_idx`, `long_idx`, and per-channel separation distances in mm.
+    """
     dists_mm = mne.preprocessing.nirs.source_detector_distances(raw_haemo.info) * 1000.0
     short_idx = [i for i, d in enumerate(dists_mm) if d < short_threshold_mm]
     long_idx = [i for i, d in enumerate(dists_mm) if d >= short_threshold_mm]
@@ -223,7 +328,19 @@ def identify_channel_separation(
 
 
 def _channel_midpoints(raw_haemo: mne.io.BaseRaw) -> np.ndarray:
-    """Use channel loc[:3] midpoint values already populated by MNE for NIRS channels."""
+    """
+    Extract channel midpoint coordinates from MNE channel `loc` fields.
+
+    Parameters
+    ----------
+    raw_haemo : mne.io.BaseRaw
+        Hemoglobin raw object with channel metadata.
+
+    Returns
+    -------
+    np.ndarray
+        Shape `(n_channels, 3)` array of XYZ midpoints.
+    """
     return np.array([ch["loc"][:3] for ch in raw_haemo.info["chs"]], dtype=float)
 
 
@@ -234,9 +351,24 @@ def _extract_condition_onsets(
     n_post: int,
 ) -> tuple[np.ndarray, list[int]]:
     """
-    Build onset matrix as in hmrS_GLM:
-      onset[sample + n_pre, cond] = 1
-    when full trange window fits in bounds.
+    Build condition onset matrix in Homer3 GLM convention.
+
+    Parameters
+    ----------
+    raw_haemo : mne.io.BaseRaw
+        Hemoglobin raw object containing annotations/events.
+    event_ids : list[int]
+        Event IDs to include as GLM conditions.
+    n_pre : int
+        Pre-window sample offset (can be negative).
+    n_post : int
+        Post-window sample offset.
+
+    Returns
+    -------
+    tuple[np.ndarray, list[int]]
+        `onset` matrix with shape `(n_times, n_conditions)` and per-condition
+        trial counts `n_trials`.
     """
     n_t = raw_haemo.n_times
     onset = np.zeros((n_t, len(event_ids)), dtype=float)
@@ -266,6 +398,26 @@ def build_gaussian_basis(
     gaussian_step_s: float,
     gaussian_std_s: float,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Construct Gaussian HRF basis functions over `trange`.
+
+    Parameters
+    ----------
+    sfreq : float
+        Sampling frequency in Hz.
+    trange : tuple[float, float]
+        HRF window `(t_pre, t_post)` in seconds.
+    gaussian_step_s : float
+        Basis center spacing in seconds.
+    gaussian_std_s : float
+        Basis standard deviation in seconds.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        `t_hrf` time vector (seconds) and basis matrix `tbasis` of shape
+        `(n_hrf_timepoints, n_basis)`.
+    """
     dt = 1.0 / sfreq
     n_pre = int(round(trange[0] / dt))
     n_post = int(round(trange[1] / dt))
@@ -291,7 +443,21 @@ def build_gaussian_basis(
 
 
 def build_hrf_design(onset: np.ndarray, tbasis: np.ndarray) -> np.ndarray:
-    """Equivalent to Homer3 dA construction for idxBasis=1."""
+    """
+    Build HRF design matrix by convolving condition onsets with each basis column.
+
+    Parameters
+    ----------
+    onset : np.ndarray
+        Binary onset matrix of shape `(n_times, n_conditions)`.
+    tbasis : np.ndarray
+        Gaussian basis matrix of shape `(n_hrf_timepoints, n_basis)`.
+
+    Returns
+    -------
+    np.ndarray
+        Design matrix `dA` of shape `(n_times, n_conditions * n_basis)`.
+    """
     n_t, n_cond = onset.shape
     n_basis = tbasis.shape[1]
     dA = np.zeros((n_t, n_cond * n_basis), dtype=float)
@@ -307,7 +473,21 @@ def build_hrf_design(onset: np.ndarray, tbasis: np.ndarray) -> np.ndarray:
 
 
 def build_drift_design(n_t: int, drift_order: int) -> np.ndarray:
-    """Drift polynomial with per-column scaling, matching hmrS_GLM intent."""
+    """
+    Construct polynomial drift regressors with column-wise scaling.
+
+    Parameters
+    ----------
+    n_t : int
+        Number of time points.
+    drift_order : int
+        Maximum polynomial order.
+
+    Returns
+    -------
+    np.ndarray
+        Drift design matrix of shape `(n_t, drift_order + 1)`.
+    """
     x = np.ones((n_t, drift_order + 1), dtype=float)
     t = np.arange(1, n_t + 1, dtype=float)
     for p in range(1, drift_order + 1):
@@ -317,6 +497,21 @@ def build_drift_design(n_t: int, drift_order: int) -> np.ndarray:
 
 
 def _corr(a: np.ndarray, b: np.ndarray) -> float:
+    """
+    Compute Pearson correlation robustly for 1D arrays.
+
+    Parameters
+    ----------
+    a : np.ndarray
+        First signal.
+    b : np.ndarray
+        Second signal.
+
+    Returns
+    -------
+    float
+        Correlation coefficient, or `nan` for invalid/degenerate input.
+    """
     if a.size != b.size:
         return float("nan")
     if np.std(a, ddof=1) < 1e-15 or np.std(b, ddof=1) < 1e-15:
@@ -334,11 +529,28 @@ def select_short_regressor(
     midpoints: np.ndarray,
 ) -> tuple[np.ndarray | None, int | None, float]:
     """
-    Select short-separation nuisance regressor according Homer3 modes:
-      0: nearest short channel
-      1: short channel with greatest correlation
-      2: average of all short channels
-    Returns (regressor, selected_short_idx, corr_before)
+    Select short-channel nuisance regressor using Homer3 method codes.
+
+    Parameters
+    ----------
+    raw_haemo : mne.io.BaseRaw
+        Hemoglobin raw object.
+    y : np.ndarray
+        Long-channel target signal.
+    long_idx : int
+        Index of the current long channel.
+    short_candidates : list[int]
+        Candidate short-channel indices for this chromophore.
+    method : int
+        Selection method (`0` nearest, `1` max-correlation, `2` mean-short).
+    midpoints : np.ndarray
+        Channel midpoint coordinates, shape `(n_channels, 3)`.
+
+    Returns
+    -------
+    tuple[np.ndarray | None, int | None, float]
+        Selected nuisance regressor vector, selected short index
+        (`-1` for mean-short), and pre-regression correlation.
     """
     if len(short_candidates) == 0:
         return None, None, float("nan")
@@ -380,8 +592,19 @@ def _solve_ols(
     y_inc: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Return (beta, pinvA_like) where pinvA_like maps y_inc -> beta.
-    Prefer ATA solve (Homer3-style) and fall back to pseudoinverse.
+    Solve OLS coefficients for one channel on included samples.
+
+    Parameters
+    ----------
+    At_inc : np.ndarray
+        Included-sample design matrix.
+    y_inc : np.ndarray
+        Included-sample response vector.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        `beta` coefficients and pseudo-inverse-like operator mapping `y_inc -> beta`.
     """
     ATA = At_inc.T @ At_inc
     try:
@@ -399,11 +622,21 @@ def apply_glm_regression(
     verbose: bool = True,
 ) -> tuple[mne.io.BaseRaw, pd.DataFrame, dict[str, mne.Evoked], dict]:
     """
-    Apply unified GLM deconvolution channel-wise and return:
-      - nuisance-reduced continuous raw (ynew-like)
-      - per-channel GLM summary dataframe
-      - per-condition GLM HRF Evoked objects
-      - metadata dict
+    Apply Homer3-style unified GLM deconvolution to all long channels.
+
+    Parameters
+    ----------
+    raw_haemo : mne.io.BaseRaw
+        Stage B5 hemoglobin signal (`hbo`/`hbr`) for one subject.
+    glm_params : GlmParams
+        GLM parameter bundle (basis, drift, nuisance, event IDs).
+    verbose : bool
+        If True, print detailed progress and summary logs.
+
+    Returns
+    -------
+    tuple[mne.io.BaseRaw, pd.DataFrame, dict[str, mne.Evoked], dict]
+        `raw_corrected`, `reg_results`, `evoked_by_cond`, and `glm_meta`.
     """
     sfreq = float(raw_haemo.info["sfreq"])
     ch_names = raw_haemo.ch_names
@@ -600,7 +833,23 @@ def calculate_correlation_reduction(
     raw_after: mne.io.BaseRaw,
     reg_results: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Backward-compatible summary for Stage B batch metrics."""
+    """
+    Compute before/after correlation summaries used by Stage B reporting.
+
+    Parameters
+    ----------
+    raw_before : mne.io.BaseRaw
+        Input hemoglobin signal before B6 GLM correction.
+    raw_after : mne.io.BaseRaw
+        Hemoglobin signal after B6 GLM correction.
+    reg_results : pd.DataFrame
+        Per-channel regression results from `apply_glm_regression`.
+
+    Returns
+    -------
+    pd.DataFrame
+        Per-channel correlation comparison table.
+    """
     ch_names = raw_before.ch_names
     ch_types = raw_before.get_channel_types()
     d0 = raw_before.get_data()
@@ -653,6 +902,19 @@ def calculate_correlation_reduction(
 
 
 def _hrf_dataframe_from_evoked(evoked: mne.Evoked) -> pd.DataFrame:
+    """
+    Convert an MNE Evoked HRF object to a CSV-ready dataframe in micro-molar units.
+
+    Parameters
+    ----------
+    evoked : mne.Evoked
+        GLM HRF evoked object.
+
+    Returns
+    -------
+    pd.DataFrame
+        Dataframe with `time_s` and channel columns in μM.
+    """
     df = pd.DataFrame((evoked.data * 1e6).T, columns=evoked.ch_names)  # mol/L -> uM
     df.insert(0, "time_s", evoked.times)
     return df
@@ -669,6 +931,33 @@ def save_regression_data(
     *,
     verbose: bool = True,
 ) -> dict:
+    """
+    Save B6 outputs (continuous corrected signal, GLM HRFs, and summaries).
+
+    Parameters
+    ----------
+    raw_corrected : mne.io.BaseRaw
+        Continuous hemoglobin signal after B6 correction.
+    reg_results : pd.DataFrame
+        Per-channel GLM regression metrics.
+    corr_df : pd.DataFrame
+        Correlation before/after summary table.
+    evoked_by_cond : dict[str, mne.Evoked]
+        Per-condition GLM HRF evoked objects.
+    glm_meta : dict
+        Metadata describing GLM settings and channel counts.
+    subject_id : str
+        Subject identifier.
+    output_dir : Path
+        Directory where B6 artifacts are written.
+    verbose : bool
+        If True, print saved-file paths.
+
+    Returns
+    -------
+    dict
+        Dictionary of key saved paths for downstream orchestration.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     fif_path = output_dir / f"{subject_id}_ols_haemo_raw.fif"
@@ -764,22 +1053,40 @@ def run_ols_regression(
     n_components: float | None = None,
     min_channels_flagged: int | None = None,
     ppf_dict: dict | None = None,
-    n_gaussians: int | None = None,
     gaussian_std_s: float | None = None,
-    gaussian_spacing_s: float | None = None,
+    gaussian_step_s: float | None = None,
     verbose: bool = True,
 ) -> dict:
     """
-    Backward-compatible B6 entry point.
+    Run full Stage B6 GLM/OLS pipeline for one subject.
 
-    Notes
-    -----
-    - `n_gaussians` is retained for API compatibility but ignored in Homer3-style
-      GLM where n_basis is determined by trange and gaussian step.
-    - `gaussian_spacing_s` is mapped to GLM gaussian_step_s override.
+    Parameters
+    ----------
+    dataset_name : str
+        Dataset key from config (e.g., `expert_novice`).
+    subject_id : str
+        Subject ID to process.
+    short_threshold_mm : float | None
+        Optional override for short-separation threshold in mm.
+    n_components : float | None
+        Optional B4 rPCA variance threshold override.
+    min_channels_flagged : int | None
+        Optional B4 rPCA motion vote-threshold override.
+    ppf_dict : dict | None
+        Optional B5 PPF override map `{wavelength_nm: ppf}`.
+    gaussian_std_s : float | None
+        Optional GLM Gaussian basis std override (seconds).
+    gaussian_step_s : float | None
+        Optional GLM Gaussian basis spacing override (seconds).
+    verbose : bool
+        If True, print detailed execution logs.
+
+    Returns
+    -------
+    dict
+        Pipeline outputs including corrected raw, GLM HRF evoked, summaries,
+        and saved-path references.
     """
-    if n_gaussians is not None and verbose:
-        print("[B6] n_gaussians argument is ignored in GLM mode; n_basis is derived from trange/gaussian_step_s.")
 
     # Pull defaults from current config for upstream B4/B5 if not provided.
     cfg = load_config()
@@ -792,7 +1099,7 @@ def run_ols_regression(
     glm_params = get_glm_params(
         short_threshold_mm=short_threshold_mm,
         gaussian_std_s=gaussian_std_s,
-        gaussian_step_s=gaussian_spacing_s,
+        gaussian_step_s=gaussian_step_s,
     )
 
     print("\n" + "=" * 70)
@@ -833,11 +1140,6 @@ def run_ols_regression(
         verbose=verbose,
     )
 
-    # Backward-compatible figure slots (not generated in GLM mode)
-    fig_hbo = None
-    fig_hbr = None
-    fig_corr = None
-
     # Primary outputs for downstream code
     primary_key = sorted(evoked_by_cond.keys())[0]
     glm_primary_evoked = evoked_by_cond[primary_key]
@@ -871,9 +1173,6 @@ def run_ols_regression(
         "fif_path": saved["fif_path"],
         "glm_primary_evoked_path": saved["glm_primary_evoked_path"],
         "glm_primary_csv_path": saved["glm_primary_csv_path"],
-        "fig_hbo": fig_hbo,
-        "fig_hbr": fig_hbr,
-        "fig_corr": fig_corr,
     }
 
 

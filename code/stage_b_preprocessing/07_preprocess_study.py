@@ -584,8 +584,8 @@ def save_provenance_log(
                 "high_db": float(snr_params.get("threshold_high", 140.0)),
             },
             "B2_bandpass_filter": {
-                "l_freq":  b_params.get("filter", {}).get("l_freq", 0.01),
-                "h_freq":  b_params.get("filter", {}).get("h_freq", 0.5),
+                "l_freq":  b_params.get("filter", {}).get("hpf", 0.0),
+                "h_freq":  b_params.get("filter", {}).get("lpf", 0.5),
                 "method":  b_params.get("filter", {}).get("method", "iir"),
             },
             "B3_motion_detection": {
@@ -615,7 +615,7 @@ def save_provenance_log(
                     float(scr_params.get("trange", [config.get("stage_c", {}).get("epochs", {}).get("tmin", -25), config.get("stage_c", {}).get("epochs", {}).get("tmax", 100)])[1]),
                 ],
                 "gaussian_std_s": float(scr_params.get("gaussian_std_s", 1.0)),
-                "gaussian_step_s": float(scr_params.get("gaussian_step_s", scr_params.get("gaussian_spacing_s", 1.0))),
+                "gaussian_step_s": float(scr_params.get("gaussian_step_s", 1.0)),
                 "drift_order": int(scr_params.get("drift_order", 3)),
                 "flag_nuisance_r_method": int(scr_params.get("flag_nuisance_r_method", scr_params.get("flagNuisanceRMethod", 1))),
                 "glm_solve_method": int(scr_params.get("glm_solve_method", 1)),

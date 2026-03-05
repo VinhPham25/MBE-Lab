@@ -313,12 +313,12 @@ Reduction            = 95.1%  (vs 30.3% with default n=0.97, min_ch=1)
 - [x] **3.5.3** (2026-02-20) `plot_hbo_hbr_timeseries()`: 4 representative channels, HbO (red) vs HbR (blue), per-channel HbO/HbR Pearson correlation annotated; inverse relationship (negative corr) confirmed on most channels; saved `A1_hbo_hbr_timeseries.png`
 - [x] **3.5.4** (2026-02-20) End-to-end test on A1 via `run_mbll()`; full chain B1→B2→B3→B4→B5 runs cleanly; haemo .fif, range stats CSV, MBLL summary JSON all saved to `outputs/stage_b_processed/mbll/A1/`
 
-#### 3.6 Short-Channel Regression (Step B6)
-- [x] **3.6.1** (2026-02-21) Implement short-channel regression: β = Cov(L,S*)/Var(S*) for most-correlated short ch per long ch; A1: 24 HbO + 24 HbR long channels corrected; mean |r| 0.346→0.000 (100% reduction); HbO var removed=16.4%, HbR=14.0%; bad/flat short channels handled via std check
-- [x] **3.6.2** (2026-02-21) Verify channel counts: A1 has 9 short + 24 long per type (vs expected 8+25); discrepancy: S8_D9 at 10mm classified as short by 15mm threshold alongside dedicated D17–D24 (5–8mm); S8_D9 measures primarily scalp signal and is correctly treated as short-sep for regression
-- [x] **3.6.3** (2026-02-21) Create before/after regression comparison plots — generated A1_ols_before_after.png with 3-panel layout (Original | Cleaned | Removed Noise); visually confirmed reduction in 1Hz cardiac oscillations.
-- [x] **3.6.4** (2026-02-21) Calculate correlation reduction between long and short channels to verify effectiveness — mean $|r|$ (Long-Short) reduced from 0.3436 to 0.0000 (100% reduction); HbO/HbR mean $r = -0.4032$, a slight increase from previous $r = -0.4268$; saved A1_ols_correlation_reduction.png.
-- [x] **3.6.5** (2026-02-21) Test short-channel regression on subject A1 — verified full B1→B6 execution; saved A1_ols_haemo_raw.fif and summary JSON/CSV reports.
+#### 3.6 GLM/OLS HRF Deconvolution (Step B6) ✅ UPDATED
+- [x] **3.6.1** (2026-03-05) Reimplemented `06_ols_regression.py` with Homer3-style unified GLM/OLS (`hmrS_GLM` parity core): HRF modeled by Gaussian basis functions convolved with stimulus onsets; drift polynomial and short-separation nuisance regressor included in the same OLS solve per long channel. Short-channel Gaussian convolution method removed.
+- [x] **3.6.2** (2026-03-05) Parameterized GLM configuration from `config.yaml` (`stage_b.short_channel_regression`): `trange`, `gaussian_std_s`, `gaussian_step_s`, `flag_nuisance_r_method`, `drift_order`, `glm_solve_method`, `event_ids`, `short_separation_threshold`. Verified runtime picks up config changes on next execution.
+- [x] **3.6.3** (2026-03-05) Added direct GLM HRF outputs from B6 (primary + per-condition): `*_glm_hrf-ave.fif`, `*_glm_hrf_averages.csv`, condition-specific `*_glm_hrf_cond_*-ave.fif`; retained corrected continuous output `*_ols_haemo_raw.fif` for downstream compatibility.
+- [x] **3.6.4** (2026-03-05) Updated B6 summary/stat outputs to GLM-centric metrics (`glm_r`, design rank, basis count, condition/trial metadata) and persisted metadata in `*_ols_summary.json`; preserved correlation summary CSV used by Stage B batch reports.
+- [x] **3.6.5** (2026-03-05) Validated end-to-end B1→B6 on A1 with new GLM method; verified successful save of corrected continuous signal + GLM HRF files and successful integration with `07_preprocess_study.py` BIDS sidecar export (`sub-*_desc-glmhrf_nirs-ave.fif`).
 
 This is a manual check to be completed by the programmer
 #### 3.6+ Verify Stage B Output Format (Optional)
