@@ -124,11 +124,13 @@ stage_b:
   optical_density:
     flat_std_threshold: 1.0e-5  # OD std below this → flat/dead channel (flag flat_signal)
     
-  # Step B2: Bandpass Filtering
+  # Step B2: Bandpass Filtering (Homer3-equivalent: hmrR_BandpassFilt.m)
+  # Low-pass:  3rd-order Butterworth, zero-phase filtfilt (always applied)
+  # High-pass: 5th-order Butterworth, zero-phase filtfilt (skipped when hpf=0)
+  # Homer3/paper default: hpf=0.000 → no high-pass; pure LPF at lpf=0.500 Hz
   filter:
-    l_freq: 0.001 # Hz - Low cutoff (remove slow drift)
-    h_freq: 0.5   # Hz - High cutoff (remove high-frequency noise)
-    method: "iir"  # IIR filter method
+    hpf: 0.0   # Hz - High-pass cutoff. 0.0 = no high-pass (Homer3 default)
+    lpf: 0.5   # Hz - Low-pass cutoff (Homer3 default)
     
   # Step B3: Motion Artifact Detection (on OD)
   motion_detection:

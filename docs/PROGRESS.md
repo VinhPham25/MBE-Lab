@@ -235,11 +235,19 @@ elif system == "NIRx":
 
 Important Note: a mean OD_std of 0.259 is quite high. The expected range of std FNIRS is ideally ~0.02. This difference has been noted and could be revisited later. Currently, a threshold of 1e-5 is the minimum (if any std is less than 1e-5, it's classified as a disconnected channel). It could be beneficial to add an upper threshold as well to remove noisy channels with high std.
 
-#### 3.2 Bandpass Filtering (Step B2) ✅ COMPLETE
-- [x] **3.2.1** (2026-02-19) Implement bandpass filter application (0.01-0.5 Hz, IIR method) — `apply_bandpass_filter()` wraps `raw_od.filter()`; zero-phase IIR Butterworth; 60 channels filtered, 6 bad skipped
-- [x] **3.2.2** (2026-02-19) Created before/after filtering comparison visualisation — 4-channel time-series subplot saved as `A1_filter_comparison.png`
-- [x] **3.2.3** (2026-02-19) Verified filtering effectiveness with PSD plots — Welch PSD overlay (linear + log dB) saved as `A1_psd_comparison.png`; HF power ratio (>0.5 Hz) = 0.0075 ✓
-- [x] **3.2.4** (2026-02-19) Tested filtering on subject A1 — full pipeline runs end-to-end via `run_bandpass_filter()`; outputs in `outputs/stage_b_processed/bandpass_filter/A1/`
+#### 3.2 Bandpass Filtering (Step B2) ✅ COMPLETE (revised 2026-03-03)
+- [x] **3.2.1** (2026-02-19, revised 2026-03-03) Implement Homer3-equivalent filter — `apply_bandpass_filter()` now uses `scipy.signal.butter` + `zpk2sos` + `sosfiltfilt`, mirroring `hmrR_BandpassFilt.m` exactly:
+  - Low-pass: 3rd-order Butterworth, zero-phase (`sosfiltfilt` ↔ MATLAB `filtfilt`)
+  - High-pass: 5th-order Butterworth, zero-phase — **skipped when `hpf=0.0`** (Homer3 default)
+  - Effective passband: **0–0.5 Hz (pure LPF only)**, matching the paper's stated "0–0.50 Hz"
+  - Previous implementation applied a 0.001 Hz high-pass via MNE `.filter()` (wrong: Homer3 default is `hpf=0.000`; high-pass only fires if `hpf_norm > 0`)
+  - `config.yaml` `stage_b.filter` keys renamed from `l_freq`/`h_freq`/`method` to `hpf: 0.0` / `lpf: 0.5`
+- [x] **3.2.2** (2026-02-19) Created before/after filtering comparison visualisation — axis labels updated to display dynamic filter spec from `filter_info` dict
+- [x] **3.2.3** (2026-02-19) Verified filtering effectiveness with PSD plots — HPF shading/annotation now conditional on `hpf_applied`; LPF roll-off annotation at `lpf`
+- [x] **3.2.4** (2026-02-19) Tested filtering on subject A1 — pipeline runs end-to-end via `run_bandpass_filter()`; outputs in `outputs/stage_b_processed/bandpass_filter/A1/`
+
+**B2 Audit Fix (2026-03-03) — Discrepancy resolved:**
+The original Python filter applied a 0.001 Hz high-pass component that Homer3 never applies by default. `hmrR_BandpassFilt.m` only fires the high-pass branch when `hpf_norm > 0`; with the paper's `hpf=0.000`, the pipeline is a **pure 3rd-order 0.5 Hz low-pass**. The previous MNE-based approach also used an auto-determined filter order (~5th), whereas Homer3 hardcodes 3rd-order for LPF and 5th-order for HPF. Both differences are now corrected.
 
 #### 3.3 Motion Artifact Detection on OD (Step B3) ✅ COMPLETE
 - [x] **3.3.1** (2026-02-19) Adapted Homer3 motion detection for filtered OD — `detect_motion_artifacts()` with `_detect_motion_homer3_single()` + `_expand_mask_to_signal()`; Stage A key differences: input is filtered OD, output is per-sample boolean mask; `use_amp_only=True` parameter added to switch criterion for identifying motion artifacts
