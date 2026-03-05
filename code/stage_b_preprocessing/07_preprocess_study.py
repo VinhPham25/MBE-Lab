@@ -1,7 +1,7 @@
 """
 Stage B — Step B7: Full Study Batch Processing
 Purpose: Process all subjects in a study through the complete Stage B pipeline
-         (B1 OD → B2 bandpass → B3 motion detect → B4 rPCA → B5 MBLL → B6 OLS)
+         (B1 OD → B2 bandpass → B3 motion detect → B4 rPCA → B5 MBLL → B6 GLM/OLS)
          and produce BIDS-compliant .fif outputs plus a study-level summary.
 
 Task coverage:
@@ -254,6 +254,7 @@ def process_subject(
         "status":               "Fail",
         "notes":                "",
         "bids_fif_path":        None,
+        "bids_glm_hrf_path":    None,
     }
 
     try:
@@ -281,11 +282,19 @@ def process_subject(
         reg_results   = results["reg_results"]
         corr_df       = results["corr_df"]
 
-        # ---- 3. Save BIDS-compliant .fif to study directory ------------------
+        # ---- 3. Save BIDS-compliant continuous .fif to study directory -------
         bids_fname = f"sub-{subject_id}_task-{task_name}_desc-preprocessed_nirs_raw.fif"
         bids_path  = study_dir / bids_fname
         raw_corrected.save(str(bids_path), overwrite=True, verbose=False)
         metrics["bids_fif_path"] = str(bids_path)
+
+        # ---- 3b. Save BIDS-sidecar GLM HRF evoked -----------------------------
+        glm_evoked = results.get("glm_primary_evoked", None)
+        if glm_evoked is not None:
+            glm_fname = f"sub-{subject_id}_task-{task_name}_desc-glmhrf_nirs-ave.fif"
+            glm_path = study_dir / glm_fname
+            glm_evoked.save(str(glm_path), overwrite=True, verbose=False)
+            metrics["bids_glm_hrf_path"] = str(glm_path)
 
         # ---- 4. Post-rPCA motion ratio from saved effectiveness JSON ---------
         rpca_json_path = (
@@ -564,7 +573,7 @@ def save_provenance_log(
         "date_processed":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pipeline_version":   "Stage B v1.0",
         "pipeline_steps":     ["B1_OD", "B2_bandpass", "B3_motion_detect",
-                               "B4_rPCA", "B5_MBLL", "B6_OLS"],
+                               "B4_rPCA", "B5_MBLL", "B6_GLM_OLS"],
         "n_subjects_attempted": len(records),
         "n_subjects_passed":  n_pass,
         "n_subjects_failed":  n_fail,
@@ -598,13 +607,19 @@ def save_provenance_log(
                     "max": float(bl_params.get("hb_range_max",  100)),
                 },
             },
-            "B6_short_channel_regression": {
-                "method":                scr_params.get("method", "gaussian_basis_OLS"),
+            "B6_glm_ols": {
+                "method": "homer3_style_glm_ols",
                 "short_sep_threshold_mm": float(scr_params.get("short_separation_threshold", 15.0)),
-                "n_gaussians":           int(scr_params.get("n_gaussians", 3)),
-                "gaussian_std_s":        float(scr_params.get("gaussian_std_s", 1.0)),
-                "gaussian_spacing_s":    float(scr_params.get("gaussian_spacing_s", 1.5)),
-                "selection_criterion":   "max |Pearson r(long, short)|",
+                "trange_s": [
+                    float(scr_params.get("trange", [config.get("stage_c", {}).get("epochs", {}).get("tmin", -25), config.get("stage_c", {}).get("epochs", {}).get("tmax", 100)])[0]),
+                    float(scr_params.get("trange", [config.get("stage_c", {}).get("epochs", {}).get("tmin", -25), config.get("stage_c", {}).get("epochs", {}).get("tmax", 100)])[1]),
+                ],
+                "gaussian_std_s": float(scr_params.get("gaussian_std_s", 1.0)),
+                "gaussian_step_s": float(scr_params.get("gaussian_step_s", scr_params.get("gaussian_spacing_s", 1.0))),
+                "drift_order": int(scr_params.get("drift_order", 3)),
+                "flag_nuisance_r_method": int(scr_params.get("flag_nuisance_r_method", scr_params.get("flagNuisanceRMethod", 1))),
+                "glm_solve_method": int(scr_params.get("glm_solve_method", 1)),
+                "event_ids": scr_params.get("event_ids", [1]),
             },
         },
         "output_format":       "MNE .fif",

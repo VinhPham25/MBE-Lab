@@ -154,15 +154,18 @@ stage_b:
     hb_range_max: 100   # μM - Flag if outside this range
     typical_range: 50   # μM - Typical task response range
     
-  # Step B6: Short-Channel Regression (Gaussian-basis OLS)
-  # Paper: "consecutive sequence of Gaussian basis functions via ordinary least squares"
-  # Reference: Kamat et al. (2023) ASTaUND; Homer2 hmrR_GLM convention
+  # Step B6: GLM/OLS HRF Deconvolution (Homer3 hmrS_GLM parity core)
+  # Paper: HRF created via Gaussian basis functions + OLS, with short-channel nuisance regression
   short_channel_regression:
-    method: "gaussian_basis_OLS"
+    method: "homer3_style_glm_ols"
     short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
-    n_gaussians: 3                  # number of consecutive Gaussian basis functions
-    gaussian_std_s: 1.0             # Gaussian width (std) in seconds
-    gaussian_spacing_s: 1.5         # center-to-center spacing in seconds
+    trange: [-25, 100]              # seconds - HRF estimation window [t_pre, t_post]
+    gaussian_std_s: 1.0             # seconds - Gaussian basis width (std)
+    gaussian_step_s: 1.0            # seconds - spacing between Gaussian basis centers
+    flag_nuisance_r_method: 1       # 0=nearest short, 1=max-correlation short, 2=mean short
+    drift_order: 3                  # polynomial drift order
+    glm_solve_method: 1             # 1 = OLS
+    event_ids: [1]                  # annotation/event IDs used as stimulus onsets
     
   # Data Saving
   outputs:
