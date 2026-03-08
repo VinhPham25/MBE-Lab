@@ -42,7 +42,7 @@ MNE 1.7+ supports per-wavelength PPF via a tuple:
 
 Output units: mol/L (MNE convention); multiply × 1e6 for μM in plots/analysis.
 
-Upstream:  04_rPCA_motion_correct.py  (optimal: n_components=0.99, min_ch=10)
+Upstream:  04_rPCA_motion_correct.py  (motion correction before filtering)
 Reference: PROGRESS.md Section 3.5; PROJECT.md Section 5.6
 """
 
@@ -80,6 +80,14 @@ _b4 = importlib.util.module_from_spec(_spec_b4)
 _spec_b4.loader.exec_module(_b4)
 
 run_rpca_correction = _b4.run_rpca_correction
+
+_spec_b2 = importlib.util.spec_from_file_location(
+    "bandpass_filtering",
+    Path(__file__).parent / "02_bandpass_filtering.py",
+)
+_b2 = importlib.util.module_from_spec(_spec_b2)
+_spec_b2.loader.exec_module(_b2)
+apply_bandpass_filter = _b2.apply_bandpass_filter
 
 # ---------------------------------------------------------------------------
 # PPF constants — sourced from config.yaml datasets.*. ppf
@@ -160,7 +168,7 @@ def apply_beer_lambert(
     Parameters
     ----------
     raw_od_corrected : mne.io.Raw
-        Filtered, rPCA-corrected OD data (Step B4 output).
+        rPCA-corrected and bandpass-filtered OD data.
         Must contain paired 690 nm and 830 nm channels.
     ppf_dict : dict, optional
         {wavelength_nm: ppf_value}.  Defaults to TECHEN_PPF = {690: 6.4, 830: 5.8}.
@@ -591,7 +599,7 @@ def run_mbll(
     """
     Task 3.5.4: Full MBLL pipeline for one subject.
 
-    Chain:  B1 (OD) → B2 (bandpass) → B3 (motion detect) → B4 (rPCA)
+    Chain:  B1 (OD) → B3 (motion detect) → B4 (rPCA) → B2 (bandpass)
             → B5 (Beer-Lambert) → verification → visualization → save.
 
     rPCA uses Homer3-faithful parameters (nSV=0.97, OR-union mask, maxIter=5)
@@ -626,8 +634,8 @@ def run_mbll(
     print(f"STAGE B — STEP B5: MODIFIED BEER-LAMBERT LAW  |  Subject: {subject_id}")
     print("=" * 70)
 
-    # ---- Steps B1–B4: rPCA-corrected OD ------------------------------------
-    print("\n[1/4] Running upstream pipeline (B1→B2→B3→B4)...")
+    # ---- Steps B1/B3/B4: rPCA-corrected OD ---------------------------------
+    print("\n[1/4] Running upstream pipeline (B1→B3→B4)...")
     b4_results = run_rpca_correction(
         dataset_name,
         subject_id,
@@ -637,10 +645,20 @@ def run_mbll(
     )
     raw_od_corrected = b4_results['raw_od_corrected']
 
-    # ---- 3.5.1 Beer-Lambert conversion ------------------------------------
-    print("[2/4] Applying Beer-Lambert conversion (Task 3.5.1)...")
-    raw_haemo, ppf_tuple = apply_beer_lambert(
+    # ---- B2 (post-rPCA): bandpass filtering --------------------------------
+    config = load_config()
+    filt_params = get_stage_params("stage_b", config).get("filter", {})
+    raw_od_bandpassed, _ = apply_bandpass_filter(
         raw_od_corrected,
+        hpf=float(filt_params.get("hpf", 0.0)),
+        lpf=float(filt_params.get("lpf", 0.5)),
+        verbose=False,
+    )
+
+    # ---- 3.5.1 Beer-Lambert conversion ------------------------------------
+    print("[2/4] Applying post-rPCA bandpass + Beer-Lambert conversion (Task 3.5.1)...")
+    raw_haemo, ppf_tuple = apply_beer_lambert(
+        raw_od_bandpassed,
         ppf_dict = ppf_dict,
         verbose  = verbose,
     )
@@ -689,6 +707,7 @@ def run_mbll(
 
     return {
         'raw_od_corrected': raw_od_corrected,
+        'raw_od_bandpassed': raw_od_bandpassed,
         'raw_haemo':        raw_haemo,
         'hb_stats_df':      hb_stats_df,
         'ppf_tuple':        ppf_tuple,

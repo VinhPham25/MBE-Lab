@@ -74,14 +74,20 @@ from utils import get_output_path, get_stage_params, load_config
 SHORT_SEP_SUFFIX = tuple(f"D{d}" for d in range(17, 25))   # D17–D24
 SHORT_SEP_SPECIAL = {"S8_D9"}                               # 10 mm channel
 
-# Brain-region classification thresholds (channel midpoint, metres)
-PFC_Y_THRESHOLD        = 0.060   # y > 0.060 → Prefrontal Cortex
-M1_X_THRESHOLD         = 0.040   # |x| > 0.040 → Primary Motor Cortex (lateral)
-# SMA = everything else in the motor belt (|x| ≤ 0.040, y ≤ 0.060)
-
-# 5-region sub-division thresholds (Figure 3c, Kamat et al. 2023)
-PFC_LATERAL_X_THRESHOLD = 0.020  # |x| > 0.020 → Lateral PFC (left/right)
-# Motor split: x < 0 → Left Medial M1 (left hemisphere); x >= 0 → SMA (midline/right)
+# Probe-rule mapping (paper/probe-design driven)
+# 3-region:
+#   S1-S3 -> PFC
+#   S4-S7 -> M1
+#   S8    -> SMA
+# 5-region:
+#   S1 -> Left Lateral PFC
+#   S2 -> Central PFC
+#   S3 -> Right Lateral PFC
+#   S4-S7 -> Left Medial M1 (single motor panel in Figure 3c)
+#   S8 -> SMA
+PFC_SOURCES = {1, 2, 3}
+M1_SOURCES = {4, 5, 6, 7}
+SMA_SOURCES = {8}
 
 STUDY = "expert_novice"
 
@@ -99,10 +105,20 @@ def _is_short_sep(ch_name: str) -> bool:
     return detector in SHORT_SEP_SUFFIX
 
 
+def _source_number(ch_name: str) -> int | None:
+    """Extract integer source ID from channel base name (e.g. S4_D6 -> 4)."""
+    base = ch_name.split(" ")[0]
+    src = base.split("_")[0]
+    if not src.startswith("S"):
+        return None
+    sid = src[1:]
+    return int(sid) if sid.isdigit() else None
+
+
 def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
     """
-    Classify long-separation HbO channels into PFC / M1 / SMA based on
-    2-D midpoint coordinates stored in raw.info.
+    Classify long-separation HbO channels into PFC / M1 / SMA using
+    probe source rules from the study design (not coordinate thresholds).
 
     Parameters
     ----------
@@ -126,14 +142,13 @@ def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         if _is_short_sep(ch_name):
             continue
 
-        x, y, _ = ch["loc"][:3]
         base = ch_name.split(" ")[0]   # strip " hbo" suffix
-
-        if y > PFC_Y_THRESHOLD:
+        src_n = _source_number(ch_name)
+        if src_n in PFC_SOURCES:
             region_map["PFC"].append(base)
-        elif abs(x) > M1_X_THRESHOLD:
+        elif src_n in M1_SOURCES:
             region_map["M1"].append(base)
-        else:
+        elif src_n in SMA_SOURCES:
             region_map["SMA"].append(base)
 
     return region_map
@@ -145,11 +160,11 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
 
     Regions
     -------
-    Left Lateral PFC  : y > PFC_Y_THRESHOLD  AND  x < -PFC_LATERAL_X_THRESHOLD
-    Central PFC       : y > PFC_Y_THRESHOLD  AND  |x| <= PFC_LATERAL_X_THRESHOLD
-    Right Lateral PFC : y > PFC_Y_THRESHOLD  AND  x >  PFC_LATERAL_X_THRESHOLD
-    Left Medial M1    : y <= PFC_Y_THRESHOLD AND  x < 0   (left hemisphere motor)
-    SMA               : y <= PFC_Y_THRESHOLD AND  x >= 0  (midline / right hemisphere motor)
+    Left Lateral PFC  : source S1
+    Central PFC       : source S2
+    Right Lateral PFC : source S3
+    Left Medial M1    : sources S4-S7
+    SMA               : source S8
 
     Parameters
     ----------
@@ -178,21 +193,18 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         if _is_short_sep(ch_name):
             continue
 
-        x, y, _ = ch["loc"][:3]
         base = ch_name.split(" ")[0]
-
-        if y > PFC_Y_THRESHOLD:
-            if x < -PFC_LATERAL_X_THRESHOLD:
-                region_map["Left Lateral PFC"].append(base)
-            elif x > PFC_LATERAL_X_THRESHOLD:
-                region_map["Right Lateral PFC"].append(base)
-            else:
-                region_map["Central PFC"].append(base)
-        else:
-            if x < 0:
-                region_map["Left Medial M1"].append(base)
-            else:
-                region_map["SMA"].append(base)
+        src_n = _source_number(ch_name)
+        if src_n == 1:
+            region_map["Left Lateral PFC"].append(base)
+        elif src_n == 2:
+            region_map["Central PFC"].append(base)
+        elif src_n == 3:
+            region_map["Right Lateral PFC"].append(base)
+        elif src_n in M1_SOURCES:
+            region_map["Left Medial M1"].append(base)
+        elif src_n in SMA_SOURCES:
+            region_map["SMA"].append(base)
 
     return region_map
 

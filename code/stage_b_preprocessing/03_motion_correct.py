@@ -1,6 +1,6 @@
 """
-Stage B — Step B3: Motion Artifact Detection on Filtered OD
-Purpose: Detect motion artifacts on filtered OD data using the Homer3
+Stage B — Step B3: Motion Artifact Detection on OD
+Purpose: Detect motion artifacts on OD data using the Homer3
          hmrR_MotionArtifact algorithm and produce per-sample boolean masks
          for use by the B4 rPCA correction step.
 
@@ -35,7 +35,7 @@ Stage A motion detection:
   - Output: motion_ratio scalar per channel (QA metric only)
 
 Stage B motion detection (this file):
-  - Input:  filtered OD (output of Step B2)
+  - Input:  OD (output of Step B1)
   - Output: per-sample boolean mask per channel (used for rPCA in Step B4)
   - Bad channels (raw_od_filt.info['bads']) are detected but flagged separately
 
@@ -68,15 +68,15 @@ _DEFAULT_T_MOTION     = float(_B3_CFG.get("tMotion",      0.5))
 _DEFAULT_T_MASK       = float(_B3_CFG.get("t_mask",       0.5))
 _DEFAULT_USE_AMP_ONLY = bool( _B3_CFG.get("use_amp_only", False))
 
-# Import Step B2 pipeline to obtain filtered OD
+# Import Step B1 pipeline to obtain OD
 import importlib.util
 _spec = importlib.util.spec_from_file_location(
-    "bandpass_filtering",
-    Path(__file__).parent / "02_bandpass_filtering.py",
+    "intensity_to_od",
+    Path(__file__).parent / "01_intensity_to_od.py",
 )
-_b2 = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_b2)
-run_bandpass_filter = _b2.run_bandpass_filter
+_b1 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_b1)
+run_intensity_to_od = _b1.run_intensity_to_od
 
 
 # ===========================================================================
@@ -258,7 +258,7 @@ def detect_motion_artifacts(
     verbose: bool = True,
 ) -> dict:
     """
-    Task 3.3.1: Detect motion artifacts on filtered OD data (Step B3).
+    Task 3.3.1: Detect motion artifacts on OD data (Step B3).
 
     Applies the Homer3 hmrR_MotionArtifact algorithm channel-by-channel.
     Channels already marked bad (from Stage A) are processed but their masks
@@ -270,7 +270,7 @@ def detect_motion_artifacts(
     Parameters
     ----------
     raw_od_filt : mne.io.Raw
-        Filtered OD data (output of Step B2, hmrR_BandpassFilt equivalent).
+        OD data (output of Step B1).
         Should be of type ``fnirs_od``.
     amp_thresh : float, optional
         Absolute OD-change threshold.  Default from config.yaml
@@ -682,7 +682,7 @@ def run_motion_detection(
     Run the Step B3 motion detection pipeline for one subject.
 
     Executes Tasks 3.3.1–3.3.3 in sequence:
-    1. Runs Steps B1+B2 to obtain the filtered OD object (via run_bandpass_filter).
+    1. Runs Step B1 to obtain the OD object (via run_intensity_to_od).
     2. Detects motion artifacts channel-by-channel (3.3.1).
     3. Computes motion statistics and mask summary (3.3.2).
     4. Visualises motion artifacts on OD traces (3.3.3).
@@ -704,7 +704,7 @@ def run_motion_detection(
     -------
     results : dict
         'raw_od_filt'    : mne.io.Raw
-                           Filtered OD data (Step B2 output).
+                           OD data (Step B1 output).
         'motion_results' : dict
                            Per-channel signal-domain motion masks and detection
                            parameters.  Passed directly to Step B4 rPCA.
@@ -719,9 +719,9 @@ def run_motion_detection(
     print(f"STAGE B — STEP B3: MOTION DETECTION  |  Subject: {subject_id}")
     print("=" * 70)
 
-    # ---- Steps B1+B2: filtered OD ------------------------------------------
-    b2_results = run_bandpass_filter(dataset_name, subject_id, verbose=False)
-    raw_od_filt = b2_results['raw_od_filt']
+    # ---- Step B1: OD --------------------------------------------------------
+    b1_results = run_intensity_to_od(dataset_name, subject_id, verbose=False)
+    raw_od_filt = b1_results['raw_od']
 
     # ---- 3.3.1 Detect motion artifacts -------------------------------------
     motion_results = detect_motion_artifacts(

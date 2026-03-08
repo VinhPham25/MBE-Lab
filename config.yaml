@@ -168,10 +168,10 @@ stage_b:
     method: "homer3_style_glm_ols"
     short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
     trange: [-25, 100]              # seconds - HRF estimation window [t_pre, t_post]
-    gaussian_std_s: 1.5             # seconds - Gaussian basis width (std)
-    gaussian_step_s: 2.0            # seconds - spacing between Gaussian basis centers
+    gaussian_std_s: 1.0             # seconds - Gaussian basis width (std)
+    gaussian_step_s: 1.0            # seconds - spacing between Gaussian basis centers
     flag_nuisance_r_method: 1       # 0=nearest short, 1=max-correlation short, 2=mean short
-    drift_order: 2                  # polynomial drift order
+    drift_order: 3                  # polynomial drift order
     glm_solve_method: 1             # 1 = OLS
     event_ids: [1]                  # annotation/event IDs used as stimulus onsets
     

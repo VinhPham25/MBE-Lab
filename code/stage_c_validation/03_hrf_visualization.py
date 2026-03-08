@@ -34,9 +34,9 @@ from utils import load_config
 # ---------------------------------------------------------------------------
 SHORT_SEP_SUFFIX = tuple(f"D{d}" for d in range(17, 25))
 SHORT_SEP_SPECIAL = {"S8_D9"}
-PFC_Y_THRESHOLD = 0.060
-M1_X_THRESHOLD = 0.040
-PFC_LATERAL_X_THRESHOLD = 0.020
+PFC_SOURCES = {1, 2, 3}
+M1_SOURCES = {4, 5, 6, 7}
+SMA_SOURCES = {8}
 
 
 def _is_short_sep(ch_name: str) -> bool:
@@ -45,6 +45,15 @@ def _is_short_sep(ch_name: str) -> bool:
         return True
     detector = base.split("_")[1]
     return detector in SHORT_SEP_SUFFIX
+
+
+def _source_number(ch_name: str) -> int | None:
+    base = ch_name.split(" ")[0]
+    src = base.split("_")[0]
+    if not src.startswith("S"):
+        return None
+    sid = src[1:]
+    return int(sid) if sid.isdigit() else None
 
 
 def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
@@ -56,13 +65,13 @@ def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         if _is_short_sep(name):
             continue
 
-        x, y, _ = ch["loc"][:3]
         base = name.split(" ")[0]
-        if y > PFC_Y_THRESHOLD:
+        src_n = _source_number(name)
+        if src_n in PFC_SOURCES:
             region_map["PFC"].append(base)
-        elif abs(x) > M1_X_THRESHOLD:
+        elif src_n in M1_SOURCES:
             region_map["M1"].append(base)
-        else:
+        elif src_n in SMA_SOURCES:
             region_map["SMA"].append(base)
     return region_map
 
@@ -82,21 +91,18 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         if _is_short_sep(name):
             continue
 
-        x, y, _ = ch["loc"][:3]
         base = name.split(" ")[0]
-
-        if y > PFC_Y_THRESHOLD:
-            if x < -PFC_LATERAL_X_THRESHOLD:
-                region_map["Left Lateral PFC"].append(base)
-            elif x > PFC_LATERAL_X_THRESHOLD:
-                region_map["Right Lateral PFC"].append(base)
-            else:
-                region_map["Central PFC"].append(base)
-        else:
-            if x < 0:
-                region_map["Left Medial M1"].append(base)
-            else:
-                region_map["SMA"].append(base)
+        src_n = _source_number(name)
+        if src_n == 1:
+            region_map["Left Lateral PFC"].append(base)
+        elif src_n == 2:
+            region_map["Central PFC"].append(base)
+        elif src_n == 3:
+            region_map["Right Lateral PFC"].append(base)
+        elif src_n in M1_SOURCES:
+            region_map["Left Medial M1"].append(base)
+        elif src_n in SMA_SOURCES:
+            region_map["SMA"].append(base)
 
     return region_map
 

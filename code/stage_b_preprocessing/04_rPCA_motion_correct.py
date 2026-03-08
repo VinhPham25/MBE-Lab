@@ -95,7 +95,7 @@ _spec_b3.loader.exec_module(_b3)
 
 detect_motion_artifacts = _b3.detect_motion_artifacts
 compute_motion_stats    = _b3.compute_motion_stats
-run_bandpass_filter     = _b3.run_bandpass_filter   # re-exported from B2 inside B3
+run_motion_detection    = _b3.run_motion_detection
 
 
 def _load_runtime_params() -> dict:
@@ -430,7 +430,7 @@ def apply_rpca_correction(
     Parameters
     ----------
     raw_od_filt : mne.io.Raw
-        Filtered OD data (Step B2 output, low-pass 0.5 Hz).
+        OD data (Step B1 output).
     motion_results : dict
         Output of detect_motion_artifacts() (Step B3).
         Must contain 'masks' {ch_name: bool_array} and 'bad_channels'.
@@ -1401,7 +1401,7 @@ def run_rpca_correction(
     verbose: bool = True,
 ) -> dict:
     """
-    Full Step B4 pipeline: Load filtered OD → motion detect → rPCA correct
+    Full Step B4 pipeline: Load OD → motion detect → rPCA correct
     (iterative, flagged-only + continuity stitching, OR-union) → save → visualize → verify.
 
     All parameters default to values from config.yaml:
@@ -1470,24 +1470,15 @@ def run_rpca_correction(
     print(f"         Homer3-faithful (iterative, flagged-only + continuity, OR-union)")
     print("=" * 70)
 
-    # ---- Steps B1+B2: filtered OD ------------------------------------------
-    print("\n[1/7] Loading filtered OD (Steps B1+B2)...")
-    b2_results  = run_bandpass_filter(dataset_name, subject_id, verbose=False)
-    raw_od_filt = b2_results['raw_od_filt']
+    # ---- Steps B1+B3: OD + motion detection --------------------------------
+    print("\n[1/7] Loading OD + motion detection (Steps B1+B3)...")
+    b3_results = run_motion_detection(dataset_name, subject_id, verbose=False)
+    raw_od_filt = b3_results['raw_od_filt']
 
     # ---- Step B3: motion detection (parameters from config) ----------------
-    print(f"[2/7] Detecting motion artifacts "
-          f"({'amplitude-only' if use_amp_only else 'dual criterion'})...")
-    motion_results = detect_motion_artifacts(
-        raw_od_filt,
-        amp_thresh   = amp_thresh,
-        stdev_thresh = stdev_thresh,
-        t_motion     = t_motion,
-        t_mask       = t_mask,
-        use_amp_only = use_amp_only,
-        verbose      = verbose,
-    )
-    stats_before = compute_motion_stats(motion_results, raw_od_filt, verbose=verbose)
+    print("[2/7] Reusing B3 motion masks from Step B3...")
+    motion_results = b3_results["motion_results"]
+    stats_before = b3_results["stats_df"]
 
     # ---- Step B4: iterative rPCA correction --------------------------------
     print("[3/7] Applying iterative rPCA correction (Homer3 parity)...")
