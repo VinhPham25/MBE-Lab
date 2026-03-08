@@ -1,8 +1,8 @@
 # Preprocessing Pipeline Audit: Python vs. MATLAB Ground Truth
 
-**Date:** March 3, 2026  
+**Date:** March 3, 2026 (updated March 5, 2026)
 **Purpose:** Systematic comparison of Python implementation against Homer3 MATLAB ground truth  
-**Status:** Critical discrepancies identified in B4 (rPCA) and B6 (GLM/OLS)
+**Status:** B2, B3, B6 fixed; B4 partially fixed — Discrepancy 4b (full-signal projection) was incorrectly implemented and must be reverted to flagged-segment-only + DC continuity to match actual MATLAB behavior
 
 ---
 
@@ -104,26 +104,58 @@ This has **three independent structural discrepancies**, all significant.
 
 **MATLAB Homer3** applies PCA recursively up to `maxIter=5` times:
 ```matlab
-while length(find(tInc{iBlk}==0)) > 0 && ii < maxIter
+while length(find(tInc{iBlk}==0)) > 0 & ii < maxIter
+    ii = ii + 1;
     [data_dN, svs_ii, nSV] = hmrR_MotionCorrectPCA(data_d, ...);
     tInc = hmrR_MotionArtifact(data_dN, ...);   % re-detect on corrected data
     data_d.Copy(data_dN);                         % corrected data becomes next input
-    ii = ii + 1;
+    svs{iBlk}(:,ii) = svs_ii{1};
 end
 ```
 
 After each PCA step, motion detection runs again on the corrected signal. If motion is still present, another PCA step is applied. **Python applies PCA exactly once.**
 
-### Discrepancy 4b — Scope of correction (flagged segments only vs. full signal):
+### Discrepancy 4b — Scope of correction: ⚠️ AUDIT CORRECTION (2026-03-05)
 
-Homer3's inner function `hmrR_MotionCorrectPCA` (called inside the recursion) performs PCA on the motion-flagged segments, identifies the motion subspace, then **subtracts the motion projection from the entire continuous signal** — both flagged and unflagged time points get the correction applied.
+> **Original audit claim (incorrect):** MATLAB subtracts the motion projection from the entire continuous signal — both flagged and unflagged time points.
+>
+> **Corrected finding:** This was a misreading of `hmrR_MotionCorrectPCA.m`. MATLAB applies PCA correction **only to the flagged segments**, then applies **DC continuity offsets** to non-flagged segments to remove boundary discontinuities. Non-flagged samples are never PCA-projected.
 
-The Python implementation does the opposite:
-```python
-data[np.ix_(good_idx, motion_idx)] = X_corrected.T   # ONLY flagged time points are modified
+**What MATLAB actually does (from `hmrR_MotionCorrectPCA.m`):**
+```matlab
+y = d(lstNoInc, lstAct);   % Extract ONLY flagged segments (n_flagged × n_active)
+yo = y;
+c = y.' * y;               % Cross-product of FLAGGED data only
+[V, St, foo] = svd(c);
+% ... select top k components ...
+yc = yo - y*V*ev*V';       % PCA residuals — applied to y (FLAGGED) only
+
+dN = d;  % Start with full copy of original data
+% Flagged segments  → replaced with yc (PCA-corrected + DC offset at boundary)
+% Non-flagged gaps  → dN(lst) = d(lst) - d(lst(1)) + dN(lst(1))
+%                    (DC shift for continuity only — NOT PCA-projected)
 ```
 
-**Only the samples inside the union motion mask are replaced with their PCA-residuals.** Unflagged samples are never touched. This means any global correlated noise that exists everywhere (not just in flagged windows) is never removed by the Python rPCA.
+The non-flagged segments receive a scalar baseline shift so the signal is continuous at every flagged/non-flagged boundary, but their shape and variance are otherwise unchanged.
+
+**What the original Python did (before B4 rewrite):**
+```python
+data[np.ix_(good_idx, motion_idx)] = X_corrected.T   # ONLY flagged time points replaced
+```
+This was structurally correct (flagged-only correction) but lacked the DC continuity stitching for non-flagged segments.
+
+**What the B4 Homer3-faithful rewrite implemented (incorrect):**
+```python
+# Applied to ALL n_times columns — NOT what MATLAB does:
+motion_projection = V_k @ (V_k.T @ data_good)
+data_out[good_idx, :] = data_good - motion_projection   # full-signal projection
+```
+This was introduced under the incorrect belief that MATLAB applies full-signal projection. It is not what `hmrR_MotionCorrectPCA.m` does and is the proximate cause of signal destruction when the motion mask contains false-positives (see "Impact" section below).
+
+**Correct Python implementation should:**
+1. Fit PCA on flagged segments: `y = data[good_idx, :][:, motion_idx].T`
+2. Compute residuals: `yc = y - y @ V_k @ V_k.T`
+3. Splice corrected segments back at flagged indices with DC continuity stitching at boundaries
 
 ### Discrepancy 4c — Motion mask construction:
 
@@ -131,12 +163,14 @@ Homer3's `hmrR_MotionCorrectPCArecurse` calls `hmrR_MotionArtifact` (not `hmrR_M
 
 Python builds per-channel masks from `hmrR_MotionArtifactByChannel`, then applies a vote threshold (`min_channels_flagged=10`): **a time point must be simultaneously flagged by at least 10 channels to enter the mask.** This is considerably more conservative than the Homer3 OR-union behavior.
 
+**Note:** OR-union (min_channels_flagged=1) is correct when the detection thresholds are properly calibrated. When STDEVthresh misfires on filtered OD (see B3 and "Impact" below), a higher min_channels_flagged acts as a practical safeguard.
+
 ### Discrepancy 4d — `nSV` parameter:
 
 The MATLAB defaults and `DataPreprocessing.m` specify `nSV = 0.97`. The Python config (`ASTaUND_parameters.md`) specifies `n_components: 0.99`. The `ASTaUND_parameters.md` itself flags this as a needed correction: `n_components: 0.99 → 0.97`.
 
-### Verdict: 🔴 **Major discrepancy**
-The iterative nature, the scope of correction (full signal vs. flagged-only), and the mask construction strategy are all fundamentally different from Homer3.
+### Verdict: 🔴 **Major discrepancy (revised)**
+The iterative nature (4a) and mask construction (4c) are real discrepancies from the original Python. The scope-of-correction discrepancy (4b) was mis-stated in the original audit — MATLAB is flagged-segment-only (same as old Python), not full-signal. The B4 Homer3-faithful rewrite incorrectly introduced full-signal projection, which must be reverted to flagged-segment correction + DC continuity stitching.
 
 ---
 
@@ -270,11 +304,11 @@ This is not a parameter mismatch — it is a fundamentally different algorithm. 
 | Step | File | MATLAB Equivalent | Severity | Type |
 |------|------|-------------------|----------|------|
 | **B1** Intensity→OD | `01_intensity_to_od.py` | `hmrR_Intensity2OD.m` | ✅ Match | — |
-| **B2** Bandpass filter | `02_bandpass_filtering.py` | `hmrR_BandpassFilt.m` | ⚠️ Moderate | HPF applied in Python (not in Homer3 default); different filter order |
-| **B3** Motion detection | `03_motion_correct.py` | `hmrR_MotionArtifactByChannel.m` | ⚠️ Minor | `max_diff` padding orientation offset; `tMask` may differ from Homer3 defaults |
-| **B4** rPCA | `04_rPCA_motion_correct.py` | `hmrR_MotionCorrectPCArecurse.m` | 🔴 Major | Not iterative; corrects only flagged samples (not full signal); vote-threshold mask vs. OR-union; `n_components=0.99` vs. `0.97` |
+| **B2** Bandpass filter | `02_bandpass_filtering.py` | `hmrR_BandpassFilt.m` | ✅ Fixed (2026-03-03) | Pure 3rd-order LPF; HPF skipped when hpf=0 |
+| **B3** Motion detection | `03_motion_correct.py` | `hmrR_MotionArtifactByChannel.m` | ✅ Fixed (2026-03-05) | `max_diff` padding corrected to MATLAB parity (zeros at END); `tStdev` renamed `STDEVthresh` |
+| **B4** rPCA | `04_rPCA_motion_correct.py` | `hmrR_MotionCorrectPCArecurse.m` | 🔴 Partially fixed, partially broken | 4a iterative ✅; 4b full-signal projection ❌ WRONG (MATLAB is flagged-segment + DC continuity); 4c OR-union ✅; 4d nSV=0.97 ✅ |
 | **B5** MBLL | `05_mbll.py` | `hmrR_OD2Conc.m` | ✅/⚠️ Minor | Formulas equivalent; potential extinction coefficient difference (MNE vs. Prahl) |
-| **B6** GLM/OLS | `06_ols_regression.py` | `hmrS_GLM.m` | 🔴 Critical | Different algorithm: Python does preprocessing scalp regression; Homer3 does unified HRF+short-channel GLM deconvolution |
+| **B6** GLM/OLS | `06_ols_regression.py` | `hmrS_GLM.m` | ✅ Fixed (2026-03-05) | Homer3-style GLM/OLS with Gaussian basis on stimulus onsets, raw short-channel nuisance, drift polynomial |
 
 ---
 
@@ -282,37 +316,43 @@ This is not a parameter mismatch — it is a fundamentally different algorithm. 
 
 ### For the CNR technical validation branch (OD → BP → MBLL only):
 
-The relevant discrepancy is **B2** — the Python applies a 0.01 Hz high-pass that Homer3 does not. This changes the baseline of slow hemodynamic signals and can affect the amplitude of the grand-average HRF that feeds into CNR calculation.
+The relevant discrepancy was **B2** — the Python applied a 0.01 Hz high-pass that Homer3 does not. Fixed 2026-03-03 (now pure 3rd-order 0.5 Hz LPF).
 
 ### For the full preprocessing pipeline (HRF morphology mismatch):
 
-- **B4 (rPCA):** Python over-corrects some subjects (HOLD flags for R9, A2, R10, R11) because it applies a vote-threshold mask and single-pass correction — Homer3's iterative refinement would handle these more gracefully.
+- **B4 (rPCA) — current active problem:** The B4 rewrite introduced full-signal projection removal based on a misreading of the MATLAB code (Discrepancy 4b). MATLAB's `hmrR_MotionCorrectPCA` only corrects flagged segments and applies DC continuity shifts to non-flagged segments. The Python full-signal projection, combined with the iterative loop (up to 5 passes) and the STDEVthresh-on-filtered-OD over-detection problem, catastrophically destroys the neural signal for subjects where the motion mask captures hemodynamic peaks (A2: 100% variance removed; R6, R9, R12: machine-epsilon GLM output). This must be reverted.
 
-- **B6 (GLM):** This is the **root cause of the HRF morphology mismatch.** Homer3's output `dcAvg` is a deconvolved GLM estimate of the HRF; Python's output from epoch-averaging produces a noisier estimate that doesn't benefit from the simultaneous drift and scalp regression. The Expert vs. Novice contrast in M1 that's improving after successive audit fixes is converging toward a correct GLM-equivalent result from the wrong direction — the sequential approach is working but is mathematically non-equivalent.
+- **B4 × B3 interaction:** Even with the correct flagged-segment-only correction, the STDEVthresh arm of the dual criterion misfires on filtered OD because `std(diff(filtered_OD))` is very small (~1×10⁻⁴ OD at 25 Hz), making `mc_thresh = STDEVthresh × std_diff` smaller than normal hemodynamic oscillations. This flags task-response peaks as motion. Setting `use_amp_only: true` or raising `min_channels_flagged` guards against this when the flagged-only correction is in place.
+
+- **B6 (GLM):** Fixed 2026-03-05. The Python now implements Homer3-style GLM/OLS with Gaussian basis functions convolved with stimulus onsets and raw short-channel as nuisance regressor.
 
 ---
 
 ## Prioritized Fix Recommendations
 
-### P0 — Critical, implement before anything else:
+### P0 — Critical, must fix before pipeline is valid:
 
-1. **B6 architecture:** The correct paper-faithful approach requires reproducing the Homer3 `hmrS_GLM` logic: build a Gaussian basis over the epoch window convolved with stimulus onsets, add the raw short-channel as a single nuisance column, add drift polynomial, and solve one OLS per channel. **The output IS the HRF estimate.** This replaces both `06_ols_regression.py` and Stage C's epoch-averaging approach.
-
-2. **B4 rPCA scope:** Apply PCA correction to the **entire signal** (all time points, not just flagged ones). The motion-flagged segments are used to identify the motion subspace (fit the PCA), but the projection/subtraction is applied globally. Also consider adding recursion (up to 5 iterations, re-detect between each) to match Homer3.
+1. **B4 Discrepancy 4b — revert full-signal projection:** In `_apply_pca_single_pass()`, replace the full-signal `data -= V_k @ V_k.T @ data` with flagged-segment-only correction + DC continuity stitching matching `hmrR_MotionCorrectPCA.m`:
+   - Corrected flagged segments: `yc = y - y @ V_k @ V_k.T`
+   - Non-flagged gaps: DC-shifted at segment boundaries for continuity
+   - This bounds any correction damage to the flagged samples only
 
 ### P1 — High, implement after P0:
 
-3. **B2 high-pass:** Test running with `l_freq=None` (no high-pass, pure 0.5 Hz LPF) to match Homer3's default of `hpf=0`. Use 3rd-order Butterworth for the LPF specifically.
+2. **B4 × B3 STDEVthresh calibration:** After fixing 4b, evaluate whether dual criterion with STDEVthresh=20 is appropriate for filtered OD. Options:
+   - `use_amp_only: true` (amplitude-only, most conservative)
+   - `min_channels_flagged: 5–10` (require consensus, reduces false-positives)
+   - STDEVthresh raised to ~500+ (equivalent to amplitude-only for filtered data)
 
-4. **B4 n_components:** Change from `0.99` to `0.97` to match both `hmrR_MotionCorrectPCArecurse` parameters and the `DataPreprocessing.m` specification.
+3. **B4 n_components:** Already fixed to 0.97 (Homer3/Yucel et al. default). ✅
 
 ### P2 — Medium, investigate after P1:
 
-5. **B5 extinction coefficients:** Extract and compare the extinction coefficient values that Homer3's `GetExtinctions(690, 830)` returns (from the Prahl database) against MNE's built-in values. If they differ, apply a correction factor or override MNE's internal table.
+4. **B5 extinction coefficients:** Extract and compare the extinction coefficient values that Homer3's `GetExtinctions(690, 830)` returns (from the Prahl database) against MNE's built-in values. If they differ, apply a correction factor or override MNE's internal table.
 
-6. **B3 tMask:** Confirm whether Homer3 ASTaUND study used `tMask=0.5` (from Ref #36) or `tMask=1.0` (Homer3 function default). The function-header annotation shows 1.0, the cited reference says 0.5.
+5. **B3 tMask:** Confirm whether Homer3 ASTaUND study used `tMask=0.5` (from Ref #36) or `tMask=1.0` (Homer3 function default). The function-header annotation shows 1.0, the cited reference says 0.5.
 
 ---
 
-**Last Updated:** March 3, 2026  
-**Next Review:** After implementing P0 critical fixes
+**Last Updated:** March 5, 2026  
+**Next Review:** After implementing B4 Discrepancy 4b revert (flagged-segment-only + DC continuity)

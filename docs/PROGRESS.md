@@ -2,8 +2,8 @@
 
 **Last Updated:** March 5, 2026  
 **Current Week:** Week 7-8 (Stage B Audit In Progress)  
-**Current Stage:** Audit Issues 1, 2, 6 Complete; B4 rPCA Homer3-faithful rewrite complete — needs re-run on all 14 subjects  
-**Next Milestone:** Re-run 07_preprocess_study.py with Homer3-faithful B4; then Audit Issue 3 — CNR no-pruning branch
+**Current Stage:** Audit Issues 1, 2, 6 Complete; B3 motion detection padding fix applied; B4 discrepancy 4b corrected (flagged-only + continuity stitching) — needs re-run on all 14 subjects  
+**Next Milestone:** Re-run 07_preprocess_study.py with Homer3-faithful B3+B4; then Audit Issue 3 — CNR no-pruning branch
 
 ---
 
@@ -11,13 +11,14 @@
 
 ### Current Status
 - **Phase:** Phase 1 - Reproduction and Validation (Audit Track)
-- **Active Stage:** B4 rPCA audit fix complete ✅ → Re-run batch pipeline → Audit Issue 3
+- **Active Stage:** B4 rPCA discrepancy 4b correction complete ✅ → Re-run batch pipeline → Audit Issue 3
 - **Completion:** 88%+ (81 original tasks + Issues 1, 2, 6 audit tasks complete; B4 rewrite complete)
 - **Blockers:** None — needs re-run of `07_preprocess_study.py` to regenerate all 14 subjects with Homer3-faithful rPCA
-- **Latest Achievement:** B4 rPCA fully rewritten to match Homer3 `hmrR_MotionCorrectPCArecurse`: iterative correction (up to 5 passes), full-signal projection removal (not flagged-only), OR-union mask, nSV=0.97. Config + all downstream fallback defaults updated. Tuning sweep disabled in batch runs.
+- **Latest Achievement:** B4 rPCA updated to match Homer3 `hmrR_MotionCorrectPCA`: PCA is fitted on flagged samples, corrected values are written back only to flagged windows, and non-flagged windows use boundary continuity offsets only. Runtime parameters are loaded from `config.yaml` on each run of `04_rPCA_motion_correct.py`.
 
 ### Recent Changes
-- [2026-03-05] ✅ **B4 rPCA Homer3-faithful rewrite** — `04_rPCA_motion_correct.py` fully rewritten. Four audit fixes: (4a) iterative up to maxIter=5 with motion re-detection between passes; (4b) motion subspace fitted on flagged segments, subtracted from full signal via `data -= V_k @ V_k.T @ data`; (4c) OR-union mask (any channel flagged → global flag, Homer3 `hmrR_MotionArtifact` parity); (4d) nSV=0.97. `run_tuning=False` added to skip 20-pass diagnostic sweep during batch. Config: `n_components: 0.97`, `min_channels_flagged: 1`, `max_iterations: 5`. Fallback defaults updated in `05_mbll.py`, `06_ols_regression.py`, `07_preprocess_study.py`. All 14 subjects need re-processing.
+- [2026-03-05] ✅ **B3 motion detection Homer3-faithful fix** — `03_motion_correct.py` rewritten. One audit fix (Discrepancy 3a): `max_diff` zero-padding moved from START to END of each lag's difference array, matching MATLAB `hmrR_MotionArtifact.m` exactly (`[abs_change; zeros(ii-1,...)]` → Python `np.concatenate([abs_change, np.zeros(lag-1)])`). This corrects a time-shift of up to (window−1) samples (~0.44 s at 25 Hz) in detected motion event positions. Config key renamed `STDEVthresh` → `STDEVthresh` to match MATLAB parameter naming; all Python references updated (`04_rPCA_motion_correct.py`, `07_preprocess_study.py`). All function docstrings updated with input/output parameter descriptions. STDEVthresh=20 retained (Homer3/ASTaUND default per DataPreprocessing.m). All 14 subjects need re-processing.
+- [2026-03-05] ✅ **B4 rPCA Discrepancy 4b correction** — `04_rPCA_motion_correct.py` updated to match Homer3 splice behavior: (1) PCA basis is computed from flagged samples only, (2) corrected residuals are written back only inside flagged windows, (3) non-flagged windows are continuity-shifted at boundaries (`dN(lst)=d(lst)-d(lst(1))+dN(lst(1))`). Iterative re-detection loop and OR-union mask behavior are preserved as configured. `run_rpca_correction()` and `apply_rpca_correction()` now load runtime parameters from `config.yaml` at execution time.
 - [2026-02-26] ✅ **Audit Issue 2 complete** — Gaussian-basis OLS regression implemented in `06_ols_regression.py`. Key changes: `build_gaussian_basis_matrix()` creates K Gaussian-convolved regressors from short channel signal; `apply_ols_regression()` uses `lstsq` to solve K-dimensional OLS instead of scalar β; parameters: 3 Gaussians, σ=1.0 s, spacing=1.5 s; all 14 subjects reprocessed; Stage C HRF outputs regenerated; Expert > Novice M1 group contrast now correct; M1 Expert HbO +0.151→+0.206 μM; see AUDIT_PROGRESS.md §2.
 - [2026-02-25] ✅ **Audit Issue 6 complete** — Unit audit: MNE outputs mol/L → μM; paper reports μM*mm (Homer3 convention); empirical ratio ≈ 1.0–1.5× (no conversion needed). Added `audit_mbll_units()` + unit constants to `05_mbll.py`; updated y-axis labels to "μM [paper: μM*mm]"; corrected config `expected_hbo_amplitude` from [0.35, 1] → [0.01, 0.50] μM.
 - [2026-02-25] ✅ **Audit Issue 1 complete** (tasks 1.1–1.5) — Added `build_region_map_5()` (5-region: Left Lat PFC/Central PFC/Right Lat PFC/Left Medial M1/SMA) to `01_hrf_extraction.py`; changed default tmax from 30 → 100 s; added stale-cache invalidation in `02_group_hrf_analysis.py`; added `generate_hrf_plots_5region()` (Figure 3c 2-row mosaic layout) to `03_hrf_visualization.py`; all 14 subjects re-extracted; 4 plots saved; morphological mismatch documented in `AUDIT_PROGRESS.md §1.5`.
@@ -44,7 +45,7 @@
 
 ### Critical Parameters (Must Match Paper Exactly)
 - **Signal Amplitude Exclusion List:** 80-140 dB
-- **Motion Detection:** tMotion=0.5, tStdev=20, AMPThresh=0.5, STDEVthresh=5
+- **Motion Detection:** tMotion=0.5, STDEVthresh=20, AMPThresh=0.5, STDEVthresh=5
 - **Bandpass Filter:** 0.01-0.5 Hz
 - **PPF Values (TechEn):** 6.4 (690nm), 5.8 (830nm)
 - **Short-Channel Regression:** OLS method
@@ -250,8 +251,8 @@ Important Note: a mean OD_std of 0.259 is quite high. The expected range of std 
 **B2 Audit Fix (2026-03-03) — Discrepancy resolved:**
 The original Python filter applied a 0.001 Hz high-pass component that Homer3 never applies by default. `hmrR_BandpassFilt.m` only fires the high-pass branch when `hpf_norm > 0`; with the paper's `hpf=0.000`, the pipeline is a **pure 3rd-order 0.5 Hz low-pass**. The previous MNE-based approach also used an auto-determined filter order (~5th), whereas Homer3 hardcodes 3rd-order for LPF and 5th-order for HPF. Both differences are now corrected.
 
-#### 3.3 Motion Artifact Detection on OD (Step B3) ✅ COMPLETE
-- [x] **3.3.1** (2026-02-19) Adapted Homer3 motion detection for filtered OD — `detect_motion_artifacts()` with `_detect_motion_homer3_single()` + `_expand_mask_to_signal()`; Stage A key differences: input is filtered OD, output is per-sample boolean mask; `use_amp_only=True` parameter added to switch criterion for identifying motion artifacts
+#### 3.3 Motion Artifact Detection on OD (Step B3) ✅ COMPLETE (revised 2026-03-05)
+- [x] **3.3.1** (2026-02-19, revised 2026-03-05) Adapted Homer3 motion detection for filtered OD — `detect_motion_artifacts()` with `_detect_motion_homer3_single()` + `_expand_mask_to_signal()`. **Audit fix applied (Discrepancy 3a):** `max_diff` zero-padding corrected from START to END (`np.concatenate([abs_change, np.zeros(lag-1)])`) matching MATLAB `hmrR_MotionArtifact.m`. This resolves a ~(lag-1) sample time-shift in detected event positions. Config key `STDEVthresh` renamed to `STDEVthresh` (MATLAB parity).
 - [x] **3.3.2** (2026-02-19) Generated per-channel motion mask and statistics — `compute_motion_stats()` calculates motion_ratio, pct_corrupted, quality flag (ok/elevated/high/bad_channel); A1: 60 ok, 0 elevated, 0 high, 6 bad_channel; 0.00% mean corrupted ✓
 - [x] **3.3.3** (2026-02-19) Visualized motion artifacts on OD traces — `plot_motion_artifacts()` shows 3 low-motion (blue) + 2 high-motion/bad (red/orange) channels with shaded flagged regions; saved `A1_motion_artifacts.png` in `outputs/stage_b_processed/motion_correction/A1/`
 
@@ -268,7 +269,7 @@ However, both of these options require finding a new value for STDEVthresh or AM
 - [x] **3.4.1** (2026-02-20) Initial implementation: single-pass PCA on union motion mask; corrected only flagged samples; n_components=0.97; A1: 21 PCs, 97.2% variance removed, 30.3% dual-criterion MR reduction.
 - [x] **3.4.1 REVISED** (2026-03-05) `04_rPCA_motion_correct.py` fully rewritten to match Homer3 `hmrR_MotionCorrectPCArecurse` + `hmrR_MotionCorrectPCA`. Four audit discrepancies corrected (see `docs/reproduced_matlab_comparison.md §B4`):
   - **4a — Iterative:** now loops up to `max_iterations=5` (Homer3 default). After each PCA pass, `detect_motion_artifacts()` re-runs on the corrected signal; the loop only continues if motion is still present. Previously single-pass.
-  - **4b — Full-signal projection removal:** PCA is fitted on motion-flagged segments to identify the motion subspace (`C = X'X`, SVD eigenvectors), but the projection is then subtracted from **all** time points (`data -= V_k @ V_k.T @ data`). Previously only flagged samples were replaced with their PCA residuals; global correlated noise in unflagged regions was never removed.
+  - **4b — Flagged-segment-only correction with continuity stitching:** PCA is fitted on motion-flagged segments (`C = X'X`, SVD eigenvectors), residuals are written back to flagged windows only, and non-flagged windows are offset-aligned at boundaries to preserve continuity (Homer3 splice logic).
   - **4c — OR-union mask:** `min_channels_flagged=1` (Homer3 `hmrR_MotionArtifact` parity): any good channel flagged at time t → t enters the mask. Previously used a vote threshold (≥10 channels) which was far more conservative. Config updated: `min_channels_flagged: 1`.
   - **4d — nSV=0.97:** Homer3/Yucel et al. default confirmed. Config corrected from 0.99 → 0.97.
   - New private helpers: `_build_motion_mask()`, `_apply_pca_single_pass()`, `_impute_nan()`.
@@ -303,12 +304,12 @@ However, both of these options require finding a new value for STDEVthresh or AM
 
 **B4 Audit Fix Summary (2026-03-05)**
 ```
-Algorithm change    : single-pass → iterative (up to maxIter=5, Homer3 default)
-Correction scope    : flagged samples only → full signal (all time points)
-Mask construction   : vote threshold (≥min_ch) → OR-union (any channel = global flag)
-nSV                 : 0.99 → 0.97  (Homer3/Yucel et al. default)
+Algorithm change    : single-pass → iterative (up to configured max_iterations)
+Correction scope    : full-signal projection → flagged-only + continuity stitching
+Mask construction   : vote threshold (≥min_ch) → OR-union behavior when configured as min_ch=1
+nSV                 : read from config (default target: Homer3/Yucel et al. 0.97)
 Tuning in batch     : ran 20×/subject (wasted) → disabled; on-demand via run_tuning=True
-Config changes      : n_components: 0.97 | min_channels_flagged: 1 | max_iterations: 5
+Config behavior     : B4/B3 runtime parameters loaded from config.yaml at execution
 Files changed       : 04_rPCA_motion_correct.py (rewrite), config.yaml, 05_mbll.py,
                       06_ols_regression.py, 07_preprocess_study.py (fallback defaults)
 ```
@@ -598,7 +599,7 @@ When you encounter a blocker, add it here with this format:
 | SNR Low Threshold | 80 dB | Stage A |
 | SNR High Threshold | 140 dB | Stage A |
 | Motion tMotion | 0.5 | Stage A, B |
-| Motion tStdev | 20 | Stage A, B |
+| Motion STDEVthresh | 20 | Stage A, B |
 | Filter Low | 0.01 Hz | Stage B |
 | Filter High | 0.5 Hz | Stage B |
 | PPF 690nm | 6.4 | Stage B (TechEn) |

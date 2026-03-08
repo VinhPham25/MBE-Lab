@@ -12,12 +12,12 @@ Discrepancy 4a — ITERATIVE (was single-pass):
     runs again on the corrected signal; if motion is still present another PCA
     step is applied.  The corrected signal becomes the input for the next pass.
 
-Discrepancy 4b — FULL-SIGNAL CORRECTION (was flagged-samples only):
-    Homer3's hmrR_MotionCorrectPCA identifies the motion subspace by fitting
-    PCA on the motion-flagged segments, then subtracts that projection from the
-    entire continuous signal (all time points, not just the flagged ones).  The
-    previous Python code replaced only flagged samples with their PCA residuals,
-    leaving any global correlated noise in the unflagged portions untouched.
+Discrepancy 4b — FLAGGED-SEGMENT-ONLY + CONTINUITY STITCHING:
+    Homer3's hmrR_MotionCorrectPCA fits PCA on the motion-flagged segments and
+    applies the PCA residuals only inside those flagged windows. Non-flagged
+    segments are not PCA-projected; they are continuity-shifted at boundaries:
+      dN(lst,jj) = d(lst,jj) - d(lst(1),jj) + dN(lst(1),jj)
+    so transitions between clean and corrected segments remain continuous.
 
 Discrepancy 4c — OR-UNION MASK (was vote-threshold):
     Homer3 calls hmrR_MotionArtifact (not hmrR_MotionArtifactByChannel), which
@@ -41,11 +41,12 @@ Algorithm (Homer3-faithful)
 6.  Find minimum k such that Σ(s[0:k]) / Σ(s) ≥ n_components
     (Homer3 nSV logic: find first cumsum position ≥ nSV).
 7.  Motion subspace = V_k (first k columns of U).
-8.  FULL-SIGNAL projection removal:
-      data_good -= V_k @ (V_k.T @ data_good)
-      This removes the motion subspace from ALL time points.
-9.  Re-detect motion on corrected signal (Homer3: re-call hmrR_MotionArtifact).
-10. Repeat from step 2 with updated data and new mask (up to max_iterations).
+8.  Compute flagged-only residuals:
+      yc = y - y @ V_k @ V_k.T
+9.  Splice yc back only into flagged windows and apply boundary continuity
+    offsets to non-flagged windows.
+10. Re-detect motion on corrected signal (Homer3: re-call hmrR_MotionArtifact).
+11. Repeat from step 2 with updated data and new mask (up to max_iterations).
 
 Reference: docs/reproduced_matlab_comparison.md §B4
 Upstream:  03_motion_correct.py (Step B3 motion mask, use_amp_only config)
@@ -76,7 +77,7 @@ _DEFAULT_N_COMPONENTS    = float(_RPCA_CFG.get("n_components",         0.97))
 _DEFAULT_MAX_ITER        = int(  _RPCA_CFG.get("max_iterations",       5))
 _DEFAULT_MIN_CHANNELS    = int(  _RPCA_CFG.get("min_channels_flagged", 1))
 _DEFAULT_AMP_THRESH      = float(_B3_CFG.get("AMPthresh",  5.0))
-_DEFAULT_STDEV_THRESH    = float(_B3_CFG.get("tStdev",    20.0))
+_DEFAULT_STDEV_THRESH    = float(_B3_CFG.get("STDEVthresh", 20.0))
 _DEFAULT_T_MOTION        = float(_B3_CFG.get("tMotion",    0.5))
 _DEFAULT_T_MASK          = float(_B3_CFG.get("t_mask",     0.5))
 
@@ -95,6 +96,41 @@ _spec_b3.loader.exec_module(_b3)
 detect_motion_artifacts = _b3.detect_motion_artifacts
 compute_motion_stats    = _b3.compute_motion_stats
 run_bandpass_filter     = _b3.run_bandpass_filter   # re-exported from B2 inside B3
+
+
+def _load_runtime_params() -> dict:
+    """
+    Load B3/B4 runtime parameters from config.yaml.
+
+    Returns
+    -------
+    params : dict
+        Dictionary containing current stage_b.rpca and stage_b.motion_detection
+        values. Reading config at runtime ensures config edits are picked up on
+        the next execution without requiring code changes.
+        Keys:
+        - n_components (float)
+        - max_iterations (int)
+        - min_channels_flagged (int)
+        - AMPthresh (float)
+        - STDEVthresh (float)
+        - tMotion (float)
+        - t_mask (float)
+        - use_amp_only (bool)
+    """
+    cfg = load_config()
+    rpca_cfg = cfg.get("stage_b", {}).get("rpca", {})
+    b3_cfg = cfg.get("stage_b", {}).get("motion_detection", {})
+    return {
+        "n_components": float(rpca_cfg.get("n_components", 0.97)),
+        "max_iterations": int(rpca_cfg.get("max_iterations", 5)),
+        "min_channels_flagged": int(rpca_cfg.get("min_channels_flagged", 1)),
+        "AMPthresh": float(b3_cfg.get("AMPthresh", 5.0)),
+        "STDEVthresh": float(b3_cfg.get("STDEVthresh", 20.0)),
+        "tMotion": float(b3_cfg.get("tMotion", 0.5)),
+        "t_mask": float(b3_cfg.get("t_mask", 0.5)),
+        "use_amp_only": bool(b3_cfg.get("use_amp_only", False)),
+    }
 
 
 # ===========================================================================
@@ -144,7 +180,7 @@ def _build_motion_mask(masks: dict, good_names: list, n_times: int,
         return counts >= min_channels_flagged
 
 
-def _impute_nan(X: np.ndarray) -> np.ndarray:
+def _impute_nan(X: np.ndarray) -> int:
     """
     Replace non-finite values in X with per-column mean.
     Used to handle trailing-zero channels (e.g. subject R10) that produce
@@ -174,6 +210,39 @@ def _impute_nan(X: np.ndarray) -> np.ndarray:
     return n_bad
 
 
+def _find_artifact_segments(motion_mask: np.ndarray) -> list:
+    """
+    Convert a boolean motion mask into contiguous artifact segments.
+
+    Parameters
+    ----------
+    motion_mask : np.ndarray, shape (n_times,), dtype bool
+        True marks motion-artifact samples.
+
+    Returns
+    -------
+    segments : list[tuple[int, int]]
+        List of (start, end_exclusive) index pairs for each contiguous
+        artifact segment, in chronological order.
+    """
+    if motion_mask.size == 0:
+        return []
+
+    segments = []
+    in_seg = False
+    seg_start = 0
+    for idx, flagged in enumerate(motion_mask):
+        if flagged and not in_seg:
+            in_seg = True
+            seg_start = idx
+        elif not flagged and in_seg:
+            segments.append((seg_start, idx))
+            in_seg = False
+    if in_seg:
+        segments.append((seg_start, motion_mask.size))
+    return segments
+
+
 def _apply_pca_single_pass(
     data: np.ndarray,
     good_idx: list,
@@ -186,9 +255,9 @@ def _apply_pca_single_pass(
 
     Key implementation:
     - PCA is FITTED on motion-flagged segments only (identifies motion subspace).
-    - Projection removal is applied to the FULL signal (all time points).
-      This is Discrepancy 4b: old code replaced only flagged samples; Homer3
-      removes the motion subspace globally.
+    - PCA residuals are written back only to flagged segments.
+    - Non-flagged regions receive only continuity-preserving offset alignment
+      across flagged/non-flagged boundaries (no PCA projection on clean data).
 
     MATLAB cross-product SVD (Homer3):
         c = y' * y          (y = flagged segments, shape n_flagged × n_good)
@@ -197,13 +266,16 @@ def _apply_pca_single_pass(
         find k: first cumsum(svs) index ≥ nSV
         yc = y - y * V_k * V_k'   (remove top-k motion subspace from flagged)
 
-    Python equivalent (extended to full signal):
+    Python equivalent (Homer3 splice behavior):
         C = X.T @ X           (same cross-product)
         U, s, _ = svd(C)      (U = V in MATLAB for symmetric PSD matrix)
         svs = s / s.sum()
-        k = first index where cumsum(svs) ≥ n_sv
+        k = number of PCs selected by Homer3 nSV rule:
+            if first cumsum(svs) already exceeds nSV, k can be 0
         V_k = U[:, :k]
-        data_good -= V_k @ (V_k.T @ data_good)   ← applied to ALL time points
+        yc = X - X @ V_k @ V_k.T
+        splice yc into flagged windows only
+        apply boundary continuity offsets on non-flagged windows
 
     Parameters
     ----------
@@ -222,12 +294,15 @@ def _apply_pca_single_pass(
     Returns
     -------
     data_out : np.ndarray, shape (n_channels, n_times)
-        Corrected data matrix (new array).
+        Corrected data matrix (new array), with PCA applied only to flagged
+        windows and continuity offsets in non-flagged windows.
     svs : np.ndarray
         Normalised singular values (explained variance fractions) from the
         cross-product SVD of the flagged segments.
     k : int
         Number of principal components removed (motion subspace dimension).
+        Can be 0 for exact Homer3 parity when n_sv threshold is below the first
+        cumulative singular value.
     """
     motion_idx = np.where(motion_mask)[0]
     n_flagged = len(motion_idx)
@@ -262,29 +337,57 @@ def _apply_pca_single_pass(
     # Find minimum k such that cumsum(svs)[k-1] >= n_sv  (Homer3 nSV logic)
     if 0.0 < n_sv < 1.0:
         svsc = np.cumsum(svs)
-        k = int(np.searchsorted(svsc, n_sv, side='left')) + 1
-        k = min(k, len(svs))
+        # Homer3 parity:
+        #   ev = diag(svsc < nSV)
+        #   nSV = find(diag(ev)==0,1)-1
+        # This yields k=0 when svsc[0] >= nSV.
+        first_ge = int(np.searchsorted(svsc, n_sv, side='left'))
+        k = max(0, min(first_ge, len(svs)))
     else:
         # n_sv given as integer count of components to remove
-        k = max(1, int(round(n_sv)))
+        k = max(0, int(round(n_sv)))
         k = min(k, len(svs))
 
-    # Motion subspace eigenvectors: V_k  (Homer3 notation: V[:, 1:k])
-    # selects the first k columns of U corresponding to the top-k principal components
+    # Motion subspace eigenvectors: V_k  (Homer3 notation: V(:,1:k))
     V_k = U[:, :k]   # shape (n_good, k)
 
-    # Full-signal projection removal  (Discrepancy 4b fix)
-    # Homer3 parity: remove motion subspace from ALL time points, not just flagged
-    # data_good_corrected = data_good - V_k @ (V_k.T @ data_good)
-    data_good = data[good_idx, :]   # (n_good, n_times)
-    
-    # V_k.T @ data_good projects your data onto the motion subspace (finds the component of your data along those axes).
-    # V_k @ (...) reconstructs the motion artifact component in the original space.
-    motion_projection = V_k @ (V_k.T @ data_good)  # (n_good, n_times)
+    # Flagged-only PCA residuals  yc = y - y*V_k*V_k'
+    yc = X - X @ V_k @ V_k.T
 
     data_out = data.copy()
-    # data_good - motion_projection subtracts this component from your data, removing the motion artifacts globally (from all time points, not just flagged ones).
-    data_out[good_idx, :] = data_good - motion_projection
+    segments = _find_artifact_segments(motion_mask)
+
+    # Splice corrected artifact segments and preserve continuity exactly as
+    # Homer3 hmrR_MotionCorrectPCA:
+    # - flagged windows get yc residuals with boundary offset alignment
+    # - non-flagged windows get only DC offset continuity adjustments
+    for good_pos, ch_idx in enumerate(good_idx):
+        d = data[ch_idx, :]
+        dN = data_out[ch_idx, :]
+
+        cursor = 0
+        for seg_i, (seg_start, seg_end_excl) in enumerate(segments):
+            seg_len = seg_end_excl - seg_start
+            yc_seg = yc[cursor:cursor + seg_len, good_pos]
+            cursor += seg_len
+
+            if seg_i == 0:
+                if seg_start > 0:
+                    dN[seg_start:seg_end_excl] = yc_seg - yc_seg[0] + dN[seg_start]
+                else:
+                    dN[seg_start:seg_end_excl] = yc_seg - yc_seg[-1] + dN[seg_end_excl - 1]
+            else:
+                prev_seg_end_excl = segments[seg_i - 1][1]
+                gap_start = prev_seg_end_excl - 1
+                gap_end_excl = seg_start + 1
+                dN[gap_start:gap_end_excl] = (
+                    d[gap_start:gap_end_excl] - d[gap_start] + dN[gap_start]
+                )
+                dN[seg_start:seg_end_excl] = yc_seg - yc_seg[0] + dN[seg_start]
+
+        if segments and segments[-1][1] < data.shape[1]:
+            tail_start = segments[-1][1] - 1
+            dN[tail_start:] = d[tail_start:] - d[tail_start] + dN[tail_start]
 
     if verbose:
         var_removed = float(np.sum(svs[:k]))
@@ -302,14 +405,14 @@ def _apply_pca_single_pass(
 def apply_rpca_correction(
     raw_od_filt,
     motion_results: dict,
-    n_components: float = _DEFAULT_N_COMPONENTS,
-    min_channels_flagged: int = _DEFAULT_MIN_CHANNELS,
-    max_iterations: int = _DEFAULT_MAX_ITER,
-    amp_thresh: float = _DEFAULT_AMP_THRESH,
-    stdev_thresh: float = _DEFAULT_STDEV_THRESH,
-    t_motion: float = _DEFAULT_T_MOTION,
-    t_mask: float = _DEFAULT_T_MASK,
-    use_amp_only: bool = False,
+    n_components: float = None,
+    min_channels_flagged: int = None,
+    max_iterations: int = None,
+    amp_thresh: float = None,
+    stdev_thresh: float = None,
+    t_motion: float = None,
+    t_mask: float = None,
+    use_amp_only: bool = None,
     verbose: bool = True,
 ) -> tuple:
     """
@@ -317,8 +420,9 @@ def apply_rpca_correction(
 
     Implements all four B4 audit corrections from docs/reproduced_matlab_comparison.md:
       4a — ITERATIVE: loops up to max_iterations, re-detecting motion after each pass.
-      4b — FULL-SIGNAL: motion subspace identified from flagged segments, subtracted
-           from the complete continuous signal (all time points).
+      4b — FLAGGED-ONLY: motion subspace identified from flagged segments and
+           applied only inside flagged windows, with continuity offsets used to
+           stitch non-flagged windows at boundaries.
       4c — OR-UNION MASK: any good channel flagged at time t → t enters the mask
            (Homer3 hmrR_MotionArtifact parity; min_channels_flagged=1).
       4d — nSV=0.97: Homer3/Yucel et al. default variance threshold.
@@ -330,35 +434,35 @@ def apply_rpca_correction(
     motion_results : dict
         Output of detect_motion_artifacts() (Step B3).
         Must contain 'masks' {ch_name: bool_array} and 'bad_channels'.
-    n_components : float
+    n_components : float or None
         Variance threshold nSV in (0, 1).  The minimum number of PCA components
         whose cumulative explained variance ≥ n_components are removed from the
         signal.  Homer3/Yucel et al. default: 0.97.
-        Loaded from config.yaml → stage_b.rpca.n_components.
-    min_channels_flagged : int
+        If None, loaded from config.yaml → stage_b.rpca.n_components.
+    min_channels_flagged : int or None
         Controls motion mask construction:
           1 (default) = OR-union — Homer3 hmrR_MotionArtifact parity.
           k>1 = vote threshold (non-Homer3, for experimentation only).
-        Loaded from config.yaml → stage_b.rpca.min_channels_flagged.
-    max_iterations : int
+        If None, loaded from config.yaml → stage_b.rpca.min_channels_flagged.
+    max_iterations : int or None
         Maximum number of PCA correction passes.  Homer3 default: 5 (maxIter).
         Each iteration re-detects motion and re-applies PCA if motion remains.
-        Loaded from config.yaml → stage_b.rpca.max_iterations.
-    amp_thresh : float
+        If None, loaded from config.yaml → stage_b.rpca.max_iterations.
+    amp_thresh : float or None
         Amplitude threshold for motion re-detection (OD units).
-        Loaded from config.yaml → stage_b.motion_detection.AMPthresh.
-    stdev_thresh : float
+        If None, loaded from config.yaml → stage_b.motion_detection.AMPthresh.
+    stdev_thresh : float or None
         STDEV multiplier for motion re-detection.
-        Loaded from config.yaml → stage_b.motion_detection.tStdev.
-    t_motion : float
+        If None, loaded from config.yaml → stage_b.motion_detection.STDEVthresh.
+    t_motion : float or None
         Motion detection window (seconds).
-        Loaded from config.yaml → stage_b.motion_detection.tMotion.
-    t_mask : float
+        If None, loaded from config.yaml → stage_b.motion_detection.tMotion.
+    t_mask : float or None
         Temporal buffer around detected events (seconds).
-        Loaded from config.yaml → stage_b.motion_detection.t_mask.
-    use_amp_only : bool
+        If None, loaded from config.yaml → stage_b.motion_detection.t_mask.
+    use_amp_only : bool or None
         If True, re-detection uses amplitude-only criterion.
-        Loaded from config.yaml → stage_b.motion_detection.use_amp_only.
+        If None, loaded from config.yaml → stage_b.motion_detection.use_amp_only.
     verbose : bool
 
     Returns
@@ -381,6 +485,16 @@ def apply_rpca_correction(
           'n_flagged':            int   — alias for n_flagged_initial (compat),
         }
     """
+    runtime_params = _load_runtime_params()
+    n_components = runtime_params["n_components"] if n_components is None else n_components
+    min_channels_flagged = runtime_params["min_channels_flagged"] if min_channels_flagged is None else min_channels_flagged
+    max_iterations = runtime_params["max_iterations"] if max_iterations is None else max_iterations
+    amp_thresh = runtime_params["AMPthresh"] if amp_thresh is None else amp_thresh
+    stdev_thresh = runtime_params["STDEVthresh"] if stdev_thresh is None else stdev_thresh
+    t_motion = runtime_params["tMotion"] if t_motion is None else t_motion
+    t_mask = runtime_params["t_mask"] if t_mask is None else t_mask
+    use_amp_only = runtime_params["use_amp_only"] if use_amp_only is None else use_amp_only
+
     data     = raw_od_filt.get_data().copy()   # (n_channels, n_times)
     ch_names = raw_od_filt.ch_names
     n_times  = data.shape[1]
@@ -454,7 +568,7 @@ def apply_rpca_correction(
             print(f"\n  --- Iteration {iteration}/{max_iterations} ---")
             print(f"      Motion mask: {n_now} samples ({100.*n_now/n_times:.1f}%)")
 
-        # Apply one PCA pass (Discrepancy 4b: full-signal projection removal)
+        # Apply one PCA pass (Discrepancy 4b: flagged-only correction + continuity stitching)
         current_data, svs, k = _apply_pca_single_pass(
             current_data, good_idx, current_mask, n_components, verbose=verbose
         )
@@ -1280,15 +1394,15 @@ def save_corrected_od(
 def run_rpca_correction(
     dataset_name: str,
     subject_id: str,
-    n_components: float = _DEFAULT_N_COMPONENTS,
-    min_channels_flagged: int = _DEFAULT_MIN_CHANNELS,
-    max_iterations: int = _DEFAULT_MAX_ITER,
+    n_components: float = None,
+    min_channels_flagged: int = None,
+    max_iterations: int = None,
     run_tuning: bool = False,
     verbose: bool = True,
 ) -> dict:
     """
     Full Step B4 pipeline: Load filtered OD → motion detect → rPCA correct
-    (iterative, full-signal, OR-union) → save → visualize → verify.
+    (iterative, flagged-only + continuity stitching, OR-union) → save → visualize → verify.
 
     All parameters default to values from config.yaml:
       n_components         ← stage_b.rpca.n_components        (Homer3 default: 0.97)
@@ -1297,7 +1411,7 @@ def run_rpca_correction(
 
     Homer3 audit fixes applied (docs/reproduced_matlab_comparison.md §B4):
       4a — iterative PCA with re-detection between passes
-      4b — full-signal projection removal
+      4b — flagged-segment-only correction + continuity stitching
       4c — OR-union motion mask (min_channels_flagged=1)
       4d — nSV=0.97
 
@@ -1305,9 +1419,12 @@ def run_rpca_correction(
     ----------
     dataset_name         : str
     subject_id           : str
-    n_components         : float   nSV variance threshold (config: stage_b.rpca.n_components)
-    min_channels_flagged : int     motion mask type (config: stage_b.rpca.min_channels_flagged)
-    max_iterations       : int     max PCA passes (config: stage_b.rpca.max_iterations)
+    n_components         : float or None
+        nSV variance threshold; if None use config: stage_b.rpca.n_components.
+    min_channels_flagged : int or None
+        Motion mask type; if None use config: stage_b.rpca.min_channels_flagged.
+    max_iterations       : int or None
+        Max PCA passes; if None use config: stage_b.rpca.max_iterations.
     run_tuning           : bool
         If True, run the Task 3.4.5 parameter grid-search sweep and save the
         heatmap/CSV.  Default False so the sweep is skipped during batch
@@ -1338,9 +1455,19 @@ def run_rpca_correction(
           'fig_tuning':         Path           or None  (None if run_tuning=False),
         }
     """
+    runtime_params = _load_runtime_params()
+    n_components = runtime_params["n_components"] if n_components is None else n_components
+    min_channels_flagged = runtime_params["min_channels_flagged"] if min_channels_flagged is None else min_channels_flagged
+    max_iterations = runtime_params["max_iterations"] if max_iterations is None else max_iterations
+    amp_thresh = runtime_params["AMPthresh"]
+    stdev_thresh = runtime_params["STDEVthresh"]
+    t_motion = runtime_params["tMotion"]
+    t_mask = runtime_params["t_mask"]
+    use_amp_only = runtime_params["use_amp_only"]
+
     print("\n" + "=" * 70)
     print(f"STAGE B — STEP B4: rPCA MOTION CORRECTION  |  Subject: {subject_id}")
-    print(f"         Homer3-faithful (iterative, full-signal, OR-union)")
+    print(f"         Homer3-faithful (iterative, flagged-only + continuity, OR-union)")
     print("=" * 70)
 
     # ---- Steps B1+B2: filtered OD ------------------------------------------
@@ -1349,15 +1476,14 @@ def run_rpca_correction(
     raw_od_filt = b2_results['raw_od_filt']
 
     # ---- Step B3: motion detection (parameters from config) ----------------
-    use_amp_only = bool(_B3_CFG.get("use_amp_only", False))
     print(f"[2/7] Detecting motion artifacts "
           f"({'amplitude-only' if use_amp_only else 'dual criterion'})...")
     motion_results = detect_motion_artifacts(
         raw_od_filt,
-        amp_thresh   = _DEFAULT_AMP_THRESH,
-        stdev_thresh = _DEFAULT_STDEV_THRESH,
-        t_motion     = _DEFAULT_T_MOTION,
-        t_mask       = _DEFAULT_T_MASK,
+        amp_thresh   = amp_thresh,
+        stdev_thresh = stdev_thresh,
+        t_motion     = t_motion,
+        t_mask       = t_mask,
         use_amp_only = use_amp_only,
         verbose      = verbose,
     )
@@ -1371,10 +1497,10 @@ def run_rpca_correction(
         n_components         = n_components,
         min_channels_flagged = min_channels_flagged,
         max_iterations       = max_iterations,
-        amp_thresh           = _DEFAULT_AMP_THRESH,
-        stdev_thresh         = _DEFAULT_STDEV_THRESH,
-        t_motion             = _DEFAULT_T_MOTION,
-        t_mask               = _DEFAULT_T_MASK,
+        amp_thresh           = amp_thresh,
+        stdev_thresh         = stdev_thresh,
+        t_motion             = t_motion,
+        t_mask               = t_mask,
         use_amp_only         = use_amp_only,
         verbose              = verbose,
     )
@@ -1408,6 +1534,10 @@ def run_rpca_correction(
         raw_od_corrected,
         motion_results,
         stats_before,
+        amp_thresh   = amp_thresh,
+        stdev_thresh = stdev_thresh,
+        t_motion     = t_motion,
+        t_mask       = t_mask,
         verbose = verbose,
     )
 

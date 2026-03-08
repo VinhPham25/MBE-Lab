@@ -337,12 +337,18 @@ def process_subject(
         metrics["status"] = "Pass"
         metrics["notes"]  = ""
 
+        # Safe format helpers — metrics can be None when no valid channels
+        # survive the dropna filters (e.g. R10 trailing-zero artifact, or
+        # subjects where all channels lack a matched short-sep pair).
+        def _fv(v, spec):
+            return format(v, spec) if v is not None else "N/A"
+
         print(f"  ✅ {subject_id}: Pass | "
               f"bad={n_bad_pairs} | "
-              f"MR={metrics['mean_MR_post_rPCA']:.3f} | "
-              f"varHbO={metrics['var_removed_HbO_pct']:.1f}% | "
-              f"varHbR={metrics['var_removed_HbR_pct']:.1f}% | "
-              f"r={metrics['mean_r_HbO_HbR_after']:.3f}")
+              f"MR={_fv(metrics['mean_MR_post_rPCA'], '.3f')} | "
+              f"varHbO={_fv(metrics['var_removed_HbO_pct'], '.1f')}% | "
+              f"varHbR={_fv(metrics['var_removed_HbR_pct'], '.1f')}% | "
+              f"r={_fv(metrics['mean_r_HbO_HbR_after'], '.3f')}")
 
     except Exception as exc:  # noqa: BLE001
         err_msg = f"{type(exc).__name__}: {exc}"
@@ -432,96 +438,119 @@ def generate_group_visualization(
         print("  ⚠  No passing subjects — group visualization skipped.")
         return None
 
-    sub_ids    = [r["subject_id"]          for r in pass_records]
-    var_hbo    = [r["var_removed_HbO_pct"] for r in pass_records]
-    var_hbr    = [r["var_removed_HbR_pct"] for r in pass_records]
-    r_before   = [r["mean_r_HbO_HbR_before"] for r in pass_records]
-    r_after    = [r["mean_r_HbO_HbR_after"]  for r in pass_records]
-
+    sub_ids = [r["subject_id"] for r in pass_records]
     n = len(pass_records)
+
+    # Filter None values from variance metrics (e.g. R10 trailing-zero artefact
+    # leaves var_removed_frac NaN → metric stays None).
+    var_hbo_pairs = [(r["subject_id"], r["var_removed_HbO_pct"])
+                     for r in pass_records if r["var_removed_HbO_pct"] is not None]
+    var_hbr_pairs = [(r["subject_id"], r["var_removed_HbR_pct"])
+                     for r in pass_records if r["var_removed_HbR_pct"] is not None]
+    var_hbo = [v for _, v in var_hbo_pairs]
+    var_hbr = [v for _, v in var_hbr_pairs]
+
+    # Only include subjects where both r_before and r_after are available
+    # (subjects with no valid short-sep pair have None for correlation metrics).
+    r_records = [r for r in pass_records
+                 if r["mean_r_HbO_HbR_before"] is not None
+                 and r["mean_r_HbO_HbR_after"] is not None]
+    r_sub_ids = [r["subject_id"]           for r in r_records]
+    r_before  = [r["mean_r_HbO_HbR_before"] for r in r_records]
+    r_after   = [r["mean_r_HbO_HbR_after"]  for r in r_records]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # ---- Panel A: Variance removed box plot ---------------------------------
     ax = axes[0]
-    bp = ax.boxplot(
-        [var_hbo, var_hbr],
-        tick_labels=["HbO", "HbR"],
-        patch_artist=True,
-        medianprops=dict(color="black", linewidth=2),
-        whiskerprops=dict(linewidth=1.2),
-        capprops=dict(linewidth=1.2),
-        flierprops=dict(marker="+", markersize=7, color="black"),
-    )
-    bp["boxes"][0].set_facecolor("#ffb3b3")   # light red for HbO
-    bp["boxes"][1].set_facecolor("#b3c6ff")   # light blue for HbR
-
-    # Overlay individual subject points
-    for i, (vals, color) in enumerate(
-        [(var_hbo, "#d62728"), (var_hbr, "#1f77b4")], start=1
-    ):
-        x_jitter = np.random.default_rng(42).uniform(-0.08, 0.08, len(vals))
-        ax.scatter(
-            [i + x_jitter[j] for j in range(len(vals))],
-            vals,
-            c=color, alpha=0.7, zorder=3, s=40,
+    if var_hbo or var_hbr:
+        bp = ax.boxplot(
+            [var_hbo or [0], var_hbr or [0]],
+            tick_labels=["HbO", "HbR"],
+            patch_artist=True,
+            medianprops=dict(color="black", linewidth=2),
+            whiskerprops=dict(linewidth=1.2),
+            capprops=dict(linewidth=1.2),
+            flierprops=dict(marker="+", markersize=7, color="black"),
         )
+        bp["boxes"][0].set_facecolor("#ffb3b3")   # light red for HbO
+        bp["boxes"][1].set_facecolor("#b3c6ff")   # light blue for HbR
+
+        # Overlay individual subject points
+        for i, (vals, color) in enumerate(
+            [(var_hbo, "#d62728"), (var_hbr, "#1f77b4")], start=1
+        ):
+            if vals:
+                x_jitter = np.random.default_rng(42).uniform(-0.08, 0.08, len(vals))
+                ax.scatter(
+                    [i + x_jitter[j] for j in range(len(vals))],
+                    vals,
+                    c=color, alpha=0.7, zorder=3, s=40,
+                )
+
+        all_vals = var_hbo + var_hbr
+        ax.set_ylim(0, max(max(all_vals, default=30) * 1.2, 30))
+        hbo_mean_str = f"{np.mean(var_hbo):.1f}%" if var_hbo else "N/A"
+        hbr_mean_str = f"{np.mean(var_hbr):.1f}%" if var_hbr else "N/A"
+        ax.annotate(
+            f"HbO mean: {hbo_mean_str}\nHbR mean: {hbr_mean_str}",
+            xy=(0.97, 0.97), xycoords="axes fraction",
+            ha="right", va="top", fontsize=9,
+            bbox=dict(boxstyle="round", fc="lightyellow", ec="gray", alpha=0.85),
+        )
+    else:
+        ax.text(0.5, 0.5, "No variance data available",
+                ha="center", va="center", transform=ax.transAxes)
 
     ax.set_ylabel("Variance Removed (%)", fontsize=11)
     ax.set_title(
-        f"(A) OLS Variance Removed\n(n={n} subjects)",
+        f"(A) OLS Variance Removed\n"
+        f"(n={len(var_hbo)} HbO / {len(var_hbr)} HbR subjects with data)",
         fontsize=11, fontweight="bold",
     )
-    ax.set_ylim(0, max(max(var_hbo + var_hbr, default=30) * 1.2, 30))
     ax.axhline(0, color="gray", lw=0.5, ls="--")
     ax.grid(axis="y", alpha=0.3)
-
-    # Annotate group means
-    ax.annotate(
-        f"HbO mean: {np.mean(var_hbo):.1f}%\nHbR mean: {np.mean(var_hbr):.1f}%",
-        xy=(0.97, 0.97), xycoords="axes fraction",
-        ha="right", va="top", fontsize=9,
-        bbox=dict(boxstyle="round", fc="lightyellow", ec="gray", alpha=0.85),
-    )
 
     # ---- Panel B: Anti-correlation shift scatter ----------------------------
     ax = axes[1]
 
-    # Scatter: each subject as a point
-    ax.scatter(r_before, r_after, c="#2ca02c", s=60, alpha=0.8, zorder=3)
+    if r_records:
+        ax.scatter(r_before, r_after, c="#2ca02c", s=60, alpha=0.8, zorder=3)
 
-    # Label each point with subject ID
-    for sid, xv, yv in zip(sub_ids, r_before, r_after):
-        ax.annotate(sid, (xv, yv), textcoords="offset points",
-                    xytext=(5, 3), fontsize=7, alpha=0.8)
+        for sid, xv, yv in zip(r_sub_ids, r_before, r_after):
+            ax.annotate(sid, (xv, yv), textcoords="offset points",
+                        xytext=(5, 3), fontsize=7, alpha=0.8)
 
-    # Reference lines
-    lim = [-1.0, 0.5]
-    ax.plot(lim, lim, "k--", lw=0.9, label="No change (y = x)")
-    ax.axhline(-0.5, color="darkgreen", lw=1.0, ls=":", label="Target ≤ −0.5")
-    ax.axhline(-1.0, color="darkgreen", lw=0.8, ls="--")
+        lim = [-1.0, 0.5]
+        ax.plot(lim, lim, "k--", lw=0.9, label="No change (y = x)")
+        ax.axhline(-0.5, color="darkgreen", lw=1.0, ls=":", label="Target ≤ −0.5")
+        ax.axhline(-1.0, color="darkgreen", lw=0.8, ls="--")
 
-    # Group arrows
-    mean_bef = np.mean(r_before)
-    mean_aft = np.mean(r_after)
-    ax.annotate(
-        "",
-        xy=(mean_bef, mean_aft),
-        xytext=(mean_bef, mean_bef),
-        arrowprops=dict(arrowstyle="->", color="purple", lw=1.5),
-    )
-    ax.scatter([mean_bef], [mean_aft], c="purple", s=120, zorder=5,
-               label=f"Group mean: {mean_bef:.3f} → {mean_aft:.3f}")
+        mean_bef = float(np.mean(r_before))
+        mean_aft = float(np.mean(r_after))
+        ax.annotate(
+            "",
+            xy=(mean_bef, mean_aft),
+            xytext=(mean_bef, mean_bef),
+            arrowprops=dict(arrowstyle="->", color="purple", lw=1.5),
+        )
+        ax.scatter([mean_bef], [mean_aft], c="purple", s=120, zorder=5,
+                   label=f"Group mean: {mean_bef:.3f} → {mean_aft:.3f}")
+        ax.set_xlim(lim); ax.set_ylim(lim)
+        ax.legend(fontsize=8, loc="lower right")
+    else:
+        ax.text(0.5, 0.5,
+                f"No paired r(HbO,HbR) data\n({n} subjects processed,\n"
+                "0 with valid short-sep pairs)",
+                ha="center", va="center", transform=ax.transAxes, fontsize=10)
 
     ax.set_xlabel("Mean r(HbO, HbR)  before OLS", fontsize=11)
     ax.set_ylabel("Mean r(HbO, HbR)  after OLS",  fontsize=11)
     ax.set_title(
-        "(B) HbO/HbR Anti-Correlation Shift\n"
-        "(more negative = brain signal dominates after regression)",
+        f"(B) HbO/HbR Anti-Correlation Shift\n"
+        f"(n={len(r_records)} subjects with paired correlation data)",
         fontsize=11, fontweight="bold",
     )
-    ax.set_xlim(lim); ax.set_ylim(lim)
-    ax.legend(fontsize=8, loc="lower right")
     ax.grid(alpha=0.3)
 
     fig.suptitle(
@@ -544,6 +573,7 @@ def save_provenance_log(
     study_folder:        str,
     n_components:        float,
     min_channels_flagged: int,
+    max_iterations:      int,
     ppf_dict:            dict,
     system:              str,
 ) -> Path:
@@ -592,7 +622,7 @@ def save_provenance_log(
             },
             "B3_motion_detection": {
                 "AMPthresh":              float(b3_params.get("AMPthresh", 5.0)),
-                "STDEVthresh_multiplier": float(b3_params.get("tStdev", 20.0)),
+                "STDEVthresh_multiplier": float(b3_params.get("STDEVthresh", 20.0)),
                 "tMotion":                float(b3_params.get("tMotion", 0.5)),
                 "t_mask":                 float(b3_params.get("t_mask", 0.5)),
                 "use_amp_only":           bool(b3_params.get("use_amp_only", False)),
@@ -600,6 +630,7 @@ def save_provenance_log(
             "B4_rPCA": {
                 "n_components":         n_components,
                 "min_channels_flagged": min_channels_flagged,
+                "max_iterations":       max_iterations,
             },
             "B5_beer_lambert": {
                 "ppf_values":  ppf_serialisable,
@@ -754,6 +785,7 @@ def run_preprocess_study(
         study_folder         = study_folder,
         n_components         = n_components,
         min_channels_flagged = min_channels_flagged,
+        max_iterations       = DEFAULT_MAX_ITER,
         ppf_dict             = ppf_dict,
         system               = system,
     )

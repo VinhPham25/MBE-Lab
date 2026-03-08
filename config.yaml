@@ -95,7 +95,7 @@ stage_a:
   # Motion Artifact Detection Parameters (from MATLAB code)
   motion:
     tMotion: 0.5  # Amplitude threshold
-    tStdev: 20  # Standard deviation multiplier
+    STDEVthresh: 20  # Standard deviation multiplier
     AMPThresh: 0.5  # Amplitude threshold for motion detection
     STDEVthresh: 5  # Standard deviation threshold
     
@@ -133,12 +133,15 @@ stage_b:
     lpf: 0.5   # Hz - Low-pass cutoff (Homer3 default)
     
   # Step B3: Motion Artifact Detection (on OD)
+  # Homer3 reference: hmrR_MotionArtifact.m
+  # Audit fix (2026-03-05): max_diff padding corrected to MATLAB parity (zeros at END)
+  # Parameter names match MATLAB function signatures for traceability.
   motion_detection:
-    tMotion: 0.5        # Detection window width in seconds (Homer3 default)
-    tStdev: 20          # Derivative-std multiplier for dual criterion (Homer3 default)
-    AMPthresh: 5.0      # Absolute OD-change threshold (Homer3 default, OD units)
-    t_mask: 0.5         # Temporal buffer around detected events (seconds)
-    use_amp_only: false # false = Homer3 dual criterion; true = amplitude only
+    tMotion: 0.5        # Detection window width in seconds (Homer3 default: 0.5)
+    STDEVthresh: 20     # Derivative-std multiplier for dual criterion (Homer3/ASTaUND: 20)
+    AMPthresh: 5.0      # Absolute OD-change threshold in OD units (Homer3/ASTaUND: 5.0)
+    t_mask: 0.5         # Temporal buffer around detected events in seconds (ASTaUND ref #36: 0.5)
+    use_amp_only: false # false = Homer3 dual criterion (AMPthresh OR STDEVthresh×std); true = amplitude only
     
   # Step B4: Recursive PCA (rPCA) Motion Correction
   # Homer3 reference: hmrR_MotionCorrectPCArecurse.m + hmrR_MotionCorrectPCA.m
@@ -165,10 +168,10 @@ stage_b:
     method: "homer3_style_glm_ols"
     short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
     trange: [-25, 100]              # seconds - HRF estimation window [t_pre, t_post]
-    gaussian_std_s: 1.0             # seconds - Gaussian basis width (std)
-    gaussian_step_s: 1.0            # seconds - spacing between Gaussian basis centers
+    gaussian_std_s: 1.5             # seconds - Gaussian basis width (std)
+    gaussian_step_s: 2.0            # seconds - spacing between Gaussian basis centers
     flag_nuisance_r_method: 1       # 0=nearest short, 1=max-correlation short, 2=mean short
-    drift_order: 3                  # polynomial drift order
+    drift_order: 2                  # polynomial drift order
     glm_solve_method: 1             # 1 = OLS
     event_ids: [1]                  # annotation/event IDs used as stimulus onsets
     
