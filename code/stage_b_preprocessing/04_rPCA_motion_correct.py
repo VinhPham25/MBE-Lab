@@ -1412,7 +1412,7 @@ def run_rpca_correction(
     verbose: bool = True,
 ) -> dict:
     """
-    Full Step B4 pipeline: Load OD → motion detect → rPCA correct
+    Full Step B4 pipeline: Load OD → bandpass → motion detect → rPCA correct
     (iterative, flagged-only + continuity stitching, OR-union) → save → visualize → verify.
 
     All parameters default to values from config.yaml:
@@ -1481,8 +1481,8 @@ def run_rpca_correction(
     print(f"         Homer3-faithful (iterative, flagged-only + continuity, OR-union)")
     print("=" * 70)
 
-    # ---- Steps B1+B3: OD + motion detection --------------------------------
-    print("\n[1/7] Loading OD + motion detection (Steps B1+B3)...")
+    # ---- Steps B1+B2+B3: OD + bandpass + motion detection ------------------
+    print("\n[1/7] Loading OD + bandpass + motion detection (Steps B1+B2+B3)...")
     b3_results = run_motion_detection(dataset_name, subject_id, verbose=False)
     raw_od_filt = b3_results['raw_od_filt']
 

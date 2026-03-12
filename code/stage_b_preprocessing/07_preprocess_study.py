@@ -1,7 +1,7 @@
 """
 Stage B — Step B7: Full Study Batch Processing
 Purpose: Process all subjects in a study through the complete Stage B pipeline
-         (B1 OD → B3 motion detect → B4 rPCA → B2 bandpass → B5 MBLL → B6 GLM/OLS)
+         (B1 OD → B2 bandpass → B3 motion detect → B4 rPCA → B5 MBLL → B6 GLM/OLS)
          and produce BIDS-compliant .fif outputs plus a study-level summary.
 
 Task coverage:
@@ -615,8 +615,8 @@ def save_provenance_log(
         "system":             system,
         "date_processed":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pipeline_version":   "Stage B v1.0",
-        "pipeline_steps":     ["B1_OD", "B3_motion_detect", "B4_rPCA",
-                               "B2_bandpass", "B5_MBLL", "B6_GLM_OLS"],
+        "pipeline_steps":     ["B1_OD", "B2_bandpass", "B3_motion_detect",
+                               "B4_rPCA", "B5_MBLL", "B6_GLM_OLS"],
         "n_subjects_attempted": len(records),
         "n_subjects_passed":  n_pass,
         "n_subjects_failed":  n_fail,
@@ -626,7 +626,7 @@ def save_provenance_log(
                 "low_db":  float(snr_params.get("threshold_low",  80.0)),
                 "high_db": float(snr_params.get("threshold_high", 140.0)),
             },
-            "B2_bandpass_filter_post_rpca": {
+            "B2_bandpass_filter": {
                 "hpf":  b_params.get("filter", {}).get("hpf", 0.0),
                 "lpf":  b_params.get("filter", {}).get("lpf", 0.5),
                 "method":  b_params.get("filter", {}).get("method", "iir"),

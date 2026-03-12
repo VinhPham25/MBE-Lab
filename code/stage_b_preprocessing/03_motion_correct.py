@@ -54,7 +54,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import get_output_path, load_config
+from utils import get_output_path, get_stage_params, load_config
 
 # ---------------------------------------------------------------------------
 # Load config once at import time — all tunable constants derive from here
@@ -77,6 +77,14 @@ _spec = importlib.util.spec_from_file_location(
 _b1 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_b1)
 run_intensity_to_od = _b1.run_intensity_to_od
+
+_spec_b2 = importlib.util.spec_from_file_location(
+    "bandpass_filtering",
+    Path(__file__).parent / "02_bandpass_filtering.py",
+)
+_b2 = importlib.util.module_from_spec(_spec_b2)
+_spec_b2.loader.exec_module(_b2)
+apply_bandpass_filter = _b2.apply_bandpass_filter
 
 
 # ===========================================================================
@@ -682,10 +690,11 @@ def run_motion_detection(
     Run the Step B3 motion detection pipeline for one subject.
 
     Executes Tasks 3.3.1–3.3.3 in sequence:
-    1. Runs Step B1 to obtain the OD object (via run_intensity_to_od).
-    2. Detects motion artifacts channel-by-channel (3.3.1).
-    3. Computes motion statistics and mask summary (3.3.2).
-    4. Visualises motion artifacts on OD traces (3.3.3).
+    1. Runs Step B1 to obtain OD (via run_intensity_to_od).
+    2. Runs Step B2 bandpass filtering on OD (via apply_bandpass_filter).
+    3. Detects motion artifacts channel-by-channel on filtered OD (3.3.1).
+    4. Computes motion statistics and mask summary (3.3.2).
+    5. Visualises motion artifacts on OD traces (3.3.3).
 
     All detection parameters are loaded from config.yaml
     (stage_b.motion_detection).  Editing config.yaml and re-running will
@@ -704,7 +713,7 @@ def run_motion_detection(
     -------
     results : dict
         'raw_od_filt'    : mne.io.Raw
-                           OD data (Step B1 output).
+                           OD data after Step B2 bandpass filtering.
         'motion_results' : dict
                            Per-channel signal-domain motion masks and detection
                            parameters.  Passed directly to Step B4 rPCA.
@@ -721,7 +730,17 @@ def run_motion_detection(
 
     # ---- Step B1: OD --------------------------------------------------------
     b1_results = run_intensity_to_od(dataset_name, subject_id, verbose=False)
-    raw_od_filt = b1_results['raw_od']
+    raw_od = b1_results["raw_od"]
+
+    # ---- Step B2: bandpass filter ------------------------------------------
+    config = load_config()
+    filt_params = get_stage_params("stage_b", config).get("filter", {})
+    raw_od_filt, _ = apply_bandpass_filter(
+        raw_od,
+        hpf=float(filt_params.get("hpf", 0.0)),
+        lpf=float(filt_params.get("lpf", 0.5)),
+        verbose=False,
+    )
 
     # ---- 3.3.1 Detect motion artifacts -------------------------------------
     motion_results = detect_motion_artifacts(

@@ -13,7 +13,7 @@ datasets:
     bids_task: "ExpNovPatternCutting"   # BIDS task label for output filenames
     output_folder: "expert-novice"      # Stage B processed data subfolder
     groups:
-      Expert: ["A1", "A2", "R7", "R8", "R9", "R10", "R11", "R12"]
+      Expert: ["A1", "A2", "R7", "R8", "R9", "R11", "R12"]
       Novice: ["R1", "R2", "R3", "R4", "R5", "R6"]
     sfreq: 25.0  # Hz (verified from actual data - 25 Hz, not 20 Hz as in PRD)
     wavelengths: [690, 830]  # nm
@@ -166,11 +166,11 @@ stage_b:
   # Paper: HRF created via Gaussian basis functions + OLS, with short-channel nuisance regression
   short_channel_regression:
     method: "homer3_style_glm_ols"
-    short_separation_threshold: 0  # mm - Channels < 15mm are short-separation
+    short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
     trange: [-25, 100]                # seconds - HRF estimation window [t_pre, t_post] (Nemani-style constrained window)
     gaussian_std_s: 1.0             # seconds - Gaussian basis width (std)
     gaussian_step_s: 1.0            # seconds - spacing between Gaussian basis centers
-    flag_nuisance_r_method: 1       # revert to max-correlation short-channel nuisance for stability
+    flag_nuisance_r_method: 2       # revert to max-correlation short-channel nuisance for stability
     drift_order: 3                  # restored best stable setting before code-level modification
     orthogonalize_drift_nuisance_against_hrf: False  # true=preserve HRsF variance by orthogonalizing drift/nuisance; false=legacy behavior
     glm_solve_method: 1             # 1 = OLS
@@ -188,9 +188,9 @@ stage_b:
 stage_c:
   # Step C1: HRF Extraction
   epochs:
-    tmin: -5    # seconds before stimulus onset (baseline period)
-    tmax: 60    # seconds after stimulus onset
-    baseline: [-5, 0]  # Baseline correction period (seconds)
+    tmin: -25    # seconds before stimulus onset (baseline period)
+    tmax: 100    # seconds after stimulus onset
+    baseline: [-25, 0]  # Baseline correction period (seconds)
     event_id:
       trial_start: 1  # Condition 1 = trial start
       trial_end: 2    # Condition 2 = trial end

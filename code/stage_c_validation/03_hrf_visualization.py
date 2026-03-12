@@ -167,8 +167,9 @@ def collect_group_traces(
     region_map: dict[str, list[str]],
     chromophore: str,
     target_sfreq: float,
-) -> tuple[dict[str, np.ndarray], np.ndarray | None]:
+) -> tuple[dict[str, np.ndarray], np.ndarray | None, dict[str, list[str]]]:
     region_mats: dict[str, list[np.ndarray]] = {r: [] for r in region_map}
+    region_subject_ids: dict[str, list[str]] = {r: [] for r in region_map}
     times_ref: np.ndarray | None = None
 
     for sid in subjects:
@@ -202,12 +203,31 @@ def collect_group_traces(
             idx = [ev.ch_names.index(c) for c in present]
             trace_um = ev.data[idx, :].mean(axis=0) * 1e6
             region_mats[region].append(trace_um)
+            region_subject_ids[region].append(sid)
 
     out = {
         r: np.vstack(mats) if mats else np.empty((0, 0))
         for r, mats in region_mats.items()
     }
-    return out, times_ref
+    return out, times_ref, region_subject_ids
+
+
+def print_subject_region_amplitude_qc(
+    group_name: str,
+    chrom_label: str,
+    region_traces: dict[str, np.ndarray],
+    region_subject_ids: dict[str, list[str]],
+) -> None:
+    """Print per-subject |peak| amplitude by region to identify outliers."""
+    print(f"    [Amplitude QC] {group_name} | {chrom_label}")
+    for region, mat in region_traces.items():
+        if mat.size == 0:
+            print(f"      {region}: no traces")
+            continue
+        subj_ids = region_subject_ids.get(region, [])
+        for sid, trace in zip(subj_ids, mat):
+            peak_amp = float(np.max(np.abs(trace)))
+            print(f"      {sid} | {region} | max_amp={peak_amp:.3f} uM")
 
 
 def plot_hrf_panel(
@@ -287,7 +307,7 @@ def generate_hrf_plots(
         group_region_traces = {}
         times_ref = None
         for group_name, subjects in groups.items():
-            traces, t = collect_group_traces(
+            traces, t, region_subject_ids = collect_group_traces(
                 subjects, stage_b_dir, task_name, region_map,
                 chromophore=chromophore, target_sfreq=target_sfreq,
             )
@@ -360,11 +380,17 @@ def generate_hrf_plots_5region(
         group_region_traces = {}
         times_ref = None
         for group_name, subjects in groups.items():
-            traces, t = collect_group_traces(
+            traces, t, region_subject_ids = collect_group_traces(
                 subjects, stage_b_dir, task_name, region_map_5,
                 chromophore=chromophore, target_sfreq=target_sfreq,
             )
             group_region_traces[group_name] = traces
+            print_subject_region_amplitude_qc(
+                group_name=group_name,
+                chrom_label=chrom_label,
+                region_traces=traces,
+                region_subject_ids=region_subject_ids,
+            )
             if times_ref is None and t is not None:
                 times_ref = t
 
