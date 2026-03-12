@@ -141,7 +141,7 @@ stage_b:
     STDEVthresh: 20     # Derivative-std multiplier for dual criterion (Homer3/ASTaUND: 20)
     AMPthresh: 5.0      # Absolute OD-change threshold in OD units (Homer3/ASTaUND: 5.0)
     t_mask: 0.5         # Temporal buffer around detected events in seconds (ASTaUND ref #36: 0.5)
-    use_amp_only: false # false = Homer3 dual criterion (AMPthresh OR STDEVthresh×std); true = amplitude only
+    use_amp_only: true  # switched to amplitude-only to avoid derivative-threshold over-flagging of task structure
     
   # Step B4: Recursive PCA (rPCA) Motion Correction
   # Homer3 reference: hmrR_MotionCorrectPCArecurse.m + hmrR_MotionCorrectPCA.m
@@ -151,9 +151,9 @@ stage_b:
   #   4c — OR-union mask: any channel flagged → that time point enters the mask (min_channels_flagged=1)
   #   4d — nSV=0.97 (Yucel et al. Homer3 default)
   rpca:
-    n_components: 0.97       # nSV: variance fraction to remove (Homer3/Yucel et al. default: 0.97)
+    n_components: 0.80       # nSV: reduced from 0.97 to limit over-removal during iterative rPCA
     max_iterations: 5        # Homer3 default maxIter: 5 (Yucel et al.)
-    min_channels_flagged: 1  # 1 = OR-union (Homer3 hmrR_MotionArtifact parity); >1 = vote threshold
+    min_channels_flagged: 5  # require >=5 channels flagged to reduce over-aggressive correction mask
     
   # Step B5: Modified Beer-Lambert Law
   beer_lambert:
@@ -166,12 +166,13 @@ stage_b:
   # Paper: HRF created via Gaussian basis functions + OLS, with short-channel nuisance regression
   short_channel_regression:
     method: "homer3_style_glm_ols"
-    short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
-    trange: [-25, 100]              # seconds - HRF estimation window [t_pre, t_post]
+    short_separation_threshold: 0  # mm - Channels < 15mm are short-separation
+    trange: [-25, 100]                # seconds - HRF estimation window [t_pre, t_post] (Nemani-style constrained window)
     gaussian_std_s: 1.0             # seconds - Gaussian basis width (std)
     gaussian_step_s: 1.0            # seconds - spacing between Gaussian basis centers
-    flag_nuisance_r_method: 1       # 0=nearest short, 1=max-correlation short, 2=mean short
-    drift_order: 3                  # polynomial drift order
+    flag_nuisance_r_method: 1       # revert to max-correlation short-channel nuisance for stability
+    drift_order: 3                  # restored best stable setting before code-level modification
+    orthogonalize_drift_nuisance_against_hrf: False  # true=preserve HRsF variance by orthogonalizing drift/nuisance; false=legacy behavior
     glm_solve_method: 1             # 1 = OLS
     event_ids: [1]                  # annotation/event IDs used as stimulus onsets
     
@@ -187,9 +188,9 @@ stage_b:
 stage_c:
   # Step C1: HRF Extraction
   epochs:
-    tmin: -25    # seconds before stimulus onset (baseline period)
-    tmax: 100   # seconds after stimulus onset — extended to match Figure 3c horizon
-    baseline: [-25, 0]  # Baseline correction period (seconds)
+    tmin: -5    # seconds before stimulus onset (baseline period)
+    tmax: 60    # seconds after stimulus onset
+    baseline: [-5, 0]  # Baseline correction period (seconds)
     event_id:
       trial_start: 1  # Condition 1 = trial start
       trial_end: 2    # Condition 2 = trial end

@@ -348,6 +348,17 @@ def _apply_pca_single_pass(
         k = max(0, int(round(n_sv)))
         k = min(k, len(svs))
 
+    # Safety cap: avoid over-removing physiological signal in a single pass.
+    # Keep removed flagged-segment variance <= 50%.
+    max_var_remove = 0.50
+    if k > 0:
+        svsc = np.cumsum(svs)
+        k_cap = int(np.searchsorted(svsc, max_var_remove, side='right'))
+        if k_cap <= 0:
+            k_cap = 1
+        if k > k_cap:
+            k = k_cap
+
     # Motion subspace eigenvectors: V_k  (Homer3 notation: V(:,1:k))
     V_k = U[:, :k]   # shape (n_good, k)
 

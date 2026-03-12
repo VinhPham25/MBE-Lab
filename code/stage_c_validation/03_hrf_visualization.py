@@ -127,6 +127,8 @@ GROUP_STYLE: dict[str, dict] = {
     },
 }
 
+MAX_NONFINITE_CHANNEL_FRACTION = 0.25
+
 
 def _load_glm_evoked(
     subject_id: str,
@@ -175,7 +177,20 @@ def collect_group_traces(
             print(f"    [{sid}] missing GLM HRF sidecar, skipped")
             continue
 
+        # Subject-level QC gate: exclude entirely if too many channels are non-finite.
+        nonfinite_mask = np.array([not np.isfinite(row).all() for row in ev.data], dtype=bool)
+        nonfinite_frac = float(np.mean(nonfinite_mask)) if ev.data.shape[0] else 1.0
+        if nonfinite_frac > MAX_NONFINITE_CHANNEL_FRACTION:
+            print(
+                f"    [{sid}] excluded: non-finite channel fraction "
+                f"{nonfinite_frac:.2f} > {MAX_NONFINITE_CHANNEL_FRACTION:.2f}"
+            )
+            continue
+
         ev = _harmonise_evoked(ev, target_sfreq)
+        if len(ev.ch_names) == 0:
+            print(f"    [{sid}] all channels dropped after non-finite cleanup, skipped")
+            continue
         if times_ref is None:
             times_ref = ev.times
 

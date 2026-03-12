@@ -59,6 +59,7 @@ _DOC_DEFAULTS = {
     "short_separation_threshold_mm": 15.0,
     "flag_nuisance_r_method": 1,
     "drift_order": 3,
+    "orthogonalize_drift_nuisance_against_hrf": True,
     "glm_solve_method": 1,
     "event_ids": [1],
 }
@@ -76,6 +77,7 @@ class GlmParams:
         short_sep_threshold_mm: float,
         flag_nuisance_r_method: int,
         drift_order: int,
+        orthogonalize_drift_nuisance_against_hrf: bool,
         glm_solve_method: int,
         event_ids: list[int],
     ) -> None:
@@ -96,6 +98,8 @@ class GlmParams:
             Short-channel selection mode: `0=nearest`, `1=max correlation`, `2=mean`.
         drift_order : int
             Polynomial drift order for nuisance drift regressors.
+        orthogonalize_drift_nuisance_against_hrf : bool
+            If True, orthogonalize drift/nuisance regressors to the HRF basis.
         glm_solve_method : int
             GLM solver code (currently OLS = 1).
         event_ids : list[int]
@@ -111,6 +115,7 @@ class GlmParams:
         self.short_sep_threshold_mm = short_sep_threshold_mm
         self.flag_nuisance_r_method = flag_nuisance_r_method
         self.drift_order = drift_order
+        self.orthogonalize_drift_nuisance_against_hrf = orthogonalize_drift_nuisance_against_hrf
         self.glm_solve_method = glm_solve_method
         self.event_ids = event_ids
 
@@ -174,6 +179,21 @@ def _safe_int(v: Any, default: int) -> int:
         return int(v)
     except (TypeError, ValueError):
         return int(default)
+
+
+def _safe_bool(v: Any, default: bool) -> bool:
+    """Safely cast common config values to bool with fallback."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in {"1", "true", "yes", "on"}:
+            return True
+        if s in {"0", "false", "no", "off"}:
+            return False
+    return bool(default)
 
 
 def _resolve_event_ids_from_config(cfg: dict) -> list[int]:
@@ -279,6 +299,13 @@ def get_glm_params(
         _DOC_DEFAULTS["flag_nuisance_r_method"],
     )
     drift_order = _safe_int(scr_cfg.get("drift_order", _DOC_DEFAULTS["drift_order"]), _DOC_DEFAULTS["drift_order"])
+    orth_drift_nuis = _safe_bool(
+        scr_cfg.get(
+            "orthogonalize_drift_nuisance_against_hrf",
+            _DOC_DEFAULTS["orthogonalize_drift_nuisance_against_hrf"],
+        ),
+        _DOC_DEFAULTS["orthogonalize_drift_nuisance_against_hrf"],
+    )
     glm_method = _safe_int(scr_cfg.get("glm_solve_method", _DOC_DEFAULTS["glm_solve_method"]), _DOC_DEFAULTS["glm_solve_method"])
     event_ids = _resolve_event_ids_from_config(cfg)
 
@@ -289,6 +316,7 @@ def get_glm_params(
         short_sep_threshold_mm=max(short_sep, 0.0),
         flag_nuisance_r_method=flag_nuis,
         drift_order=max(drift_order, 0),
+        orthogonalize_drift_nuisance_against_hrf=orth_drift_nuis,
         glm_solve_method=glm_method,
         event_ids=event_ids,
     )
@@ -570,7 +598,9 @@ def select_short_regressor(
         s = data[si, :]
         return s, si, _corr(y, s)
 
-    # Default / method 1: greatest correlation (not abs), as in hmrS_GLM case 1
+    # Default / method 1: greatest positive correlation (not abs), as in hmrS_GLM case 1.
+    # Guard: if no positively-correlated short channel exists, skip nuisance regression
+    # for this long channel to avoid injecting anti-correlated components.
     best_si = None
     best_r = -np.inf
     for si in short_candidates:
@@ -580,7 +610,9 @@ def select_short_regressor(
             best_r = r
             best_si = int(si)
 
-    if best_si is None:
+    # Require a minimum positive coupling strength before nuisance regression.
+    min_pos_corr = 0.10
+    if best_si is None or not np.isfinite(best_r) or best_r < min_pos_corr:
         return None, None, float("nan")
 
     s = data[best_si, :]
@@ -613,6 +645,16 @@ def _solve_ols(
         pinvA = np.linalg.pinv(At_inc)
     beta = pinvA @ y_inc
     return beta, pinvA
+
+
+def _orthogonalize_against(ref: np.ndarray, x: np.ndarray) -> np.ndarray:
+    """
+    Remove components of columns in x that lie in the column space of ref.
+    """
+    if ref.size == 0 or x.size == 0:
+        return x
+    coef, *_ = np.linalg.lstsq(ref, x, rcond=None)
+    return x - ref @ coef
 
 
 def apply_glm_regression(
@@ -709,6 +751,10 @@ def apply_glm_regression(
         print(f"  n_basis              : {n_basis}")
         print(f"  drift_order          : {glm_params.drift_order}")
         print(f"  nuisance method      : {glm_params.flag_nuisance_r_method}")
+        print(
+            "  orthogonalize drift/nuisance vs HRF : "
+            f"{glm_params.orthogonalize_drift_nuisance_against_hrf}"
+        )
         print(f"  event_ids requested  : {glm_params.event_ids}")
         print(f"  event_ids used       : {used_event_ids}")
         print(f"  trials per condition : {used_n_trials}")
@@ -728,9 +774,34 @@ def apply_glm_regression(
             midpoints=midpoints,
         )
 
-        At_parts = [dA, x_drift]
+        # Collinearity diagnostic: short-channel nuisance vs HRF design columns.
         if s_reg is not None:
-            At_parts.append(s_reg[:, None])
+            col_corr = np.array([_corr(s_reg, dA[:, j]) for j in range(dA.shape[1])], dtype=float)
+            col_abs = np.abs(col_corr[np.isfinite(col_corr)])
+            if col_abs.size:
+                col_max_abs = float(np.max(col_abs))
+                col_mean_abs = float(np.mean(col_abs))
+                col_n_over_05 = int(np.sum(col_abs > 0.5))
+            else:
+                col_max_abs = np.nan
+                col_mean_abs = np.nan
+                col_n_over_05 = 0
+        else:
+            col_max_abs = np.nan
+            col_mean_abs = np.nan
+            col_n_over_05 = 0
+
+        if glm_params.orthogonalize_drift_nuisance_against_hrf:
+            x_drift_use = _orthogonalize_against(dA, x_drift)
+        else:
+            x_drift_use = x_drift
+        At_parts = [dA, x_drift_use]
+        if s_reg is not None:
+            if glm_params.orthogonalize_drift_nuisance_against_hrf:
+                s_use = _orthogonalize_against(dA, s_reg[:, None])
+            else:
+                s_use = s_reg[:, None]
+            At_parts.append(s_use)
         At = np.concatenate(At_parts, axis=1)
 
         At_inc = At[lst_inc, :]
@@ -752,6 +823,10 @@ def apply_glm_regression(
             i1 = (c + 1) * n_basis
             beta_hrf = beta[i0:i1]
             hrf_trace = tbasis @ beta_hrf
+            # Homer3-style yavg baseline: subtract pre-stimulus mean (< 0 s)
+            pre_mask = t_hrf < 0
+            if np.any(pre_mask):
+                hrf_trace = hrf_trace - float(np.mean(hrf_trace[pre_mask]))
             hrf_by_cond[f"cond_{eid}"][long_col, :] = hrf_trace
 
         # Stats
@@ -782,6 +857,9 @@ def apply_glm_regression(
                 "beta_norm": float(np.linalg.norm(beta)),
                 "var_removed_frac": float(var_removed) if np.isfinite(var_removed) else np.nan,
                 "glm_r": float(r_model) if np.isfinite(r_model) else np.nan,
+                "short_hrf_max_abs_corr": float(col_max_abs) if np.isfinite(col_max_abs) else np.nan,
+                "short_hrf_mean_abs_corr": float(col_mean_abs) if np.isfinite(col_mean_abs) else np.nan,
+                "short_hrf_n_cols_abs_corr_gt_0p5": int(col_n_over_05),
                 "design_rank": int(np.linalg.matrix_rank(At_inc)),
                 "n_basis": int(n_basis),
                 "n_conditions": int(n_cond),
@@ -815,6 +893,9 @@ def apply_glm_regression(
         "gaussian_step_s": float(glm_params.gaussian_step_s),
         "n_basis": int(n_basis),
         "drift_order": int(glm_params.drift_order),
+        "orthogonalize_drift_nuisance_against_hrf": bool(
+            glm_params.orthogonalize_drift_nuisance_against_hrf
+        ),
         "short_separation_threshold_mm": float(glm_params.short_sep_threshold_mm),
         "flag_nuisance_r_method": int(glm_params.flag_nuisance_r_method),
         "glm_solve_method": int(glm_params.glm_solve_method),

@@ -354,6 +354,17 @@ def process_subject(
         err_msg = f"{type(exc).__name__}: {exc}"
         metrics["status"] = "Fail"
         metrics["notes"]  = err_msg
+        # Ensure failed subjects do not leak stale outputs into Stage C.
+        stale_raw = study_dir / f"sub-{subject_id}_task-{task_name}_desc-preprocessed_nirs_raw.fif"
+        stale_glm = study_dir / f"sub-{subject_id}_task-{task_name}_desc-glmhrf_nirs-ave.fif"
+        for stale_path in (stale_raw, stale_glm):
+            try:
+                if stale_path.exists():
+                    stale_path.unlink()
+            except OSError:
+                pass
+        metrics["bids_fif_path"] = None
+        metrics["bids_glm_hrf_path"] = None
         print(f"  ❌ {subject_id}: FAIL — {err_msg}")
         if verbose:
             traceback.print_exc()
@@ -642,6 +653,7 @@ def save_provenance_log(
             },
             "B6_glm_ols": {
                 "method": "homer3_style_glm_ols",
+                "short_separation_threshold_mm": float(scr_params.get("short_separation_threshold", 15.0)),
                 "short_sep_threshold_mm": float(scr_params.get("short_separation_threshold", 15.0)),
                 "trange_s": [
                     float(scr_params.get("trange", [config.get("stage_c", {}).get("epochs", {}).get("tmin", -25), config.get("stage_c", {}).get("epochs", {}).get("tmax", 100)])[0]),
@@ -650,6 +662,9 @@ def save_provenance_log(
                 "gaussian_std_s": float(scr_params.get("gaussian_std_s", 1.0)),
                 "gaussian_step_s": float(scr_params.get("gaussian_step_s", 1.0)),
                 "drift_order": int(scr_params.get("drift_order", 3)),
+                "orthogonalize_drift_nuisance_against_hrf": bool(
+                    scr_params.get("orthogonalize_drift_nuisance_against_hrf", False)
+                ),
                 "flag_nuisance_r_method": int(scr_params.get("flag_nuisance_r_method", scr_params.get("flagNuisanceRMethod", 1))),
                 "glm_solve_method": int(scr_params.get("glm_solve_method", 1)),
                 "event_ids": scr_params.get("event_ids", [1]),
