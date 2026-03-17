@@ -1,13 +1,32 @@
 """
-Stage B - Step B3 & B4: Motion Artifact Detection and rPCA Correction
-Purpose: Detect motion artifacts on filtered OD data (Homer3 algorithm) and
-         correct them using recursive PCA (rPCA).
+Stage B — Step B3: Motion Artifact Detection on OD
+Purpose: Detect motion artifacts on OD data using the Homer3
+         hmrR_MotionArtifact algorithm and produce per-sample boolean masks
+         for use by the B4 rPCA correction step.
 
-Task coverage in this file:
-  3.3.1 - Adapt Homer3 motion detection algorithm for filtered OD data
-  3.3.2 - Generate per-channel, per-sample motion mask; compute % corrupted
-  3.3.3 - Visualize detected motion artifacts on OD traces for subject A1
-  [3.4.x - rPCA correction will be added in the next section]
+Audit Fix (2026-03-05) — Discrepancy 3a resolved
+-------------------------------------------------
+The `max_diff` sliding-window computation previously placed zero-padding at
+the START of each lag's difference array (Python behaviour).  In MATLAB
+(hmrR_MotionArtifact / hmrR_MotionArtifactByChannel), zero-padding is placed
+at the END, so that each difference |d[j+lag] − d[j]| is assigned to
+derivative index j (the start of the comparison window).  This is the
+mathematically correct alignment: max_diff[j] measures the maximum signal
+change beginning at sample j over the next tMotion seconds.
+
+With the old Python padding, every motion event was time-shifted forward by
+(lag − 1) samples.  At the maximum lag of tMotion × sfreq this shift can be
+up to tMotion × sfreq − 1 = 11 samples at 25 Hz (0.44 s) — nearly as large
+as tMask itself.  The fix is a one-line change:
+
+    # OLD (wrong):  zeros at START
+    padded = np.concatenate([np.zeros(lag - 1), abs_change])
+
+    # NEW (correct, MATLAB parity):  zeros at END
+    padded = np.concatenate([abs_change, np.zeros(lag - 1)])
+
+All other aspects of the Homer3 algorithm (dual-criterion detection, ±tMask
+buffering, derivative→signal index shift) are unchanged.
 
 Key adaptation from Stage A
 ---------------------------
@@ -16,12 +35,12 @@ Stage A motion detection:
   - Output: motion_ratio scalar per channel (QA metric only)
 
 Stage B motion detection (this file):
-  - Input:  filtered OD (output of Step B2, 0.01–0.5 Hz)
+  - Input:  OD (output of Step B1)
   - Output: per-sample boolean mask per channel (used for rPCA in Step B4)
   - Bad channels (raw_od_filt.info['bads']) are detected but flagged separately
 
-Reference: PROJECT.md Section 5 Step B3; PROGRESS.md Section 3.3
-Homer3 algorithm: hmrR_MotionArtifactByChannel
+Reference: docs/reproduced_matlab_comparison.md §B3; PROGRESS.md §3.3
+Homer3 algorithm: hmrR_MotionArtifact.m
 """
 
 import sys
@@ -43,25 +62,33 @@ from utils import get_output_path, get_stage_params, load_config
 _CONFIG = load_config()
 _B3_CFG = _CONFIG.get("stage_b", {}).get("motion_detection", {})
 
-_DEFAULT_AMP_THRESH   = float(_B3_CFG.get("AMPthresh",   5.0))
-_DEFAULT_STDEV_THRESH = float(_B3_CFG.get("tStdev",     20.0))
-_DEFAULT_T_MOTION     = float(_B3_CFG.get("tMotion",     0.5))
-_DEFAULT_T_MASK       = float(_B3_CFG.get("t_mask",      0.5))
+_DEFAULT_AMP_THRESH   = float(_B3_CFG.get("AMPthresh",    5.0))
+_DEFAULT_STDEV_THRESH = float(_B3_CFG.get("STDEVthresh", 20.0))
+_DEFAULT_T_MOTION     = float(_B3_CFG.get("tMotion",      0.5))
+_DEFAULT_T_MASK       = float(_B3_CFG.get("t_mask",       0.5))
 _DEFAULT_USE_AMP_ONLY = bool( _B3_CFG.get("use_amp_only", False))
 
-# Import Step B2 pipeline to obtain filtered OD
+# Import Step B1 pipeline to obtain OD
 import importlib.util
 _spec = importlib.util.spec_from_file_location(
+    "intensity_to_od",
+    Path(__file__).parent / "01_intensity_to_od.py",
+)
+_b1 = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_b1)
+run_intensity_to_od = _b1.run_intensity_to_od
+
+_spec_b2 = importlib.util.spec_from_file_location(
     "bandpass_filtering",
     Path(__file__).parent / "02_bandpass_filtering.py",
 )
-_b2 = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_b2)
-run_bandpass_filter = _b2.run_bandpass_filter
+_b2 = importlib.util.module_from_spec(_spec_b2)
+_spec_b2.loader.exec_module(_b2)
+apply_bandpass_filter = _b2.apply_bandpass_filter
 
 
 # ===========================================================================
-# Task 3.3.1 — Homer3 motion detection adapted for filtered OD
+# Core Homer3 algorithm: single-channel motion detection
 # ===========================================================================
 
 def _detect_motion_homer3_single(
@@ -70,64 +97,60 @@ def _detect_motion_homer3_single(
     amp_thresh: float,
     stdev_thresh: float,
     t_motion: float,
-    use_amp_only: bool = True,
+    use_amp_only: bool = False,
 ) -> np.ndarray:
     """
-    Homer3 hmrR_MotionArtifactByChannel algorithm applied to one OD channel.
+    Homer3 hmrR_MotionArtifact algorithm applied to a single OD channel.
 
-    Stage B Adaptation Note
-    -----------------------
-    Stage A applied this on *unfiltered* OD (converted internally from raw
-    intensity) and the dual-criterion (AMPthresh=5 + STDEVthresh=20×std)
-    worked correctly.
-
-    Stage B applies this on *filtered* OD (0.01–0.5 Hz, Step B2 output).
-    After bandpass filtering the derivative std (std_diff) is much smaller
-    because the signal changes very slowly between adjacent 25 Hz samples.
-    This causes the stdev leg (mc_thresh = std_diff × 20) to shrink to a level
-    that flags normal hemodynamic oscillations (~17.4% of A1 samples flagged,
-    vs ~0% expected).  Using amplitude-only (use_amp_only=True) avoids this
-    false-positive inflation while still catching genuine large-amplitude
-    artifacts that survive the bandpass filter.
-
-    Why not Option 1 (raise stdev_thresh)?
-    The correct multiplier for filtered OD is not well-defined and would
-    require dataset-specific calibration.  The amplitude criterion is
-    stable across datasets because it operates in absolute OD units (5.0)
-    rather than relative to signal noise.
+    Sliding-window max-absolute-change detection with optional dual criterion
+    (amplitude AND/OR standard-deviation multiplier).  Matches the MATLAB
+    hmrR_MotionArtifact.m loop exactly, including the padding orientation fix
+    described in the module docstring (Discrepancy 3a).
 
     Algorithm
     ---------
-    1. Sliding-window max absolute OD change over tMotion seconds:
-         max_diff[t] = max( |OD[t] - OD[t-lag]| ) for lag in 1..tMotion*fs
+    1. Compute sliding-window max absolute OD change for all lags in
+       [1 .. round(tMotion × sfreq)]:
+           max_diff[j] = max over lag of |OD[j+lag] − OD[j]|
+       (MATLAB: zeros padding at END so differences sit at their START index j)
     2a. [use_amp_only=True]  flag if  max_diff > amp_thresh
-    2b. [use_amp_only=False] flag if  max_diff > stdev_thresh × std(diff(OD))
-                                   OR max_diff > amp_thresh  (Homer3 dual-criterion)
+    2b. [use_amp_only=False] flag if  max_diff > STDEVthresh × std(diff(OD))
+                                   OR max_diff > amp_thresh  (Homer3 default)
 
     Parameters
     ----------
-    od_signal : np.ndarray  shape (n_times,)
+    od_signal : np.ndarray, shape (n_times,)
+        Single-channel filtered optical density time series.
     sfreq : float
+        Sampling frequency in Hz.
     amp_thresh : float
-        Absolute OD-change threshold.  Homer3 default = 5.0 OD units.
-        Applied to the maximum change within the tMotion window.
+        Absolute OD-change threshold.  Homer3/ASTaUND default: 5.0 OD units.
+        Read from config.yaml → stage_b.motion_detection.AMPthresh.
+        A time point is flagged if the signal changes by more than this value
+        within the tMotion window regardless of noise level.
     stdev_thresh : float
-        Derivative-std multiplier.  Only used when use_amp_only=False.
-        Homer3 default = 20.0.
+        Derivative-std multiplier (Homer3 STDEVthresh).  Only used when
+        use_amp_only=False.  Homer3/ASTaUND default: 20.0.
+        Read from config.yaml → stage_b.motion_detection.STDEVthresh.
+        A time point is also flagged if max_diff > stdev_thresh × std(diff(OD)).
     t_motion : float
-        Detection window width in seconds (Homer3 default 0.5 s).
+        Detection window width in seconds.  Homer3 default: 0.5 s.
+        Read from config.yaml → stage_b.motion_detection.tMotion.
     use_amp_only : bool
-        True (default for Stage B filtered OD): amplitude criterion only.
-        False: Homer3 dual-criterion (suitable for unfiltered OD).
+        If True, skip the STDEVthresh criterion and use amplitude only.
+        If False (Homer3 default), apply dual criterion (amplitude OR stdev).
+        Read from config.yaml → stage_b.motion_detection.use_amp_only.
 
     Returns
     -------
-    motion_mask_deriv : np.ndarray  bool, shape (n_times - 1,)
-        True at derivative indices where motion is detected.
+    motion_mask_deriv : np.ndarray, bool, shape (n_times − 1,)
+        True at derivative index j when the signal change starting at sample j
+        exceeds the detection threshold.  Convert to signal domain via
+        _expand_mask_to_signal().
     """
     od_signal = np.asarray(od_signal, dtype=np.float64)
 
-    # Replace non-finite values with channel median
+    # Replace non-finite values with channel median to avoid propagating NaN
     if not np.isfinite(od_signal).all():
         finite_vals = od_signal[np.isfinite(od_signal)]
         fill = float(np.median(finite_vals)) if finite_vals.size > 0 else 0.0
@@ -137,19 +160,36 @@ def _detect_motion_homer3_single(
     if n < 2:
         return np.zeros(max(n - 1, 0), dtype=bool)
 
-    # Sliding-window max absolute OD change
+    # ------------------------------------------------------------------
+    # Sliding-window max absolute OD change (Homer3 parity)
+    # ------------------------------------------------------------------
+    # For each lag ii in 1..window, compute |OD[j+ii] − OD[j]| for all valid j
+    # and update max_diff[j] = running maximum across lags.
+    #
+    # MATLAB places the (n-ii) differences at positions 0..n-ii-1 with ii-1
+    # zeros at the END.  This ensures max_diff[j] represents the largest change
+    # *starting from* sample j (forward-looking).
+    #
+    # Previous Python code placed zeros at the START (wrong), shifting every
+    # detected event forward by up to (window-1) samples.  Fixed below.
+    # ------------------------------------------------------------------
     window = int(np.round(t_motion * sfreq))
     max_diff = np.zeros(n - 1, dtype=np.float64)
 
     for lag in range(1, window + 1):
         if lag < n:
-            abs_change = np.abs(od_signal[lag:] - od_signal[:-lag])
-            padded = np.concatenate([np.zeros(lag - 1), abs_change])
+            abs_change = np.abs(od_signal[lag:] - od_signal[:-lag])  # n-lag elements
+            # MATLAB parity: differences at START (indices 0..n-lag-1), zeros at END
+            padded = np.concatenate([abs_change, np.zeros(lag - 1)])
             max_diff = np.maximum(max_diff, padded)
 
+    # ------------------------------------------------------------------
+    # Apply detection threshold (dual criterion or amplitude-only)
+    # ------------------------------------------------------------------
     if use_amp_only:
         motion_mask_deriv = max_diff > amp_thresh
     else:
+        # Homer3 dual criterion: flag if EITHER condition is met
         derivative = np.diff(od_signal)
         std_diff = float(np.std(derivative))
         mc_thresh = std_diff * stdev_thresh
@@ -157,8 +197,7 @@ def _detect_motion_homer3_single(
 
     return motion_mask_deriv
 
-# takes a motion artifact mask that is defined in the derivative domain (i.e., it marks time points where the derivative of a signal indicates motion) (outputted from _detect_motion_homer3_single)
-# and expand it into a signal-domain mask (i.e., it marks time points in the original signal that are affected by motion). It also adds a temporal buffer around each detected motion event.
+
 def _expand_mask_to_signal(
     motion_mask_deriv: np.ndarray,
     n_times: int,
@@ -166,24 +205,33 @@ def _expand_mask_to_signal(
     t_mask: float,
 ) -> np.ndarray:
     """
-    Convert derivative-domain motion mask to signal-domain mask and apply
-    temporal buffering of ±t_mask seconds around each detected event.
+    Convert a derivative-domain motion mask to a signal-domain mask and apply
+    a temporal buffer of ±t_mask seconds around each detected event.
 
-    Homer3 equivalent: tInc(1+bad_inds) = 0 + art_buffer extension.
+    Homer3 equivalent: tInc(1 + bad_inds) = 0  +  ±art_buffer expansion.
+
+    The derivative-domain index i corresponds to signal-domain index i+1
+    (the end of the change window), matching MATLAB's ``tInc(1+bad_inds)=0``.
 
     Parameters
     ----------
-    motion_mask_deriv : np.ndarray  bool, shape (n_times - 1,)
+    motion_mask_deriv : np.ndarray, bool, shape (n_times − 1,)
+        Output of _detect_motion_homer3_single().  True at derivative index j
+        where motion is detected.
     n_times : int
-        Original signal length.
+        Length of the original OD signal.
     sfreq : float
+        Sampling frequency in Hz.
     t_mask : float
-        Buffer duration in seconds.
+        Half-width of the temporal buffer around each detected event, in
+        seconds.  Homer3/ASTaUND default: 0.5 s.
+        Read from config.yaml → stage_b.motion_detection.t_mask.
 
     Returns
     -------
-    signal_mask : np.ndarray  bool, shape (n_times,)
-        True where motion is present (including buffer).
+    signal_mask : np.ndarray, bool, shape (n_times,)
+        True at every signal-domain sample that is either directly flagged or
+        within ±t_mask seconds of a flagged sample.
     """
     art_buffer = int(np.round(t_mask * sfreq))
 
@@ -194,7 +242,7 @@ def _expand_mask_to_signal(
 
     bad_signal = bad_deriv + 1  # shift to signal domain
 
-    # Expand by ±art_buffer
+    # Expand by ±art_buffer samples
     offsets = np.arange(-art_buffer, art_buffer + 1)
     expanded = (bad_signal[:, np.newaxis] + offsets[np.newaxis, :]).ravel()
     expanded = expanded[(expanded >= 0) & (expanded < n_times)]
@@ -203,6 +251,10 @@ def _expand_mask_to_signal(
     signal_mask[expanded] = True
     return signal_mask
 
+
+# ===========================================================================
+# Task 3.3.1 — Full-dataset motion detection (all channels)
+# ===========================================================================
 
 def detect_motion_artifacts(
     raw_od_filt,
@@ -214,42 +266,53 @@ def detect_motion_artifacts(
     verbose: bool = True,
 ) -> dict:
     """
-    Task 3.3.1: Detect motion artifacts on filtered OD data (Step B3).
+    Task 3.3.1: Detect motion artifacts on OD data (Step B3).
 
-    Applies the Homer3 algorithm channel-by-channel.  Channels already
-    marked bad (from Stage A) are processed but their masks are flagged
-    separately so rPCA can skip them.
+    Applies the Homer3 hmrR_MotionArtifact algorithm channel-by-channel.
+    Channels already marked bad (from Stage A) are processed but their masks
+    are stored with a ``bad_channel`` flag so that Step B4 rPCA can skip them.
+
+    All parameters default to values read from config.yaml at import time.
+    Changing config.yaml and re-running will automatically pick up new values.
 
     Parameters
     ----------
     raw_od_filt : mne.io.Raw
-        Filtered OD data (output of Step B2).
-    amp_thresh : float
-        Absolute OD-change threshold (Homer3 default 5.0 OD units).
-        Catches genuine spikes that survive the 0.01–0.5 Hz bandpass filter.
-    stdev_thresh : float
-        Derivative-std multiplier (Homer3 default 20.0).
-        Only used when use_amp_only=False.
-    t_motion : float
-        Detection window (seconds, Homer3 default 0.5).
-    t_mask : float
-        Buffer around detected events (seconds, Homer3 default 0.5).
-    use_amp_only : bool
-        If True (default), use amplitude criterion only.  See
-        _detect_motion_homer3_single docstring for full rationale.
-    verbose : bool
+        OD data (output of Step B1).
+        Should be of type ``fnirs_od``.
+    amp_thresh : float, optional
+        Absolute OD-change threshold.  Default from config.yaml
+        (stage_b.motion_detection.AMPthresh), typically 5.0 OD units.
+    stdev_thresh : float, optional
+        Derivative-std multiplier (Homer3 STDEVthresh).  Only active when
+        use_amp_only=False.  Default from config.yaml
+        (stage_b.motion_detection.STDEVthresh), typically 20.0.
+    t_motion : float, optional
+        Detection window in seconds.  Default from config.yaml
+        (stage_b.motion_detection.tMotion), typically 0.5 s.
+    t_mask : float, optional
+        Temporal buffer around detected events in seconds.  Default from
+        config.yaml (stage_b.motion_detection.t_mask), typically 0.5 s.
+    use_amp_only : bool, optional
+        If True, skip the STDEVthresh criterion (amplitude only).
+        If False (Homer3 default), use dual criterion (amp OR stdev).
+        Default from config.yaml (stage_b.motion_detection.use_amp_only).
+    verbose : bool, optional
+        Print detection summary to stdout.
 
     Returns
     -------
     motion_results : dict
-        {
-          'masks':        dict[str → np.ndarray bool (n_times,)]
-                          per-channel signal-domain motion mask
-          'params':       dict  (thresholds used)
-          'sfreq':        float
-          'n_times':      int
-          'bad_channels': list[str]  (pre-existing bads from Stage A)
-        }
+        'masks'        : dict[str → np.ndarray bool (n_times,)]
+                         Per-channel signal-domain motion masks.  True = motion.
+        'params'       : dict
+                         Threshold values actually used during detection.
+        'sfreq'        : float
+                         Sampling frequency of the input data.
+        'n_times'      : int
+                         Number of time points in the input data.
+        'bad_channels' : list[str]
+                         Channels pre-marked bad by Stage A (excluded from B4).
     """
     sfreq = float(raw_od_filt.info['sfreq'])
     data = raw_od_filt.get_data()          # (n_channels, n_times)
@@ -259,22 +322,20 @@ def detect_motion_artifacts(
     if verbose:
         n_good = len(raw_od_filt.ch_names) - len(bad_set)
         print("\n" + "=" * 70)
-        print("MOTION ARTIFACT DETECTION — HOMER3 ALGORITHM (TASK 3.3.1)")
+        print("MOTION ARTIFACT DETECTION — HOMER3 ALGORITHM (STEP B3)")
+        print("  Audit fix applied: max_diff zeros-padding at END (MATLAB parity)")
         print("=" * 70)
-        print("Adaptation from Stage A:")
-        print("  - Input: filtered OD (Stage A used unfiltered OD)")
-        print("  - Output: per-sample boolean mask (Stage A output motion ratio only)")
         criterion = ("amplitude only  [use_amp_only=True]"
                      if use_amp_only else
                      "dual: amp + stdev  [use_amp_only=False]")
-        print(f"\nParameters:")
-        print(f"  AMPthresh  : {amp_thresh} OD units")
-        print(f"  Criterion  : {criterion}")
+        print(f"\nParameters (from config.yaml stage_b.motion_detection):")
+        print(f"  AMPthresh    : {amp_thresh} OD units")
+        print(f"  Criterion    : {criterion}")
         if not use_amp_only:
-            print(f"  STDEVthresh: {stdev_thresh}× derivative std")
-        print(f"  tMotion    : {t_motion} s  (detection window)")
-        print(f"  tMask      : {t_mask} s  (buffer around events)")
-        print(f"  sfreq      : {sfreq:.2f} Hz")
+            print(f"  STDEVthresh  : {stdev_thresh}× derivative std")
+        print(f"  tMotion      : {t_motion} s  (detection window)")
+        print(f"  t_mask       : {t_mask} s  (buffer around events)")
+        print(f"  sfreq        : {sfreq:.2f} Hz")
         print(f"\nChannels: {n_good} good + {len(bad_set)} Stage-A bad")
 
     masks = {}
@@ -308,19 +369,20 @@ def detect_motion_artifacts(
     return {
         'masks': masks,
         'params': {
-            'amp_thresh': amp_thresh,
-            'stdev_thresh': stdev_thresh,
-            't_motion': t_motion,
-            't_mask': t_mask,
+            'amp_thresh':    amp_thresh,
+            'stdev_thresh':  stdev_thresh,
+            't_motion':      t_motion,
+            't_mask':        t_mask,
+            'use_amp_only':  use_amp_only,
         },
-        'sfreq': sfreq,
-        'n_times': n_times,
+        'sfreq':        sfreq,
+        'n_times':      n_times,
         'bad_channels': list(bad_set),
     }
 
 
 # ===========================================================================
-# Task 3.3.2 — Motion mask summary and per-channel statistics
+# Task 3.3.2 — Per-channel motion statistics
 # ===========================================================================
 
 def compute_motion_stats(
@@ -331,22 +393,24 @@ def compute_motion_stats(
     """
     Task 3.3.2: Compute per-channel motion statistics from the mask dict.
 
-    Returns a DataFrame with motion ratio, flagged-sample count, and a
-    summary note (ok / elevated / bad_channel).  Also prints the overall
-    percentage of motion-corrupted data across the good-channel set.
+    Summarises the output of detect_motion_artifacts() into a DataFrame with
+    one row per channel, labelling each channel as 'ok', 'elevated_motion',
+    'high_motion', or 'bad_channel'.
 
     Parameters
     ----------
     motion_results : dict
-        Output of detect_motion_artifacts().
+        Output of detect_motion_artifacts().  Must contain keys 'masks',
+        'n_times', and 'bad_channels'.
     raw_od_filt : mne.io.Raw
-        Used for channel names, types, and wavelengths.
-    verbose : bool
+        Used to access channel names and types.
+    verbose : bool, optional
+        Print summary table and aggregate statistics to stdout.
 
     Returns
     -------
     stats_df : pd.DataFrame
-        Per-channel columns:
+        One row per channel with columns:
         channel | wavelength | channel_type | n_total | n_flagged |
         motion_ratio | pct_corrupted | motion_quality
     """
@@ -377,13 +441,13 @@ def compute_motion_stats(
             quality = 'ok'
 
         records.append({
-            'channel': ch_name,
-            'wavelength': _wavelength(ch_name),
-            'channel_type': ch_types[i],
-            'n_total': n_times,
-            'n_flagged': n_flagged,
-            'motion_ratio': ratio,
-            'pct_corrupted': round(ratio * 100, 2),
+            'channel':        ch_name,
+            'wavelength':     _wavelength(ch_name),
+            'channel_type':   ch_types[i],
+            'n_total':        n_times,
+            'n_flagged':      n_flagged,
+            'motion_ratio':   ratio,
+            'pct_corrupted':  round(ratio * 100, 2),
             'motion_quality': quality,
         })
 
@@ -391,10 +455,10 @@ def compute_motion_stats(
 
     if verbose:
         good = stats_df[stats_df['motion_quality'] != 'bad_channel']
-        n_ok = int((good['motion_quality'] == 'ok').sum())
+        n_ok   = int((good['motion_quality'] == 'ok').sum())
         n_elev = int((good['motion_quality'] == 'elevated_motion').sum())
         n_high = int((good['motion_quality'] == 'high_motion').sum())
-        n_bad = int((stats_df['motion_quality'] == 'bad_channel').sum())
+        n_bad  = int((stats_df['motion_quality'] == 'bad_channel').sum())
         overall_pct = float(good['pct_corrupted'].mean())
 
         print("\n" + "=" * 70)
@@ -428,7 +492,23 @@ def save_motion_stats(
     subject_id: str,
     output_dir: Path,
 ) -> Path:
-    """Save per-channel motion statistics to CSV."""
+    """
+    Save per-channel motion statistics to a CSV file.
+
+    Parameters
+    ----------
+    stats_df : pd.DataFrame
+        Output of compute_motion_stats().
+    subject_id : str
+        Subject identifier used in the output filename.
+    output_dir : Path
+        Directory where the CSV will be written (created if absent).
+
+    Returns
+    -------
+    out_path : Path
+        Full path to the saved CSV file.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     out_path = output_dir / f"{subject_id}_motion_stats.csv"
     stats_df.to_csv(out_path, index=False)
@@ -437,7 +517,7 @@ def save_motion_stats(
 
 
 # ===========================================================================
-# Task 3.3.3 — Visualize motion artifacts on OD traces
+# Task 3.3.3 — Visualise motion artifacts on OD traces
 # ===========================================================================
 
 def plot_motion_artifacts(
@@ -452,33 +532,37 @@ def plot_motion_artifacts(
     verbose: bool = True,
 ) -> Path:
     """
-    Task 3.3.3: Visualize OD traces with motion-flagged regions highlighted.
+    Task 3.3.3: Visualise OD traces with motion-flagged regions highlighted.
 
-    Shows ``n_good`` channels with low/no motion (blue) and ``n_flagged``
-    channels with the most detected motion (orange/red).  Flagged segments
-    are shaded in red.
+    Produces a multi-panel figure showing n_good low-motion channels (blue)
+    and n_flagged highest-motion channels (orange/red).  Flagged segments are
+    shaded in red.
 
     Parameters
     ----------
     raw_od_filt : mne.io.Raw
-        Filtered OD data.
+        Filtered OD data (Step B2 output).
     motion_results : dict
         Output of detect_motion_artifacts().
     stats_df : pd.DataFrame
         Output of compute_motion_stats().
     subject_id : str
+        Subject identifier used in the figure title and output filename.
     output_dir : Path
-    n_good : int
-        Good (low-motion) channels to show.
-    n_flagged : int
-        Most-corrupted channels to show.
-    t_window : float
-        Duration of signal to display (seconds). Default 300 s (5 min).
-    verbose : bool
+        Directory where the PNG will be written (created if absent).
+    n_good : int, optional
+        Number of low-motion (ok) channels to display.  Default 2.
+    n_flagged : int, optional
+        Number of highest-motion channels to display.  Default 2.
+    t_window : float, optional
+        Duration of the displayed signal segment in seconds.  Default 300 s.
+    verbose : bool, optional
+        Print the saved figure path to stdout.
 
     Returns
     -------
     fig_path : Path
+        Full path to the saved PNG file.
     """
     sfreq = raw_od_filt.info['sfreq']
     n_plot_samples = int(t_window * sfreq)
@@ -492,15 +576,12 @@ def plot_motion_artifacts(
     good_df = stats_df[stats_df['motion_quality'] != 'bad_channel'].copy()
     sorted_by_ratio = good_df.sort_values('motion_ratio')
 
-    # Spread good sample channels evenly
     good_pool = sorted_by_ratio[sorted_by_ratio['motion_quality'] == 'ok']['channel'].tolist()
     step = max(1, len(good_pool) // n_good)
     sample_good = good_pool[::step][:n_good]
 
-    # Pick highest-motion channels (skip channels with 0 flagged samples if possible)
     high_motion = sorted_by_ratio.sort_values('motion_ratio', ascending=False)
     sample_high = high_motion[high_motion['n_flagged'] > 0]['channel'].tolist()[:n_flagged]
-    # fallback: just take top n_flagged even if ratio=0
     if len(sample_high) < n_flagged:
         sample_high = high_motion['channel'].tolist()[:n_flagged]
 
@@ -517,7 +598,7 @@ def plot_motion_artifacts(
         mask = masks[ch_name][:n_plot_samples]
         row = stats_df[stats_df['channel'] == ch_name].iloc[0]
 
-        is_bad = ch_name in bad_set
+        is_bad  = ch_name in bad_set
         is_high = row['motion_quality'] in ('elevated_motion', 'high_motion')
 
         if is_bad:
@@ -533,7 +614,6 @@ def plot_motion_artifacts(
         ax.set_facecolor(bg)
         ax.plot(times, seg, color=line_color, lw=0.7, alpha=0.85)
 
-        # Shade flagged regions
         if mask.any():
             _shade_mask(ax, times, mask, color='red', alpha=0.25, label='Motion flagged')
 
@@ -561,7 +641,23 @@ def plot_motion_artifacts(
 
 
 def _shade_mask(ax, times, mask, color='red', alpha=0.25, label='flagged'):
-    """Shade contiguous True blocks in mask as filled regions on ax."""
+    """
+    Shade contiguous True blocks in a boolean mask as filled regions on ax.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+    times : np.ndarray
+        Time axis (seconds), same length as mask.
+    mask : np.ndarray, bool
+        Per-sample boolean mask.  True = shade this sample.
+    color : str, optional
+        Fill colour.  Default 'red'.
+    alpha : float, optional
+        Fill transparency.  Default 0.25.
+    label : str, optional
+        Legend label for the first shaded region.
+    """
     in_block = False
     t_start = None
     label_used = False
@@ -591,44 +687,60 @@ def run_motion_detection(
     verbose: bool = True,
 ) -> dict:
     """
-    Run Step B3 motion detection pipeline (Tasks 3.3.1–3.3.3) for one subject.
+    Run the Step B3 motion detection pipeline for one subject.
 
-    Steps:
-    1. Run Steps B1+B2 to obtain filtered OD object
-    2. Detect motion artifacts (3.3.1)
-    3. Compute motion statistics + mask summary (3.3.2)
-    4. Visualize motion artifacts on OD traces (3.3.3)
+    Executes Tasks 3.3.1–3.3.3 in sequence:
+    1. Runs Step B1 to obtain OD (via run_intensity_to_od).
+    2. Runs Step B2 bandpass filtering on OD (via apply_bandpass_filter).
+    3. Detects motion artifacts channel-by-channel on filtered OD (3.3.1).
+    4. Computes motion statistics and mask summary (3.3.2).
+    5. Visualises motion artifacts on OD traces (3.3.3).
+
+    All detection parameters are loaded from config.yaml
+    (stage_b.motion_detection).  Editing config.yaml and re-running will
+    automatically apply new threshold values.
 
     Parameters
     ----------
     dataset_name : str
+        Dataset key as defined in config.yaml (e.g. 'expert_novice').
     subject_id : str
-    verbose : bool
+        Subject identifier (e.g. 'A1', 'R3').
+    verbose : bool, optional
+        Print step-by-step summaries to stdout.
 
     Returns
     -------
     results : dict
-        {
-          'raw_od_filt':    mne.io.Raw (filtered OD),
-          'motion_results': dict (masks + params),
-          'stats_df':       pd.DataFrame (per-channel stats),
-          'fig_path':       Path,
-          'csv_path':       Path,
-        }
+        'raw_od_filt'    : mne.io.Raw
+                           OD data after Step B2 bandpass filtering.
+        'motion_results' : dict
+                           Per-channel signal-domain motion masks and detection
+                           parameters.  Passed directly to Step B4 rPCA.
+        'stats_df'       : pd.DataFrame
+                           Per-channel motion statistics (motion_ratio, quality).
+        'fig_path'       : Path
+                           Path to the saved motion visualisation PNG.
+        'csv_path'       : Path
+                           Path to the saved motion statistics CSV.
     """
-    # Motion detection criterion is configured via config.yaml
-    # stage_b.motion_detection.use_amp_only:
-    #   false (default) → Homer3 dual criterion (AMPthresh + STDEVthresh × std_diff)
-    #   true            → Amplitude-only (AMPthresh OD units)
-    # To change the method, edit config.yaml and re-run.
-
     print("\n" + "=" * 70)
     print(f"STAGE B — STEP B3: MOTION DETECTION  |  Subject: {subject_id}")
     print("=" * 70)
 
-    # ---- Steps B1+B2: filtered OD ------------------------------------------
-    b2_results = run_bandpass_filter(dataset_name, subject_id, verbose=False)
-    raw_od_filt = b2_results['raw_od_filt']
+    # ---- Step B1: OD --------------------------------------------------------
+    b1_results = run_intensity_to_od(dataset_name, subject_id, verbose=False)
+    raw_od = b1_results["raw_od"]
+
+    # ---- Step B2: bandpass filter ------------------------------------------
+    config = load_config()
+    filt_params = get_stage_params("stage_b", config).get("filter", {})
+    raw_od_filt, _ = apply_bandpass_filter(
+        raw_od,
+        hpf=float(filt_params.get("hpf", 0.0)),
+        lpf=float(filt_params.get("lpf", 0.5)),
+        verbose=False,
+    )
 
     # ---- 3.3.1 Detect motion artifacts -------------------------------------
     motion_results = detect_motion_artifacts(
@@ -644,7 +756,7 @@ def run_motion_detection(
 
     csv_path = save_motion_stats(stats_df, subject_id, output_dir)
 
-    # ---- 3.3.3 Visualize ---------------------------------------------------
+    # ---- 3.3.3 Visualise ---------------------------------------------------
     fig_path = plot_motion_artifacts(
         raw_od_filt,
         motion_results,
@@ -666,11 +778,11 @@ def run_motion_detection(
     print("=" * 70 + "\n")
 
     return {
-        'raw_od_filt': raw_od_filt,
+        'raw_od_filt':    raw_od_filt,
         'motion_results': motion_results,
-        'stats_df': stats_df,
-        'fig_path': fig_path,
-        'csv_path': csv_path,
+        'stats_df':       stats_df,
+        'fig_path':       fig_path,
+        'csv_path':       csv_path,
     }
 
 

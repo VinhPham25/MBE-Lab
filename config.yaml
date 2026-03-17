@@ -13,7 +13,7 @@ datasets:
     bids_task: "ExpNovPatternCutting"   # BIDS task label for output filenames
     output_folder: "expert-novice"      # Stage B processed data subfolder
     groups:
-      Expert: ["A1", "A2", "R7", "R8", "R9", "R10", "R11", "R12"]
+      Expert: ["A1", "A2", "R7", "R8", "R9", "R11", "R12"]
       Novice: ["R1", "R2", "R3", "R4", "R5", "R6"]
     sfreq: 25.0  # Hz (verified from actual data - 25 Hz, not 20 Hz as in PRD)
     wavelengths: [690, 830]  # nm
@@ -95,7 +95,7 @@ stage_a:
   # Motion Artifact Detection Parameters (from MATLAB code)
   motion:
     tMotion: 0.5  # Amplitude threshold
-    tStdev: 20  # Standard deviation multiplier
+    STDEVthresh: 20  # Standard deviation multiplier
     AMPThresh: 0.5  # Amplitude threshold for motion detection
     STDEVthresh: 5  # Standard deviation threshold
     
@@ -124,26 +124,36 @@ stage_b:
   optical_density:
     flat_std_threshold: 1.0e-5  # OD std below this → flat/dead channel (flag flat_signal)
     
-  # Step B2: Bandpass Filtering
+  # Step B2: Bandpass Filtering (Homer3-equivalent: hmrR_BandpassFilt.m)
+  # Low-pass:  3rd-order Butterworth, zero-phase filtfilt (always applied)
+  # High-pass: 5th-order Butterworth, zero-phase filtfilt (skipped when hpf=0)
+  # Homer3/paper default: hpf=0.000 → no high-pass; pure LPF at lpf=0.500 Hz
   filter:
-    l_freq: 0.001 # Hz - Low cutoff (remove slow drift)
-    h_freq: 0.5   # Hz - High cutoff (remove high-frequency noise)
-    method: "iir"  # IIR filter method
+    hpf: 0.0   # Hz - High-pass cutoff. 0.0 = no high-pass (Homer3 default)
+    lpf: 0.5   # Hz - Low-pass cutoff (Homer3 default)
     
   # Step B3: Motion Artifact Detection (on OD)
+  # Homer3 reference: hmrR_MotionArtifact.m
+  # Audit fix (2026-03-05): max_diff padding corrected to MATLAB parity (zeros at END)
+  # Parameter names match MATLAB function signatures for traceability.
   motion_detection:
-    tMotion: 0.5        # Detection window width in seconds (Homer3 default)
-    tStdev: 20          # Derivative-std multiplier for dual criterion (Homer3 default)
-    AMPthresh: 5.0      # Absolute OD-change threshold (Homer3 default, OD units)
-    t_mask: 0.5         # Temporal buffer around detected events (seconds)
-    use_amp_only: false # false = Homer3 dual criterion; true = amplitude only
+    tMotion: 0.5        # Detection window width in seconds (Homer3 default: 0.5)
+    STDEVthresh: 20     # Derivative-std multiplier for dual criterion (Homer3/ASTaUND: 20)
+    AMPthresh: 5.0      # Absolute OD-change threshold in OD units (Homer3/ASTaUND: 5.0)
+    t_mask: 0.5         # Temporal buffer around detected events in seconds (ASTaUND ref #36: 0.5)
+    use_amp_only: true  # switched to amplitude-only to avoid derivative-threshold over-flagging of task structure
     
   # Step B4: Recursive PCA (rPCA) Motion Correction
+  # Homer3 reference: hmrR_MotionCorrectPCArecurse.m + hmrR_MotionCorrectPCA.m
+  # Audit fixes (reproduced_matlab_comparison.md §B4):
+  #   4a — iterative: re-detect after each PCA pass, up to max_iterations
+  #   4b — full-signal: motion subspace fitted on flagged segments, removed from ALL time points
+  #   4c — OR-union mask: any channel flagged → that time point enters the mask (min_channels_flagged=1)
+  #   4d — nSV=0.97 (Yucel et al. Homer3 default)
   rpca:
-    n_components: 0.97      # Variance threshold — tuning-optimal (Section 3.4.5)
-    min_channels_flagged: 5  # Vote threshold for motion mask — tuning-optimal (Section 3.4.5)
-    window_size: 50           # Samples per window (informational; not used in current implementation)
-    max_iterations: 10        # Max recursive iterations (informational; not used in current implementation)
+    n_components: 0.80       # nSV: reduced from 0.97 to limit over-removal during iterative rPCA
+    max_iterations: 5        # Homer3 default maxIter: 5 (Yucel et al.)
+    min_channels_flagged: 5  # require >=5 channels flagged to reduce over-aggressive correction mask
     
   # Step B5: Modified Beer-Lambert Law
   beer_lambert:
@@ -152,15 +162,19 @@ stage_b:
     hb_range_max: 100   # μM - Flag if outside this range
     typical_range: 50   # μM - Typical task response range
     
-  # Step B6: Short-Channel Regression (Gaussian-basis OLS)
-  # Paper: "consecutive sequence of Gaussian basis functions via ordinary least squares"
-  # Reference: Kamat et al. (2023) ASTaUND; Homer2 hmrR_GLM convention
+  # Step B6: GLM/OLS HRF Deconvolution (Homer3 hmrS_GLM parity core)
+  # Paper: HRF created via Gaussian basis functions + OLS, with short-channel nuisance regression
   short_channel_regression:
-    method: "gaussian_basis_OLS"
+    method: "homer3_style_glm_ols"
     short_separation_threshold: 15  # mm - Channels < 15mm are short-separation
-    n_gaussians: 3                  # number of consecutive Gaussian basis functions
-    gaussian_std_s: 1.0             # Gaussian width (std) in seconds
-    gaussian_spacing_s: 1.5         # center-to-center spacing in seconds
+    trange: [-25, 100]                # seconds - HRF estimation window [t_pre, t_post] (Nemani-style constrained window)
+    gaussian_std_s: 2.0             # seconds - Gaussian basis width (std)
+    gaussian_step_s: 4.0            # seconds - spacing between Gaussian basis centers
+    flag_nuisance_r_method: 2       # revert to max-correlation short-channel nuisance for stability
+    drift_order: 3                  # restored best stable setting before code-level modification
+    orthogonalize_drift_nuisance_against_hrf: False  # true=preserve HRsF variance by orthogonalizing drift/nuisance; false=legacy behavior
+    glm_solve_method: 1             # 1 = OLS
+    event_ids: [1]                  # annotation/event IDs used as stimulus onsets
     
   # Data Saving
   outputs:
@@ -175,7 +189,7 @@ stage_c:
   # Step C1: HRF Extraction
   epochs:
     tmin: -25    # seconds before stimulus onset (baseline period)
-    tmax: 100   # seconds after stimulus onset — extended to match Figure 3c horizon
+    tmax: 100    # seconds after stimulus onset
     baseline: [-25, 0]  # Baseline correction period (seconds)
     event_id:
       trial_start: 1  # Condition 1 = trial start

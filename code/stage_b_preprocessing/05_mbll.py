@@ -42,7 +42,7 @@ MNE 1.7+ supports per-wavelength PPF via a tuple:
 
 Output units: mol/L (MNE convention); multiply × 1e6 for μM in plots/analysis.
 
-Upstream:  04_rPCA_motion_correct.py  (optimal: n_components=0.99, min_ch=10)
+Upstream:  04_rPCA_motion_correct.py  (B1→B2→B3→B4)
 Reference: PROGRESS.md Section 3.5; PROJECT.md Section 5.6
 """
 
@@ -58,7 +58,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from utils import get_output_path, get_stage_params, load_config
+from utils import get_output_path, load_config
 
 # ---------------------------------------------------------------------------
 # Load config once at import time — PPF and range constants derive from here
@@ -106,8 +106,9 @@ _HB_TYPICAL_UM = float(_BL_CFG.get("typical_range",  50.0))
 _HB_FLAG_UM    = float(_BL_CFG.get("hb_range_max",  100.0))
 
 # rPCA defaults — sourced from config.yaml stage_b.rpca
-_DEFAULT_N_COMPONENTS = float(_RPCA_CFG.get("n_components",         0.99))
-_DEFAULT_MIN_CHANNELS = int(  _RPCA_CFG.get("min_channels_flagged", 10))
+# Homer3-faithful values (audit fix): nSV=0.97, OR-union mask (min_ch=1)
+_DEFAULT_N_COMPONENTS = float(_RPCA_CFG.get("n_components",         0.97))
+_DEFAULT_MIN_CHANNELS = int(  _RPCA_CFG.get("min_channels_flagged", 1))
 
 # ---------------------------------------------------------------------------
 # Unit Analysis — Issue 6 (AUDIT_PROGRESS.md)
@@ -159,7 +160,7 @@ def apply_beer_lambert(
     Parameters
     ----------
     raw_od_corrected : mne.io.Raw
-        Filtered, rPCA-corrected OD data (Step B4 output).
+        rPCA-corrected and bandpass-filtered OD data.
         Must contain paired 690 nm and 830 nm channels.
     ppf_dict : dict, optional
         {wavelength_nm: ppf_value}.  Defaults to TECHEN_PPF = {690: 6.4, 830: 5.8}.
@@ -593,16 +594,17 @@ def run_mbll(
     Chain:  B1 (OD) → B2 (bandpass) → B3 (motion detect) → B4 (rPCA)
             → B5 (Beer-Lambert) → verification → visualization → save.
 
-    rPCA uses the tuning-optimal parameters (n_components=0.99, min_ch=10)
-    unless overridden.  PPF defaults to TechEn CW6 values {690: 6.4, 830: 5.8}.
+    rPCA uses Homer3-faithful parameters (nSV=0.97, OR-union mask, maxIter=5)
+    unless overridden via config.yaml or keyword arguments.
+    PPF defaults to TechEn CW6 values {690: 6.4, 830: 5.8}.
 
     Parameters
     ----------
     dataset_name : str
     subject_id   : str
     ppf_dict     : dict, optional  {wavelength_nm: ppf_value}
-    n_components : float  rPCA variance threshold (default 0.99)
-    min_channels_flagged : int  rPCA vote threshold (default 10)
+    n_components : float  rPCA nSV threshold (Homer3 default: 0.97)
+    min_channels_flagged : int  mask type: 1=OR-union (Homer3 default), k>1=vote threshold
     verbose      : bool
 
     Returns
@@ -624,7 +626,7 @@ def run_mbll(
     print(f"STAGE B — STEP B5: MODIFIED BEER-LAMBERT LAW  |  Subject: {subject_id}")
     print("=" * 70)
 
-    # ---- Steps B1–B4: rPCA-corrected OD ------------------------------------
+    # ---- Steps B1/B2/B3/B4: rPCA-corrected OD ------------------------------
     print("\n[1/4] Running upstream pipeline (B1→B2→B3→B4)...")
     b4_results = run_rpca_correction(
         dataset_name,

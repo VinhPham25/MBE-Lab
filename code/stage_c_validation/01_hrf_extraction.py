@@ -14,14 +14,17 @@ Task coverage:
 Algorithm
 ---------
 1.  Load Stage B preprocessed .fif (continuous HbO/HbR, all channels).
+1b. Prefer Stage B GLM-HRF evoked sidecar when available:
+      sub-{id}_task-*_desc-glmhrf_nirs-ave.fif
+    If absent, fall back to legacy epoch-average extraction below.
 2.  Convert MNE Annotations → integer event array using event_id={'1':1,'2':2}.
 3.  Epoch around trial-start events (event_id=1):
       tmin = -5 s   (pre-stimulus baseline)
       tmax = +100 s (post-stimulus window capturing full 100 s Figure 3c horizon)
       baseline = (-5, 0)  (subtract mean of pre-stimulus window)
       reject_by_annotation = False  (annotations are task onsets, not artefacts)
-4.  Save raw epoch object as {subject_id}-epo.fif.
-5.  Average epochs across trials → one Evoked object per channel.
+4.  (Legacy fallback) Save raw epoch object as {subject_id}-epo.fif.
+5.  (Legacy fallback) Average epochs across trials → one Evoked object per channel.
 6.  Export HRF time-series matrix (time × channel) to CSV.
 7.  Verify HRF morphology:
       - HbO peak should be positive (increase) in [5, 15] s window
@@ -71,14 +74,20 @@ from utils import get_output_path, get_stage_params, load_config
 SHORT_SEP_SUFFIX = tuple(f"D{d}" for d in range(17, 25))   # D17–D24
 SHORT_SEP_SPECIAL = {"S8_D9"}                               # 10 mm channel
 
-# Brain-region classification thresholds (channel midpoint, metres)
-PFC_Y_THRESHOLD        = 0.060   # y > 0.060 → Prefrontal Cortex
-M1_X_THRESHOLD         = 0.040   # |x| > 0.040 → Primary Motor Cortex (lateral)
-# SMA = everything else in the motor belt (|x| ≤ 0.040, y ≤ 0.060)
-
-# 5-region sub-division thresholds (Figure 3c, Kamat et al. 2023)
-PFC_LATERAL_X_THRESHOLD = 0.020  # |x| > 0.020 → Lateral PFC (left/right)
-# Motor split: x < 0 → Left Medial M1 (left hemisphere); x >= 0 → SMA (midline/right)
+# Probe-rule mapping (paper/probe-design driven)
+# 3-region:
+#   S1-S3 -> PFC
+#   S4-S7 -> M1
+#   S8    -> SMA
+# 5-region:
+#   S1 -> Left Lateral PFC
+#   S2 -> Central PFC
+#   S3 -> Right Lateral PFC
+#   S4-S7 -> Left Medial M1 (single motor panel in Figure 3c)
+#   S8 -> SMA
+PFC_SOURCES = {1, 2, 3}
+M1_SOURCES = {4, 5, 6, 7}
+SMA_SOURCES = {8}
 
 STUDY = "expert_novice"
 
@@ -96,10 +105,20 @@ def _is_short_sep(ch_name: str) -> bool:
     return detector in SHORT_SEP_SUFFIX
 
 
+def _source_number(ch_name: str) -> int | None:
+    """Extract integer source ID from channel base name (e.g. S4_D6 -> 4)."""
+    base = ch_name.split(" ")[0]
+    src = base.split("_")[0]
+    if not src.startswith("S"):
+        return None
+    sid = src[1:]
+    return int(sid) if sid.isdigit() else None
+
+
 def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
     """
-    Classify long-separation HbO channels into PFC / M1 / SMA based on
-    2-D midpoint coordinates stored in raw.info.
+    Classify long-separation HbO channels into PFC / M1 / SMA using
+    probe source rules from the study design (not coordinate thresholds).
 
     Parameters
     ----------
@@ -123,14 +142,13 @@ def build_region_map(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         if _is_short_sep(ch_name):
             continue
 
-        x, y, _ = ch["loc"][:3]
         base = ch_name.split(" ")[0]   # strip " hbo" suffix
-
-        if y > PFC_Y_THRESHOLD:
+        src_n = _source_number(ch_name)
+        if src_n in PFC_SOURCES:
             region_map["PFC"].append(base)
-        elif abs(x) > M1_X_THRESHOLD:
+        elif src_n in M1_SOURCES:
             region_map["M1"].append(base)
-        else:
+        elif src_n in SMA_SOURCES:
             region_map["SMA"].append(base)
 
     return region_map
@@ -142,11 +160,11 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
 
     Regions
     -------
-    Left Lateral PFC  : y > PFC_Y_THRESHOLD  AND  x < -PFC_LATERAL_X_THRESHOLD
-    Central PFC       : y > PFC_Y_THRESHOLD  AND  |x| <= PFC_LATERAL_X_THRESHOLD
-    Right Lateral PFC : y > PFC_Y_THRESHOLD  AND  x >  PFC_LATERAL_X_THRESHOLD
-    Left Medial M1    : y <= PFC_Y_THRESHOLD AND  x < 0   (left hemisphere motor)
-    SMA               : y <= PFC_Y_THRESHOLD AND  x >= 0  (midline / right hemisphere motor)
+    Left Lateral PFC  : source S1
+    Central PFC       : source S2
+    Right Lateral PFC : source S3
+    Left Medial M1    : sources S4-S7
+    SMA               : source S8
 
     Parameters
     ----------
@@ -175,21 +193,18 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         if _is_short_sep(ch_name):
             continue
 
-        x, y, _ = ch["loc"][:3]
         base = ch_name.split(" ")[0]
-
-        if y > PFC_Y_THRESHOLD:
-            if x < -PFC_LATERAL_X_THRESHOLD:
-                region_map["Left Lateral PFC"].append(base)
-            elif x > PFC_LATERAL_X_THRESHOLD:
-                region_map["Right Lateral PFC"].append(base)
-            else:
-                region_map["Central PFC"].append(base)
-        else:
-            if x < 0:
-                region_map["Left Medial M1"].append(base)
-            else:
-                region_map["SMA"].append(base)
+        src_n = _source_number(ch_name)
+        if src_n == 1:
+            region_map["Left Lateral PFC"].append(base)
+        elif src_n == 2:
+            region_map["Central PFC"].append(base)
+        elif src_n == 3:
+            region_map["Right Lateral PFC"].append(base)
+        elif src_n in M1_SOURCES:
+            region_map["Left Medial M1"].append(base)
+        elif src_n in SMA_SOURCES:
+            region_map["SMA"].append(base)
 
     return region_map
 
@@ -522,7 +537,7 @@ def run_hrf_extraction(
                / "hrf" / study_display_name / subject_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Resolve Stage B output .fif ──────────────────────────────────────────
+    # ── Resolve Stage B outputs (.fif + optional GLM-HRF sidecar) ───────────
     study_cfg = config["datasets"][study]
     task_slug = {
         "expert_novice": "ExpNovPatternCutting",
@@ -533,6 +548,7 @@ def run_hrf_extraction(
 
     stage_b_dir = Path(config["paths"]["stage_b_outputs"]) / "processed_data" / study.replace("_", "-")
     fif_path = stage_b_dir / f"sub-{subject_id}_task-{task_slug}_desc-preprocessed_nirs_raw.fif"
+    glm_ave_path = stage_b_dir / f"sub-{subject_id}_task-{task_slug}_desc-glmhrf_nirs-ave.fif"
 
     if not fif_path.exists():
         # Fallback: search for any matching file
@@ -543,9 +559,16 @@ def run_hrf_extraction(
             )
         fif_path = candidates[0]
 
+    if not glm_ave_path.exists():
+        glm_candidates = list(stage_b_dir.glob(f"sub-{subject_id}_*_desc-glmhrf_*ave.fif"))
+        if glm_candidates:
+            glm_ave_path = glm_candidates[0]
+
     print(f"\n{'='*60}")
     print(f"  HRF Extraction — Subject: {subject_id}")
     print(f"  Input : {fif_path.name}")
+    if glm_ave_path.exists():
+        print(f"  GLM HRF sidecar: {glm_ave_path.name}")
     print(f"  Output: {out_dir}")
     print(f"{'='*60}")
 
@@ -578,18 +601,33 @@ def run_hrf_extraction(
         json.dump(region_map_5, f, indent=2)
     print(f"  Saved: {region_map_5_path.name}")
 
-    # ── 4.1.1 — Epoch extraction ─────────────────────────────────────────────
-    print(f"\n[4.1.1] Epoch extraction (tmin={tmin}s, tmax={tmax}s, baseline={baseline})")
-    epochs = extract_epochs(raw, tmin=tmin, tmax=tmax, baseline=baseline,
-                            event_id=trial_event_id)
+    hrf_source = "epoch_average"
+    epo_path = None
+    n_trials = None
 
-    epo_path = out_dir / f"{subject_id}-epo.fif"
-    epochs.save(epo_path, overwrite=True, verbose=False)
-    print(f"  Saved: {epo_path.name}")
+    if glm_ave_path.exists():
+        # Preferred path: use Stage B GLM-deconvolved HRF directly.
+        print(f"\n[4.1.1/4.1.2] Loading Stage B GLM HRF (skipping epoch averaging)")
+        evoked = mne.read_evokeds(glm_ave_path, verbose=False)[0]
+        df_hrf = pd.DataFrame((evoked.data * 1e6).T, columns=evoked.ch_names)
+        df_hrf.insert(0, "time_s", evoked.times)
+        hrf_source = "stage_b_glm_hrf"
+        n_trials = int(getattr(evoked, "nave", 0))
+        print(f"  Loaded GLM HRF: {len(evoked.ch_names)} channels × {len(evoked.times)} time points")
+        print(f"  GLM nave (trials): {n_trials}")
+    else:
+        # Legacy fallback: epoch and average from continuous signal.
+        print(f"\n[4.1.1] Epoch extraction (tmin={tmin}s, tmax={tmax}s, baseline={baseline})")
+        epochs = extract_epochs(raw, tmin=tmin, tmax=tmax, baseline=baseline,
+                                event_id=trial_event_id)
 
-    # ── 4.1.2 — HRF averaging ────────────────────────────────────────────────
-    print(f"\n[4.1.2] HRF averaging across {len(epochs)} trials")
-    evoked, df_hrf = compute_hrf_average(epochs, hbo_long, hbr_long)
+        epo_path = out_dir / f"{subject_id}-epo.fif"
+        epochs.save(epo_path, overwrite=True, verbose=False)
+        print(f"  Saved: {epo_path.name}")
+
+        print(f"\n[4.1.2] HRF averaging across {len(epochs)} trials")
+        evoked, df_hrf = compute_hrf_average(epochs, hbo_long, hbr_long)
+        n_trials = int(len(epochs))
 
     ave_path = out_dir / f"{subject_id}-ave.fif"
     evoked.save(ave_path, overwrite=True, verbose=False)
@@ -613,7 +651,8 @@ def run_hrf_extraction(
     # ── Summary ──────────────────────────────────────────────────────────────
     results = {
         "subject_id": subject_id,
-        "n_trials": len(epochs),
+        "hrf_source": hrf_source,
+        "n_trials": n_trials,
         "n_long_hbo": len(hbo_long),
         "n_long_hbr": len(hbr_long),
         "epoch_tmin": tmin,
@@ -627,12 +666,13 @@ def run_hrf_extraction(
         "region_channel_counts_3": {r: len(v) for r, v in region_map.items()},
         "region_channel_counts_5": {r: len(v) for r, v in region_map_5.items()},
         "outputs": {
-            "epochs_fif": str(epo_path),
+            "epochs_fif": str(epo_path) if epo_path is not None else None,
             "evoked_fif": str(ave_path),
             "hrf_averages_csv": str(csv_path),
             "verification_plot": str(plot_path),
             "region_map_json": str(region_map_path),
             "region_map_5_json": str(region_map_5_path),
+            "stage_b_glm_hrf_input": str(glm_ave_path) if glm_ave_path.exists() else None,
         },
     }
 

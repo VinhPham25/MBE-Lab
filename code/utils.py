@@ -9,9 +9,96 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import sys
+from datetime import datetime
 
 # Project root directory
 PROJECT_ROOT = Path(__file__).parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Plot timestamp helper (applies globally to matplotlib figure save calls)
+# ---------------------------------------------------------------------------
+_SAVEFIG_PATCHED = False
+
+
+def add_plot_timestamp(fig, timestamp_text: Optional[str] = None):
+    """
+    Add a bottom-right timestamp annotation to a matplotlib figure.
+
+    Parameters
+    ----------
+    fig : matplotlib.figure.Figure
+        Figure to annotate before saving.
+    timestamp_text : str, optional
+        Custom text. If None, uses local time formatted as
+        "Generated: YYYY-MM-DD HH:MM:SS".
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The same figure object, annotated in-place.
+    """
+    if fig is None:
+        return fig
+
+    if timestamp_text is None:
+        timestamp_text = f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+    # Remove prior timestamp text if present, so repeated savefig() calls do
+    # not stack multiple timestamp labels on the same figure.
+    for txt in list(getattr(fig, "texts", [])):
+        if getattr(txt, "get_gid", lambda: None)() == "autogen_timestamp":
+            txt.remove()
+
+    t = fig.text(
+        0.995, 0.005, timestamp_text,
+        ha="right", va="bottom",
+        fontsize=7, color="#444444", alpha=0.85,
+        transform=fig.transFigure,
+    )
+    t.set_gid("autogen_timestamp")
+    return fig
+
+
+def enable_plot_timestamps():
+    """
+    Enable automatic timestamp overlays for all matplotlib figure saves.
+
+    This monkey-patches matplotlib's Figure.savefig once per Python process.
+    Any script importing `utils.py` will automatically get timestamped saved
+    plots without changing individual plotting code.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    bool
+        True if patching is active, False if matplotlib is unavailable.
+    """
+    global _SAVEFIG_PATCHED
+    if _SAVEFIG_PATCHED:
+        return True
+
+    try:
+        from matplotlib.figure import Figure  # local import to avoid hard dependency at module import
+    except Exception:
+        return False
+
+    original_savefig = Figure.savefig
+
+    def _timestamped_savefig(self, *args, **kwargs):
+        add_plot_timestamp(self)
+        return original_savefig(self, *args, **kwargs)
+
+    Figure.savefig = _timestamped_savefig
+    _SAVEFIG_PATCHED = True
+    return True
+
+
+# Activate timestamped savefig globally for all plotting scripts importing utils.
+enable_plot_timestamps()
 
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
@@ -325,7 +412,7 @@ def print_config_summary(config: Optional[Dict] = None):
     print(f"  • SNR Threshold: {config['stage_a']['snr']['threshold_low']}-"
           f"{config['stage_a']['snr']['threshold_high']} dB")
     print(f"  • Motion tMotion: {config['stage_a']['motion']['tMotion']}")
-    print(f"  • Motion tStdev: {config['stage_a']['motion']['tStdev']}")
+    print(f"  • Motion STDEVthresh: {config['stage_a']['motion']['STDEVthresh']}")
     
     # Stage B
     print("\nSTAGE B - PREPROCESSING:")

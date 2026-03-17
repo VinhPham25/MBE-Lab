@@ -11,7 +11,7 @@ Purpose: Compute Expert/Novice CNR using a minimal preprocessing branch
          (no channel pruning, no rPCA, no OLS) per ASTaUND paper technical
          validation spec.
 
-Pipeline  : Intensity → OD → 0.01–0.5 Hz Bandpass → MBLL
+Pipeline  : Intensity → OD → 0.0–0.5 Hz Bandpass → MBLL
 Excluded  : Stage A 80–140 dB channel pruning
             B3/B4 motion detection and rPCA correction
             B6 Gaussian-basis OLS short-channel regression
@@ -86,6 +86,8 @@ def _load_module(name: str, rel_path: str):
 _hrf = _load_module("hrf_extraction",   "01_hrf_extraction.py")
 _grp = _load_module("group_hrf",        "02_group_hrf_analysis.py")
 _cnr = _load_module("cnr_calculation",  "04_calculate_cnr.py")
+_b2 = _load_module("bandpass_filtering", "../stage_b_preprocessing/02_bandpass_filtering.py")
+apply_bandpass_filter = _b2.apply_bandpass_filter
 
 # Re-export helpers used in this module
 extract_epochs           = _hrf.extract_epochs
@@ -131,10 +133,10 @@ _PEAK_WINDOW_DEFAULT: tuple[float, float] = tuple(
     float(v) for v in _CNR_CFG.get("peak_window", [5.0, 15.0])
 )
 
-# Bandpass filter params from config.yaml stage_b.filter
+# Bandpass filter params from config.yaml stage_b.apply_bandpass_filter
 _FILT_CFG = _CONFIG.get("stage_b", {}).get("filter", {})
-_BP_L_FREQ   = float(_FILT_CFG.get("l_freq",  0.01))
-_BP_H_FREQ   = float(_FILT_CFG.get("h_freq",  0.5))
+_BP_L_FREQ   = float(_FILT_CFG.get("hpf",  0.00))
+_BP_H_FREQ   = float(_FILT_CFG.get("lpf",  0.5))
 _BP_METHOD   = str(_FILT_CFG.get("method",   "iir"))
 
 
@@ -147,17 +149,17 @@ def preprocess_subject_techval(
     dataset_name: str,
     ppf_dict: dict,
     out_dir: Path,
-    l_freq: float = _BP_L_FREQ,
-    h_freq: float = _BP_H_FREQ,
+    hpf: float = _BP_L_FREQ,
+    lpf: float = _BP_H_FREQ,
     method: str = _BP_METHOD,
-    force_recompute: bool = False,
+    force_recompute: bool = True,
 ) -> Path:
     """
     Apply the technical validation preprocessing chain to one subject.
 
     Steps (paper-aligned):
       B1  Intensity → Optical Density
-      B2  Bandpass filter (l_freq–h_freq Hz, method from config.yaml)
+      B2  Bandpass filter (hpf–lpf Hz, method from config.yaml)
       # Note, bandpass filter is still applied since it performs signal deconditioning:
         1. Removes DC drift (high-pass component)
         2. Eliminates non-physiological frequencies (low-pass component)
@@ -188,9 +190,7 @@ def preprocess_subject_techval(
     raw_od = mne.preprocessing.nirs.optical_density(raw, verbose=False)
 
     # B2: Bandpass filter
-    raw_od_filt = raw_od.copy().filter(
-        l_freq=l_freq, h_freq=h_freq, method=method, verbose=False
-    )
+    raw_od_filt, _b2 = apply_bandpass_filter(raw_od, hpf=hpf, lpf=lpf, verbose=False)
 
     # B5: Modified Beer-Lambert Law
     wavelengths = sorted({
@@ -225,7 +225,7 @@ def _load_or_compute_techval_evoked(
     dataset_name: str,
     ppf_dict: dict,
     config: dict,
-    force_recompute: bool = False,
+    force_recompute: bool = True,
 ) -> mne.Evoked | None:
     """
     Return the per-subject trial-averaged Evoked from the techval branch.
@@ -301,7 +301,7 @@ def collect_all_techval_evokeds(
     ppf_dict: dict,
     config: dict,
     target_sfreq: float = 25.0,
-    force_recompute: bool = False,
+    force_recompute: bool = True,
 ) -> list[mne.Evoked]:
     """
     Load (or compute) techval-branch Evokeds for all subjects in a group.
@@ -335,7 +335,7 @@ def collect_techval_group_peaks(
     ppf_dict: dict,
     config: dict,
     target_sfreq: float = 25.0,
-    force_recompute: bool = False,
+    force_recompute: bool = True,
 ) -> dict[str, list[float]]:
     """
     Load (or compute) techval-branch Evokeds for all subjects in a group
@@ -375,7 +375,7 @@ def run_techval_cnr_analysis(
     ppf_dict: dict = PPF_DICT,
     peak_window: tuple[float, float] = _PEAK_WINDOW_DEFAULT,
     comparison_registry: dict | None = None,
-    force_recompute: bool = False,
+    force_recompute: bool = True,
 ) -> dict:
     """
     Issues 3 + 4 technical validation CNR pipeline.
@@ -544,8 +544,8 @@ def run_techval_cnr_analysis(
 
     # Retrieve actual filter params used in this techval branch
     first_fif = techval_fif_dir / f"sub-{list(groups.values())[0][0]}_techval_raw.fif"
-    _actual_l_freq = _BP_L_FREQ
-    _actual_h_freq = _BP_H_FREQ
+    _actual_hpf = _BP_L_FREQ
+    _actual_lpf = _BP_H_FREQ
 
     cnr_meta = {
         "comparison":            f"{g1_name} vs {g2_name}",
@@ -566,7 +566,7 @@ def run_techval_cnr_analysis(
         "channel_pruning":       False,
         "rpca_correction":       False,
         "ols_regression":        False,
-        "bandpass_hz":           [_actual_l_freq, _actual_h_freq],
+        "bandpass_hz":           [_actual_hpf, _actual_lpf],
         "bandpass_method":       _BP_METHOD,
         "paper_quote": (
             "no channels have been excluded from the analysis provided here "
@@ -635,7 +635,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--force", action="store_true",
         help="Force recompute all cached .fif and evoked files (required when "
-             "config.yaml parameters change, e.g. bandpass h_freq)",
+             "config.yaml parameters change, e.g. bandpass lpf)",
     )
     args = parser.parse_args()
     run_techval_cnr_analysis(force_recompute=args.force)

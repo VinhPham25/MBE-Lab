@@ -177,6 +177,137 @@ def mark_bad_channels(
 # Task 3.1.3 — Optical density conversion
 # ---------------------------------------------------------------------------
 
+def _trim_zero_padded_tail(
+    raw,
+    *,
+    min_tail_seconds: float = 2.0,
+    min_valid_fraction: float = 0.10,
+    eps: float = 1e-12,
+    verbose: bool = True,
+):
+    """
+    Trim trailing zero/invalid intensity tail before OD conversion.
+
+    Some recordings can contain a zero-padded tail (all/most channels near 0),
+    which causes optical_density() log/divide instabilities and downstream
+    concentration outliers. This function crops the recording to the last sample
+    where a minimum fraction of amplitude channels still carry valid signal.
+    """
+    raw_trim = raw.copy()
+    ch_types = raw_trim.get_channel_types()
+    amp_idx = [i for i, ct in enumerate(ch_types) if ct == "fnirs_cw_amplitude"]
+    if not amp_idx:
+        amp_idx = list(range(len(raw_trim.ch_names)))
+    if not amp_idx or raw_trim.n_times < 2:
+        return raw_trim
+
+    x = raw_trim._data[amp_idx, :]
+    valid = np.isfinite(x) & (x > eps)
+    n_amp = len(amp_idx)
+    min_valid_channels = max(1, int(np.ceil(min_valid_fraction * n_amp)))
+    sample_valid = np.sum(valid, axis=0) >= min_valid_channels
+
+    if not np.any(sample_valid):
+        return raw_trim
+
+    last_valid = int(np.where(sample_valid)[0][-1])
+    tail_len = int(raw_trim.n_times - 1 - last_valid)
+    min_tail_samples = int(round(float(raw_trim.info["sfreq"]) * min_tail_seconds))
+
+    if tail_len >= max(1, min_tail_samples):
+        old_n = raw_trim.n_times
+        tmax = float(raw_trim.times[last_valid])
+        raw_trim.crop(tmin=0.0, tmax=tmax, include_tmax=True)
+        if verbose:
+            dt_s = tail_len / float(raw_trim.info["sfreq"])
+            print("Trimming zero-padded/invalid raw tail prior to OD...")
+            print(f"  Last valid sample index:         {last_valid}")
+            print(f"  Samples removed from tail:       {tail_len}")
+            print(f"  Seconds removed from tail:       {dt_s:.3f} s")
+            print(f"  n_times before/after trim:       {old_n} -> {raw_trim.n_times}")
+    elif verbose:
+        print("Tail trim check: no sustained zero-padded tail detected.")
+
+    return raw_trim
+
+
+def _sanitize_intensity_for_od(
+    raw,
+    *,
+    bad_fraction_threshold: float = 0.01,
+    verbose: bool = True,
+):
+    """
+    Replace invalid/non-positive intensity samples before OD conversion.
+
+    MNE optical_density computes log(I / mean(I)); samples with I<=0 or
+    non-finite values can trigger divide/log warnings and destabilize OD.
+    This helper sanitizes each amplitude channel and marks channels bad
+    when too many samples required replacement.
+    """
+    raw_sane = raw.copy()
+    ch_types = raw_sane.get_channel_types()
+    amp_idx = [i for i, ct in enumerate(ch_types) if ct == "fnirs_cw_amplitude"]
+    if not amp_idx:
+        amp_idx = list(range(len(raw_sane.ch_names)))
+
+    n_times = raw_sane.n_times
+    existing_bads = set(raw_sane.info["bads"])
+    added_bads = []
+    total_replaced = 0
+    bad_pair_bases = set()
+
+    def _pair_base(ch_name: str) -> str:
+        for suffix in (" 690", " 830", " 760", " 850"):
+            if ch_name.endswith(suffix):
+                return ch_name[: -len(suffix)]
+        return ch_name
+
+    for i in amp_idx:
+        x = raw_sane._data[i, :]
+        bad_mask = (~np.isfinite(x)) | (x <= 0)
+        n_bad = int(np.sum(bad_mask))
+        if n_bad == 0:
+            continue
+
+        finite_pos = x[np.isfinite(x) & (x > 0)]
+        if finite_pos.size > 0:
+            fill_value = float(np.percentile(finite_pos, 5.0))
+            fill_value = max(fill_value, np.finfo(float).tiny)
+        else:
+            fill_value = 1e-12
+
+        x[bad_mask] = fill_value
+        raw_sane._data[i, :] = x
+        total_replaced += n_bad
+
+        frac_bad = n_bad / max(1, n_times)
+        if frac_bad >= bad_fraction_threshold:
+            ch_name = raw_sane.ch_names[i]
+            bad_pair_bases.add(_pair_base(ch_name))
+
+    # Enforce fNIRS pair-consistent bad labelling (both wavelengths per SD pair).
+    for ch_name in raw_sane.ch_names:
+        if _pair_base(ch_name) in bad_pair_bases and ch_name not in existing_bads:
+            existing_bads.add(ch_name)
+            added_bads.append(ch_name)
+
+    if added_bads:
+        raw_sane.info["bads"] = sorted(existing_bads)
+
+    if verbose:
+        print("Sanitizing intensity prior to OD conversion...")
+        print(f"  Channels checked:                 {len(amp_idx)}")
+        print(f"  Total replaced invalid samples:   {total_replaced}")
+        print(f"  Newly marked bad (>= {bad_fraction_threshold*100:.1f}% replaced): {len(added_bads)}")
+        for ch in added_bads[:10]:
+            print(f"    - {ch}")
+        if len(added_bads) > 10:
+            print(f"    ... +{len(added_bads)-10} more")
+
+    return raw_sane
+
+
 def convert_to_optical_density(raw, verbose: bool = True):
     """
     Task 3.1.3: Convert raw intensity to optical density (OD) using MNE.
@@ -206,7 +337,8 @@ def convert_to_optical_density(raw, verbose: bool = True):
         print("Converting raw intensity → optical density...")
         print(f"  Channels in raw.info['bads']: {raw.info['bads']}")
 
-    raw_od = mne.preprocessing.nirs.optical_density(raw, verbose=verbose)
+    raw_sane = _sanitize_intensity_for_od(raw, verbose=verbose)
+    raw_od = mne.preprocessing.nirs.optical_density(raw_sane, verbose=verbose)
 
     if verbose:
         n_bad = len(raw_od.info['bads'])
@@ -541,6 +673,7 @@ def run_intensity_to_od(
     if verbose:
         print("Loading raw intensity data...")
     raw, _ = load_raw_snirf(dataset_name, subject_id, preload=True, verbose=False)
+    raw = _trim_zero_padded_tail(raw, verbose=verbose)
 
     # ---- 3.1.2 Mark bad channels ------------------------------------------
     marked_channels = mark_bad_channels(raw, exclusion_data, verbose=verbose)

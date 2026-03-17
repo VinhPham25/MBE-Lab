@@ -235,7 +235,7 @@ $$Motion\ Ratio = \frac{\text{Number of motion-corrupted samples}}{\text{Total s
 
 **Motion Detection Parameters (from MATLAB code):**
 - `tMotion`: 0.5 (amplitude change threshold)
-- `tStdev`: 20 (standard deviation multiplier)
+- `STDEVthresh`: 20 (standard deviation multiplier)
 - `AMPThresh`: 0.5 (absolute amplitude threshold)
 - `STDEVthresh`: 5 (statistical outlier threshold)
 
@@ -422,7 +422,7 @@ verify_od_range(raw_od, expected_range=(0.1, 2.0))
 **Objective:** Detect motion artifacts on filtered OD data
 
 **Same algorithm as Stage A3, but applied to filtered OD:**
-- Use same thresholds: tMotion=0.5, tStdev=20, AMPthresh=0.5
+- Use same thresholds: tMotion=0.5, STDEVthresh=20, AMPthresh=0.5
 - Detect using derivative of OD signal
 - Apply BOTH amplitude AND statistical methods (logical OR)
 - Output: Boolean mask of motion-corrupted timepoints
@@ -858,7 +858,7 @@ outputs/stage_c_validation/
 | Signal Amplitude | Exclusion Low | 80 dB | 80 dB | Paper Methods |
 | Signal Amplitude | Exclusion High | 140 dB | 140 dB | Paper Methods |
 | Motion Detection | tMotion | 0.5 | 0.5 | MATLAB Code |
-| Motion Detection | tStdev | 20 | 20 | MATLAB Code |
+| Motion Detection | STDEVthresh | 20 | 20 | MATLAB Code |
 | Motion Detection | AMPThresh | 0.5 | 0.5 | MATLAB Code |
 | Motion Detection | STDEVthresh | 5 | 5 | MATLAB Code |
 | Motion Ratio | Expected Range | 0.02-0.10 | 0.02-0.10 | Paper Figure 4 |
@@ -1023,7 +1023,7 @@ stage_a:
   signal_amplitude_low: 80  # dB
   signal_amplitude_high: 140  # dB
   motion_tMotion: 0.5
-  motion_tStdev: 20
+  motion_STDEVthresh: 20
   motion_AMPthresh: 0.5
   motion_STDEVthresh: 5
 

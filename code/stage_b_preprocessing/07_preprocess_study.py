@@ -1,7 +1,7 @@
 """
 Stage B — Step B7: Full Study Batch Processing
 Purpose: Process all subjects in a study through the complete Stage B pipeline
-         (B1 OD → B2 bandpass → B3 motion detect → B4 rPCA → B5 MBLL → B6 OLS)
+         (B1 OD → B2 bandpass → B3 motion detect → B4 rPCA → B5 MBLL → B6 GLM/OLS)
          and produce BIDS-compliant .fif outputs plus a study-level summary.
 
 Task coverage:
@@ -102,9 +102,11 @@ _CONFIG = load_config()
 STUDY_META: dict = _build_study_meta(_CONFIG)
 
 # rPCA parameters — sourced from config.yaml stage_b.rpca
+# Homer3-faithful values (audit fix): nSV=0.97, OR-union mask (min_ch=1), maxIter=5
 _RPCA_CFG = _CONFIG.get("stage_b", {}).get("rpca", {})
-DEFAULT_N_COMPONENTS:   float = float(_RPCA_CFG.get("n_components", 0.99))
-DEFAULT_MIN_CHANNELS:   int   = int(_RPCA_CFG.get("min_channels_flagged", 10))
+DEFAULT_N_COMPONENTS:   float = float(_RPCA_CFG.get("n_components",         0.97))
+DEFAULT_MIN_CHANNELS:   int   = int(  _RPCA_CFG.get("min_channels_flagged", 1))
+DEFAULT_MAX_ITER:       int   = int(  _RPCA_CFG.get("max_iterations",       5))
 
 # Short-channel separation threshold — sourced from config.yaml stage_b.short_channel_regression
 _SCR_CFG = _CONFIG.get("stage_b", {}).get("short_channel_regression", {})
@@ -254,6 +256,7 @@ def process_subject(
         "status":               "Fail",
         "notes":                "",
         "bids_fif_path":        None,
+        "bids_glm_hrf_path":    None,
     }
 
     try:
@@ -281,11 +284,19 @@ def process_subject(
         reg_results   = results["reg_results"]
         corr_df       = results["corr_df"]
 
-        # ---- 3. Save BIDS-compliant .fif to study directory ------------------
+        # ---- 3. Save BIDS-compliant continuous .fif to study directory -------
         bids_fname = f"sub-{subject_id}_task-{task_name}_desc-preprocessed_nirs_raw.fif"
         bids_path  = study_dir / bids_fname
         raw_corrected.save(str(bids_path), overwrite=True, verbose=False)
         metrics["bids_fif_path"] = str(bids_path)
+
+        # ---- 3b. Save BIDS-sidecar GLM HRF evoked -----------------------------
+        glm_evoked = results.get("glm_primary_evoked", None)
+        if glm_evoked is not None:
+            glm_fname = f"sub-{subject_id}_task-{task_name}_desc-glmhrf_nirs-ave.fif"
+            glm_path = study_dir / glm_fname
+            glm_evoked.save(str(glm_path), overwrite=True, verbose=False)
+            metrics["bids_glm_hrf_path"] = str(glm_path)
 
         # ---- 4. Post-rPCA motion ratio from saved effectiveness JSON ---------
         rpca_json_path = (
@@ -326,17 +337,34 @@ def process_subject(
         metrics["status"] = "Pass"
         metrics["notes"]  = ""
 
+        # Safe format helpers — metrics can be None when no valid channels
+        # survive the dropna filters (e.g. R10 trailing-zero artifact, or
+        # subjects where all channels lack a matched short-sep pair).
+        def _fv(v, spec):
+            return format(v, spec) if v is not None else "N/A"
+
         print(f"  ✅ {subject_id}: Pass | "
               f"bad={n_bad_pairs} | "
-              f"MR={metrics['mean_MR_post_rPCA']:.3f} | "
-              f"varHbO={metrics['var_removed_HbO_pct']:.1f}% | "
-              f"varHbR={metrics['var_removed_HbR_pct']:.1f}% | "
-              f"r={metrics['mean_r_HbO_HbR_after']:.3f}")
+              f"MR={_fv(metrics['mean_MR_post_rPCA'], '.3f')} | "
+              f"varHbO={_fv(metrics['var_removed_HbO_pct'], '.1f')}% | "
+              f"varHbR={_fv(metrics['var_removed_HbR_pct'], '.1f')}% | "
+              f"r={_fv(metrics['mean_r_HbO_HbR_after'], '.3f')}")
 
     except Exception as exc:  # noqa: BLE001
         err_msg = f"{type(exc).__name__}: {exc}"
         metrics["status"] = "Fail"
         metrics["notes"]  = err_msg
+        # Ensure failed subjects do not leak stale outputs into Stage C.
+        stale_raw = study_dir / f"sub-{subject_id}_task-{task_name}_desc-preprocessed_nirs_raw.fif"
+        stale_glm = study_dir / f"sub-{subject_id}_task-{task_name}_desc-glmhrf_nirs-ave.fif"
+        for stale_path in (stale_raw, stale_glm):
+            try:
+                if stale_path.exists():
+                    stale_path.unlink()
+            except OSError:
+                pass
+        metrics["bids_fif_path"] = None
+        metrics["bids_glm_hrf_path"] = None
         print(f"  ❌ {subject_id}: FAIL — {err_msg}")
         if verbose:
             traceback.print_exc()
@@ -421,96 +449,119 @@ def generate_group_visualization(
         print("  ⚠  No passing subjects — group visualization skipped.")
         return None
 
-    sub_ids    = [r["subject_id"]          for r in pass_records]
-    var_hbo    = [r["var_removed_HbO_pct"] for r in pass_records]
-    var_hbr    = [r["var_removed_HbR_pct"] for r in pass_records]
-    r_before   = [r["mean_r_HbO_HbR_before"] for r in pass_records]
-    r_after    = [r["mean_r_HbO_HbR_after"]  for r in pass_records]
-
+    sub_ids = [r["subject_id"] for r in pass_records]
     n = len(pass_records)
+
+    # Filter None values from variance metrics (e.g. R10 trailing-zero artefact
+    # leaves var_removed_frac NaN → metric stays None).
+    var_hbo_pairs = [(r["subject_id"], r["var_removed_HbO_pct"])
+                     for r in pass_records if r["var_removed_HbO_pct"] is not None]
+    var_hbr_pairs = [(r["subject_id"], r["var_removed_HbR_pct"])
+                     for r in pass_records if r["var_removed_HbR_pct"] is not None]
+    var_hbo = [v for _, v in var_hbo_pairs]
+    var_hbr = [v for _, v in var_hbr_pairs]
+
+    # Only include subjects where both r_before and r_after are available
+    # (subjects with no valid short-sep pair have None for correlation metrics).
+    r_records = [r for r in pass_records
+                 if r["mean_r_HbO_HbR_before"] is not None
+                 and r["mean_r_HbO_HbR_after"] is not None]
+    r_sub_ids = [r["subject_id"]           for r in r_records]
+    r_before  = [r["mean_r_HbO_HbR_before"] for r in r_records]
+    r_after   = [r["mean_r_HbO_HbR_after"]  for r in r_records]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # ---- Panel A: Variance removed box plot ---------------------------------
     ax = axes[0]
-    bp = ax.boxplot(
-        [var_hbo, var_hbr],
-        tick_labels=["HbO", "HbR"],
-        patch_artist=True,
-        medianprops=dict(color="black", linewidth=2),
-        whiskerprops=dict(linewidth=1.2),
-        capprops=dict(linewidth=1.2),
-        flierprops=dict(marker="+", markersize=7, color="black"),
-    )
-    bp["boxes"][0].set_facecolor("#ffb3b3")   # light red for HbO
-    bp["boxes"][1].set_facecolor("#b3c6ff")   # light blue for HbR
-
-    # Overlay individual subject points
-    for i, (vals, color) in enumerate(
-        [(var_hbo, "#d62728"), (var_hbr, "#1f77b4")], start=1
-    ):
-        x_jitter = np.random.default_rng(42).uniform(-0.08, 0.08, len(vals))
-        ax.scatter(
-            [i + x_jitter[j] for j in range(len(vals))],
-            vals,
-            c=color, alpha=0.7, zorder=3, s=40,
+    if var_hbo or var_hbr:
+        bp = ax.boxplot(
+            [var_hbo or [0], var_hbr or [0]],
+            tick_labels=["HbO", "HbR"],
+            patch_artist=True,
+            medianprops=dict(color="black", linewidth=2),
+            whiskerprops=dict(linewidth=1.2),
+            capprops=dict(linewidth=1.2),
+            flierprops=dict(marker="+", markersize=7, color="black"),
         )
+        bp["boxes"][0].set_facecolor("#ffb3b3")   # light red for HbO
+        bp["boxes"][1].set_facecolor("#b3c6ff")   # light blue for HbR
+
+        # Overlay individual subject points
+        for i, (vals, color) in enumerate(
+            [(var_hbo, "#d62728"), (var_hbr, "#1f77b4")], start=1
+        ):
+            if vals:
+                x_jitter = np.random.default_rng(42).uniform(-0.08, 0.08, len(vals))
+                ax.scatter(
+                    [i + x_jitter[j] for j in range(len(vals))],
+                    vals,
+                    c=color, alpha=0.7, zorder=3, s=40,
+                )
+
+        all_vals = var_hbo + var_hbr
+        ax.set_ylim(0, max(max(all_vals, default=30) * 1.2, 30))
+        hbo_mean_str = f"{np.mean(var_hbo):.1f}%" if var_hbo else "N/A"
+        hbr_mean_str = f"{np.mean(var_hbr):.1f}%" if var_hbr else "N/A"
+        ax.annotate(
+            f"HbO mean: {hbo_mean_str}\nHbR mean: {hbr_mean_str}",
+            xy=(0.97, 0.97), xycoords="axes fraction",
+            ha="right", va="top", fontsize=9,
+            bbox=dict(boxstyle="round", fc="lightyellow", ec="gray", alpha=0.85),
+        )
+    else:
+        ax.text(0.5, 0.5, "No variance data available",
+                ha="center", va="center", transform=ax.transAxes)
 
     ax.set_ylabel("Variance Removed (%)", fontsize=11)
     ax.set_title(
-        f"(A) OLS Variance Removed\n(n={n} subjects)",
+        f"(A) OLS Variance Removed\n"
+        f"(n={len(var_hbo)} HbO / {len(var_hbr)} HbR subjects with data)",
         fontsize=11, fontweight="bold",
     )
-    ax.set_ylim(0, max(max(var_hbo + var_hbr, default=30) * 1.2, 30))
     ax.axhline(0, color="gray", lw=0.5, ls="--")
     ax.grid(axis="y", alpha=0.3)
-
-    # Annotate group means
-    ax.annotate(
-        f"HbO mean: {np.mean(var_hbo):.1f}%\nHbR mean: {np.mean(var_hbr):.1f}%",
-        xy=(0.97, 0.97), xycoords="axes fraction",
-        ha="right", va="top", fontsize=9,
-        bbox=dict(boxstyle="round", fc="lightyellow", ec="gray", alpha=0.85),
-    )
 
     # ---- Panel B: Anti-correlation shift scatter ----------------------------
     ax = axes[1]
 
-    # Scatter: each subject as a point
-    ax.scatter(r_before, r_after, c="#2ca02c", s=60, alpha=0.8, zorder=3)
+    if r_records:
+        ax.scatter(r_before, r_after, c="#2ca02c", s=60, alpha=0.8, zorder=3)
 
-    # Label each point with subject ID
-    for sid, xv, yv in zip(sub_ids, r_before, r_after):
-        ax.annotate(sid, (xv, yv), textcoords="offset points",
-                    xytext=(5, 3), fontsize=7, alpha=0.8)
+        for sid, xv, yv in zip(r_sub_ids, r_before, r_after):
+            ax.annotate(sid, (xv, yv), textcoords="offset points",
+                        xytext=(5, 3), fontsize=7, alpha=0.8)
 
-    # Reference lines
-    lim = [-1.0, 0.5]
-    ax.plot(lim, lim, "k--", lw=0.9, label="No change (y = x)")
-    ax.axhline(-0.5, color="darkgreen", lw=1.0, ls=":", label="Target ≤ −0.5")
-    ax.axhline(-1.0, color="darkgreen", lw=0.8, ls="--")
+        lim = [-1.0, 0.5]
+        ax.plot(lim, lim, "k--", lw=0.9, label="No change (y = x)")
+        ax.axhline(-0.5, color="darkgreen", lw=1.0, ls=":", label="Target ≤ −0.5")
+        ax.axhline(-1.0, color="darkgreen", lw=0.8, ls="--")
 
-    # Group arrows
-    mean_bef = np.mean(r_before)
-    mean_aft = np.mean(r_after)
-    ax.annotate(
-        "",
-        xy=(mean_bef, mean_aft),
-        xytext=(mean_bef, mean_bef),
-        arrowprops=dict(arrowstyle="->", color="purple", lw=1.5),
-    )
-    ax.scatter([mean_bef], [mean_aft], c="purple", s=120, zorder=5,
-               label=f"Group mean: {mean_bef:.3f} → {mean_aft:.3f}")
+        mean_bef = float(np.mean(r_before))
+        mean_aft = float(np.mean(r_after))
+        ax.annotate(
+            "",
+            xy=(mean_bef, mean_aft),
+            xytext=(mean_bef, mean_bef),
+            arrowprops=dict(arrowstyle="->", color="purple", lw=1.5),
+        )
+        ax.scatter([mean_bef], [mean_aft], c="purple", s=120, zorder=5,
+                   label=f"Group mean: {mean_bef:.3f} → {mean_aft:.3f}")
+        ax.set_xlim(lim); ax.set_ylim(lim)
+        ax.legend(fontsize=8, loc="lower right")
+    else:
+        ax.text(0.5, 0.5,
+                f"No paired r(HbO,HbR) data\n({n} subjects processed,\n"
+                "0 with valid short-sep pairs)",
+                ha="center", va="center", transform=ax.transAxes, fontsize=10)
 
     ax.set_xlabel("Mean r(HbO, HbR)  before OLS", fontsize=11)
     ax.set_ylabel("Mean r(HbO, HbR)  after OLS",  fontsize=11)
     ax.set_title(
-        "(B) HbO/HbR Anti-Correlation Shift\n"
-        "(more negative = brain signal dominates after regression)",
+        f"(B) HbO/HbR Anti-Correlation Shift\n"
+        f"(n={len(r_records)} subjects with paired correlation data)",
         fontsize=11, fontweight="bold",
     )
-    ax.set_xlim(lim); ax.set_ylim(lim)
-    ax.legend(fontsize=8, loc="lower right")
     ax.grid(alpha=0.3)
 
     fig.suptitle(
@@ -533,6 +584,7 @@ def save_provenance_log(
     study_folder:        str,
     n_components:        float,
     min_channels_flagged: int,
+    max_iterations:      int,
     ppf_dict:            dict,
     system:              str,
 ) -> Path:
@@ -564,7 +616,7 @@ def save_provenance_log(
         "date_processed":     datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "pipeline_version":   "Stage B v1.0",
         "pipeline_steps":     ["B1_OD", "B2_bandpass", "B3_motion_detect",
-                               "B4_rPCA", "B5_MBLL", "B6_OLS"],
+                               "B4_rPCA", "B5_MBLL", "B6_GLM_OLS"],
         "n_subjects_attempted": len(records),
         "n_subjects_passed":  n_pass,
         "n_subjects_failed":  n_fail,
@@ -575,13 +627,13 @@ def save_provenance_log(
                 "high_db": float(snr_params.get("threshold_high", 140.0)),
             },
             "B2_bandpass_filter": {
-                "l_freq":  b_params.get("filter", {}).get("l_freq", 0.01),
-                "h_freq":  b_params.get("filter", {}).get("h_freq", 0.5),
+                "hpf":  b_params.get("filter", {}).get("hpf", 0.0),
+                "lpf":  b_params.get("filter", {}).get("lpf", 0.5),
                 "method":  b_params.get("filter", {}).get("method", "iir"),
             },
             "B3_motion_detection": {
                 "AMPthresh":              float(b3_params.get("AMPthresh", 5.0)),
-                "STDEVthresh_multiplier": float(b3_params.get("tStdev", 20.0)),
+                "STDEVthresh_multiplier": float(b3_params.get("STDEVthresh", 20.0)),
                 "tMotion":                float(b3_params.get("tMotion", 0.5)),
                 "t_mask":                 float(b3_params.get("t_mask", 0.5)),
                 "use_amp_only":           bool(b3_params.get("use_amp_only", False)),
@@ -589,6 +641,7 @@ def save_provenance_log(
             "B4_rPCA": {
                 "n_components":         n_components,
                 "min_channels_flagged": min_channels_flagged,
+                "max_iterations":       max_iterations,
             },
             "B5_beer_lambert": {
                 "ppf_values":  ppf_serialisable,
@@ -598,13 +651,23 @@ def save_provenance_log(
                     "max": float(bl_params.get("hb_range_max",  100)),
                 },
             },
-            "B6_short_channel_regression": {
-                "method":                scr_params.get("method", "gaussian_basis_OLS"),
+            "B6_glm_ols": {
+                "method": "homer3_style_glm_ols",
+                "short_separation_threshold_mm": float(scr_params.get("short_separation_threshold", 15.0)),
                 "short_sep_threshold_mm": float(scr_params.get("short_separation_threshold", 15.0)),
-                "n_gaussians":           int(scr_params.get("n_gaussians", 3)),
-                "gaussian_std_s":        float(scr_params.get("gaussian_std_s", 1.0)),
-                "gaussian_spacing_s":    float(scr_params.get("gaussian_spacing_s", 1.5)),
-                "selection_criterion":   "max |Pearson r(long, short)|",
+                "trange_s": [
+                    float(scr_params.get("trange", [config.get("stage_c", {}).get("epochs", {}).get("tmin", -25), config.get("stage_c", {}).get("epochs", {}).get("tmax", 100)])[0]),
+                    float(scr_params.get("trange", [config.get("stage_c", {}).get("epochs", {}).get("tmin", -25), config.get("stage_c", {}).get("epochs", {}).get("tmax", 100)])[1]),
+                ],
+                "gaussian_std_s": float(scr_params.get("gaussian_std_s", 1.0)),
+                "gaussian_step_s": float(scr_params.get("gaussian_step_s", 1.0)),
+                "drift_order": int(scr_params.get("drift_order", 3)),
+                "orthogonalize_drift_nuisance_against_hrf": bool(
+                    scr_params.get("orthogonalize_drift_nuisance_against_hrf", False)
+                ),
+                "flag_nuisance_r_method": int(scr_params.get("flag_nuisance_r_method", scr_params.get("flagNuisanceRMethod", 1))),
+                "glm_solve_method": int(scr_params.get("glm_solve_method", 1)),
+                "event_ids": scr_params.get("event_ids", [1]),
             },
         },
         "output_format":       "MNE .fif",
@@ -701,7 +764,8 @@ def run_preprocess_study(
     print(f"  Subjects:       {len(subjects)}")
     print(f"  PPF values:     {ppf_dict}")
     print(f"  rPCA params:    n_components={n_components}, "
-          f"min_channels_flagged={min_channels_flagged}")
+          f"min_channels_flagged={min_channels_flagged}, "
+          f"max_iterations={DEFAULT_MAX_ITER}  (Homer3-faithful)")
     print(f"  Output dir:     {study_dir}")
     print(f"  BIDS naming:    sub-{{id}}_task-{task_name}_desc-preprocessed_nirs_raw.fif")
     print("=" * 70 + "\n")
@@ -736,6 +800,7 @@ def run_preprocess_study(
         study_folder         = study_folder,
         n_components         = n_components,
         min_channels_flagged = min_channels_flagged,
+        max_iterations       = DEFAULT_MAX_ITER,
         ppf_dict             = ppf_dict,
         system               = system,
     )

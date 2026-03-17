@@ -58,7 +58,7 @@ Stage A: Raw Quality Assessment → Stage B: Preprocessing → Stage C: Validati
 
 #### Stage A - Raw Quality Assessment
 - Calculate SNR on raw intensity (80-140 dB threshold)
-- Detect motion artifacts (tMotion=0.5, tStdev=20)
+- Detect motion artifacts (tMotion=0.5, STDEVthresh=20)
 - Generate exclusion lists for bad channels
 - Output: QA reports, channel exclusions
 
@@ -146,7 +146,7 @@ MBE-Lab/
 |-----------|-------|---------|
 | SNR Threshold | 80-140 dB | Channel quality (Stage A) |
 | Motion tMotion | 0.5 | Amplitude threshold |
-| Motion tStdev | 20 | Standard deviation multiplier |
+| Motion STDEVthresh | 20 | Standard deviation multiplier |
 | Bandpass Filter | 0.01-0.5 Hz | Remove drift and noise |
 | rPCA Variance | 0.97 | Motion correction | Note, adjusted from 0.97 to 0.99 for rPCA after hyperparameter tuning
 | Epoch Window | -25 to +100 s | HRF extraction |
