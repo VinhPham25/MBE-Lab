@@ -202,6 +202,15 @@ def collect_group_traces(
                 continue
             idx = [ev.ch_names.index(c) for c in present]
             trace_um = ev.data[idx, :].mean(axis=0) * 1e6
+            # Hyperparameter sweeps can leave mixed-length HRF sidecars if a
+            # subject falls back to an older run (different trange). Align all
+            # traces to the first valid subject time base before stacking.
+            if trace_um.shape[0] != times_ref.shape[0] or not np.allclose(ev.times, times_ref):
+                print(
+                    f"    [{sid}] aligning trace length {trace_um.shape[0]} "
+                    f"to reference {times_ref.shape[0]}"
+                )
+                trace_um = np.interp(times_ref, ev.times, trace_um)
             region_mats[region].append(trace_um)
             region_subject_ids[region].append(sid)
 
@@ -251,18 +260,20 @@ def plot_hrf_panel(
         if mat.size == 0:
             continue
         style = GROUP_STYLE[group_name]
-        mean = mat.mean(axis=0)
-        sd = mat.std(axis=0, ddof=1) if mat.shape[0] > 1 else np.zeros_like(mean)
+        mean = np.nanmean(mat, axis=0)
+        sd = np.nanstd(mat, axis=0, ddof=1) if mat.shape[0] > 1 else np.zeros_like(mean)
 
         ax.fill_between(times, mean - sd, mean + sd,
                         color=style["band_color"], alpha=style["band_alpha"], zorder=3)
         ax.plot(times, mean, color=style["mean_color"], lw=style["lw"],
                 label=f"{style['label']} mean  (n={mat.shape[0]})", zorder=4)
 
+        if not np.any(np.isfinite(mean[t_mask])):
+            continue
         if chromophore == "hbo":
-            pidx = int(np.argmax(mean[t_mask]))
+            pidx = int(np.nanargmax(mean[t_mask]))
         else:
-            pidx = int(np.argmin(mean[t_mask]))
+            pidx = int(np.nanargmin(mean[t_mask]))
         pt = float(times[t_mask][pidx])
         pa = float(mean[t_mask][pidx])
         stats[group_name] = {"peak_time_s": round(pt, 2), "peak_amp_uM": round(pa, 3)}
