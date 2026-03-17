@@ -116,6 +116,10 @@ def load_preprocessed_fif(
     -------
     raw : mne.io.BaseRaw
         Preprocessed continuous HbO/HbR time series with Annotations preserved.
+        Always returned at the pipeline target sfreq (25 Hz).  If the .fif was
+        saved at a different rate (R9 = 50 Hz due to split-recording hardware
+        clock), data is loaded into RAM and resampled in-memory before returning
+        — regardless of the ``preload`` argument.
 
     Raises
     ------
@@ -123,6 +127,14 @@ def load_preprocessed_fif(
         If the expected .fif path does not exist.
     ValueError
         If the subject belongs to the excluded list (R10).
+
+    Notes
+    -----
+    **R9 resampling:** R9's Stage B .fif is at 50 Hz (hardware clock of the
+    split-recording session was never corrected in Stage B).  Stage C handled
+    this with ``_harmonise_evoked()``; Stage D handles it here so every caller
+    receives a uniform 25 Hz signal.  The in-memory resample does NOT modify
+    the file on disk.
     """
     if config is None:
         config = load_config()
@@ -136,6 +148,10 @@ def load_preprocessed_fif(
             f"(Stage B quality flag — trailing zeros, anomalous rPCA). "
             f"Excluded subjects: {excluded}"
         )
+
+    target_sfreq: float = float(
+        gc_cfg.get("window", {}).get("sfreq", 25.0)
+    )
 
     ds_cfg = config["datasets"][study]
     stage_b_root = _PROJECT_ROOT / config["paths"]["stage_b_outputs"]
@@ -160,7 +176,61 @@ def load_preprocessed_fif(
         fif_path = candidates[0]
         logger.warning("load_preprocessed_fif: using fallback path %s", fif_path.name)
 
-    raw = mne.io.read_raw_fif(fif_path, preload=preload, verbose=verbose)
+    # ------------------------------------------------------------------
+    # R9 sfreq harmonisation  [TO DISABLE: comment out this entire block]
+    #
+    # WHY THIS EXISTS
+    # R9's raw .snirf was recorded at 50 Hz (hardware clock of its split
+    # recording session ran at 2× the standard rate).  Stage B has no
+    # resampling step, so the saved .fif is also at 50 Hz.  Every other
+    # subject is at 25 Hz.  Stage C solved the same problem for grand-average
+    # evokeds via _harmonise_evoked() in 02_group_hrf_analysis.py.
+    #
+    # WHAT IT DOES
+    # MNE's resample() applies a polyphase anti-aliasing FIR low-pass at the
+    # new Nyquist (12.5 Hz) and then decimates by 2.  No information relevant
+    # to GC is lost: Stage B's bandpass already constrained all signals to
+    # 0.01–0.1 Hz, which is far below 12.5 Hz.  Annotation timestamps are
+    # rescaled automatically, so trial onset/offset sample indices in
+    # get_event_onsets() remain correct at 25 Hz.
+    #
+    # TO DISABLE (e.g. if Stage B is re-run for R9 at 25 Hz)
+    # Comment out lines below up to and including the logger.info call
+    # inside the `if needs_resample:` block.  The rest of the function
+    # is unaffected; raw will simply be returned at whatever sfreq the
+    # .fif was saved at.
+    # ------------------------------------------------------------------
+    needs_resample = False
+    raw_peek = mne.io.read_raw_fif(fif_path, preload=False, verbose=False)
+    if raw_peek.info["sfreq"] != target_sfreq:
+        needs_resample = True
+
+    raw = mne.io.read_raw_fif(
+        fif_path,
+        preload=True if needs_resample else preload,
+        verbose=verbose,
+    )
+
+    if needs_resample:
+        original_sfreq = raw.info["sfreq"]
+        logger.warning(
+            "load_preprocessed_fif [%s]: .fif sfreq=%.1f Hz != target %.1f Hz "
+            "— resampling in-memory (file on disk unchanged). "
+            "Root cause: Stage B did not normalise R9's 50 Hz hardware clock.",
+            subject_id, original_sfreq, target_sfreq,
+        )
+        raw = raw.resample(target_sfreq, verbose=verbose)
+        logger.info(
+            "load_preprocessed_fif [%s]: resampled %.1f → %.1f Hz  "
+            "(%d → %d samples)",
+            subject_id, original_sfreq, target_sfreq,
+            int(raw.times[-1] * original_sfreq + 1),
+            len(raw.times),
+        )
+    # ------------------------------------------------------------------
+    # End R9 sfreq harmonisation
+    # ------------------------------------------------------------------
+
     logger.info(
         "Loaded %s  (%d ch, %.1f Hz, %.1f s)",
         fif_path.name, len(raw.ch_names), raw.info["sfreq"], raw.times[-1],

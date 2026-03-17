@@ -46,7 +46,7 @@ SMA→LPFC,  SMA→CPFC,  SMA→RPFC,  SMA→LM1
 ### Critical Parameters (must match MATLAB exactly)
 | Parameter | Value | Source |
 |---|---|---|
-| Sampling frequency | 25 Hz | ASTaUND TechEn CW6 (R9 resampled 50→25 Hz during Stage B; Stage B `.fif` is confirmed at 25 Hz — GC pipeline uses `.fif` sfreq at load time) |
+| Sampling frequency | 25 Hz | ASTaUND TechEn CW6. All Stage B `.fif` files except R9 are natively at 25 Hz. **R9's `.fif` is at 50 Hz** (hardware clock of split-recording session not corrected in Stage B). `load_preprocessed_fif()` detects `sfreq != 25 Hz` and resamples R9 in-memory to 25 Hz — file on disk is unchanged. Same approach used by Stage C `_harmonise_evoked()`. |
 | Sliding window size | 54 s × 25 Hz = 1350 samples; MATLAB inclusive slice gives **1351 samples** (`Y(:,w-window_size:w)`) | MATLAB: `window_size = 54*25` |
 | Window stride | 1350 samples (**no overlap**) | MATLAB: `sT = window_size` |
 | VAR model order | **20** | MATLAB: `cca_pwcausal(...,20,20,...)` |
@@ -129,7 +129,7 @@ This mirrors the MATLAB `st = find(da.s)` trigger detection and `Y = Data_Reg(:,
 - [x] **3.1.1** (2026-03-17) Implemented `get_trial_segments(raw) -> list[tuple[int,int]]` in `02_trial_segmentation.py`: reads all MNE events via `get_event_onsets(raw)`, sorts by sample, pairs them 2-at-a-time `(id=1 start, id=2 end)` — exact mirror of MATLAB `st = find(da.s)` + `for stt = 1:2:(size_st-1)`; validates each pair's id order and raises `RuntimeError` on malformed annotations; includes window-feasibility check (warns if trial < 54 s). Window size auto-scales to `window_size_s × sfreq` so R9 (50 Hz) correctly uses 2700-sample windows = 54 s.
 - [x] **3.1.2** (2026-03-17) A1 validated: 5 trials, durations `[88, 104, 116, 124, 138]` s — all within the 1–3 min physiological range. `dur_s == dur_MATLAB` exactly (`(offset-onset)/sfreq == (offset-onset)/25` for A1 at 25 Hz). Total 8 non-overlapping windows. No SHORT flags.
 - [x] **3.1.3** (2026-03-17) Trial duration logging implemented in `save_trial_durations()`; saves `sub-{id}_trial_durations.csv` with columns `[trial, onset_sample, offset_sample, duration_s, duration_samples, n_windows, short_flag]`; flags trials < `window_size_s` with "SHORT". Batch complete — 13/13 subjects OK. Key per-subject findings:
-  - **R9** (50 Hz): 2 trials only (vs 5 for all others); durations 99 s and 105 s; window size auto-computed as 2700 samples (54 s × 50 Hz) ✓; 2 total windows.
+  - **R9** (50 Hz .fif → resampled to 25 Hz in-memory by `load_preprocessed_fif()`): 2 trials only (vs 5 for all others); durations 99 s and 105 s; 2 total windows of 1350 samples (54 s × 25 Hz) — uniform with all other subjects after resampling.
   - **R4**: 9 triggers found (5 trial_start, 4 trial_end — missing final trial-end annotation); code warns "odd number of triggers" and uses the 4 complete pairs → 4 trials, 7 total windows.
   - **R3** / **R6**: notably long trials (195–277 s / up to 343 s) → 20 and 16 total windows respectively.
   - All subjects: zero SHORT flags (every trial ≥ 88 s ≥ 54 s window minimum).
