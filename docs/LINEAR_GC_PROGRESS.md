@@ -99,9 +99,9 @@ outputs/stage_d_granger/linear_gc/expert-novice/
 ### SECTION 1: ENVIRONMENT AND CONFIGURATION
 
 #### 1.1 Setup
-- [ ] **1.1.1** Add GC dependencies to environment: `statsmodels`, `scipy`; verify VAR import works with `from statsmodels.tsa.vector_ar.var_model import VAR`; verify `scipy.stats.shapiro` and `statsmodels.stats.multitest.fdrcorrection` are importable (`nitime` is **not** required — spectral factorization uses `numpy` directly)
-- [ ] **1.1.2** Create `code/stage_d_granger/` directory and `__init__.py`; create `config` block in `config.yaml` under `stage_d_granger.linear_gc` with all parameters from the Design Requirements table above; also add `stage_d_outputs: "outputs/stage_d_granger"` to the `paths` section of `config.yaml`
-- [ ] **1.1.3** Create `code/stage_d_granger/utils_gc.py` — shared utility functions: `load_preprocessed_fif(subject_id, study)`, `get_event_onsets(raw)`, `get_subject_group(subject_id)` returning `'Expert'` or `'Novice'`, and `get_connection_labels()` returning the 20 directed connection strings in row→col order for `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`
+- [x] **1.1.1** (2026-03-17) Add GC dependencies to environment: `statsmodels`, `scipy`; verify VAR import works with `from statsmodels.tsa.vector_ar.var_model import VAR`; verify `scipy.stats.shapiro` and `statsmodels.stats.multitest.fdrcorrection` are importable (`nitime` is **not** required — spectral factorization uses `numpy` directly)
+- [x] **1.1.2** (2026-03-17) Create `code/stage_d_granger/` directory and `__init__.py`; create `config` block in `config.yaml` under `stage_d_granger.linear_gc` with all parameters from the Design Requirements table above; also add `stage_d_outputs: "outputs/stage_d_granger"` to the `paths` section of `config.yaml`
+- [x] **1.1.3** (2026-03-17) Create `code/stage_d_granger/utils_gc.py` — shared utility functions: `load_preprocessed_fif(subject_id, study)`, `get_event_onsets(raw)`, `get_subject_group(subject_id)` returning `'Expert'` or `'Novice'`, and `get_connection_labels()` returning the 20 directed connection strings in row→col order for `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`
 
 ---
 
@@ -251,12 +251,12 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 34
-- **Completed:** 0
+- **Completed:** 3
 - **In Progress:** 0
-- **Remaining:** 34
+- **Remaining:** 31
 
 ### By Section
-- **Section 1 (Setup):** 0/3
+- **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 0/6
 - **Section 3 (Trial Segmentation):** 0/3
 - **Section 4 (Core GC):** 0/12

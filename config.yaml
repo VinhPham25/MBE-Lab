@@ -266,6 +266,7 @@ paths:
   stage_a_outputs: "outputs/stage_a_qa"
   stage_b_outputs: "outputs/stage_b_processed"
   stage_c_outputs: "outputs/stage_c_validation"
+  stage_d_outputs: "outputs/stage_d_granger"
   code_root: "code"
   
 # ==============================================================================
@@ -320,6 +321,98 @@ performance:
   memory_efficient: true
   cache_preprocessing: false  # Set to true if reprocessing frequently
   
+# ==============================================================================
+# STAGE D: GRANGER CAUSALITY PARAMETERS
+# ==============================================================================
+# Reference: docs/LINEAR_GC_PROGRESS.md
+# MATLAB reference: matlab_references/Linear GC/GC_freq_main_TRGC_NovExp.m
+
+stage_d_granger:
+  linear_gc:
+
+    # --------------------------------------------------------------------------
+    # Subject groups (R10 explicitly excluded — trailing-zero data quality flag;
+    # anomalously high rPCA var_removed: HbO 87%, HbR 99%)
+    # --------------------------------------------------------------------------
+    subjects:
+      Expert: ["A1", "A2", "R7", "R8", "R9", "R11", "R12"]   # n=7
+      Novice: ["R1", "R2", "R3", "R4", "R5", "R6"]            # n=6
+      excluded: ["R10"]   # data quality flag — do not process
+
+    # --------------------------------------------------------------------------
+    # ROI definitions (abbreviated keys matching build_region_map_5() output)
+    # Full names: LPFC=Left Lateral PFC, CPFC=Central PFC, RPFC=Right Lateral
+    # PFC, LM1=Left Medial M1, SMA=Supplementary Motor Area
+    # --------------------------------------------------------------------------
+    roi_names: ["LPFC", "CPFC", "RPFC", "LM1", "SMA"]
+
+    # --------------------------------------------------------------------------
+    # Sliding window parameters
+    # MATLAB: window_size = 54*25 = 1350; Y(:,w-window_size:w) gives 1351
+    # samples (MATLAB inclusive indexing). Python implementation replicates
+    # this as Y[:, w-window_size : w+1] to match NL=1351 in cca_pwcausal.
+    # --------------------------------------------------------------------------
+    window:
+      size_s: 54           # seconds — window duration
+      sfreq: 25.0          # Hz — sampling rate (matches Stage B output)
+      size_samples: 1350   # = size_s * sfreq (base; actual slice = 1351 incl.)
+      stride_samples: 1350 # no overlap (sT = window_size in MATLAB)
+      min_samples: 1350    # trials shorter than this have 0 windows (skipped)
+
+    # --------------------------------------------------------------------------
+    # VAR model parameters
+    # MATLAB: cca_pwcausal(Y_windowed, 1, NL, 20, 20, freq, 1)
+    # --------------------------------------------------------------------------
+    var:
+      order: 20            # model order (p) — both forward and backward in MATLAB
+      stationarity_check: true   # run ADF test before fitting; difference if needed
+      adf_pvalue_threshold: 0.05 # non-stationary if p > threshold
+
+    # --------------------------------------------------------------------------
+    # Frequency-domain GC parameters
+    # MATLAB: freq = [0:0.01:0.1] → 11 frequency points
+    # --------------------------------------------------------------------------
+    frequency:
+      f_start: 0.0         # Hz — start of GC frequency vector
+      f_stop: 0.1          # Hz — end (inclusive)
+      f_step: 0.01         # Hz — step size → 11 points: [0, 0.01, ..., 0.10]
+      n_freqs: 11          # = len(np.arange(0, 0.11, 0.01))
+
+    # --------------------------------------------------------------------------
+    # Neurophysiological band averaging
+    # MATLAB: idx1 = find(freq==0.01); idx2 = find(freq==0.07)
+    #         mean(GW(:,:,idx1:idx2), 3)
+    # --------------------------------------------------------------------------
+    band_avg:
+      f_low: 0.01          # Hz — lower bound of hemodynamic band
+      f_high: 0.07         # Hz — upper bound
+
+    # --------------------------------------------------------------------------
+    # Signal units note
+    # MNE stores hemoglobin in mol/L (not μM). GC is computed on raw mol/L
+    # values — the log-ratio formulation is unit-agnostic. No conversion applied.
+    # --------------------------------------------------------------------------
+    signal_units: "mol/L"  # MNE native; GC is unit-agnostic (log-ratio)
+
+    # --------------------------------------------------------------------------
+    # Output paths (relative to stage_d_outputs = outputs/stage_d_granger)
+    # --------------------------------------------------------------------------
+    output_subdirs:
+      roi_signals:    "linear_gc/expert-novice/roi_signals"
+      gc_raw:         "linear_gc/expert-novice/gc_raw"
+      gc_connectivity: "linear_gc/expert-novice/gc_connectivity"
+      group:          "linear_gc/expert-novice/group"
+      statistics:     "linear_gc/expert-novice/statistics"
+      visualizations: "linear_gc/expert-novice/visualizations"
+
+    # --------------------------------------------------------------------------
+    # Statistical testing parameters (Section 6)
+    # --------------------------------------------------------------------------
+    statistics:
+      fdr_method: "indep"  # statsmodels fdrcorrection method ('indep' = BH)
+      alpha: 0.05          # significance threshold after FDR correction
+      n_connections: 20    # off-diagonal elements of 5×5 GC matrix
+
 # ==============================================================================
 # END OF CONFIGURATION
 # ==============================================================================
