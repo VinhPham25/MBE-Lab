@@ -3,7 +3,7 @@
 **Reference MATLAB Script:** `GC_freq_main_TRGC_NovExp.m`  
 **Reference Toolbox:** GCCA (`cca_pwcausal`), bsmart, MVGC v1.0  
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
-**Output Root:** `outputs/stage_e_granger/linear_gc/expert-novice/`  
+**Output Root:** `outputs/stage_d_granger/linear_gc/expert-novice/`  
 **Language:** Python 3.9+  
 **Status:** Not started
 
@@ -11,9 +11,9 @@
 
 ## 🎯 OBJECTIVE
 
-Implement the frequency-domain pairwise conditional Granger Causality (GC) pipeline as an extension of the existing ASTaUND preprocessing pipeline, operating on the preprocessed `.fif` files produced by Stage B. The GC computation methodology is adapted from `GC_freq_main_TRGC_NovExp.m` (MATLAB reference), but the ROI definitions, channel mappings, and data loading are carried forward directly from the validated Stage C pipeline (`build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py`). The output is a per-subject, per-trial, per-window connectivity matrix (subjects × 20 directed connections × windows) that serves as the validated linear baseline before implementing the nonlinear LSTM-based GC in Phase 2.
+Implement the frequency-domain pairwise conditional Granger Causality (GC) pipeline in Python as an extension of the existing ASTaUND preprocessing pipeline, operating on the preprocessed `.fif` files produced by Stage B. The GC computation methodology is adapted from `GC_freq_main_TRGC_NovExp.m` (MATLAB reference), but the ROI definitions, channel mappings, and data loading are carried forward directly from the validated Stage C pipeline (`build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py`, which now returns abbreviated keys `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`). The output is a per-subject, per-trial, per-window connectivity matrix (subjects × 20 directed connections × windows) that serves as the validated linear baseline before implementing the nonlinear LSTM-based GC in Phase 2.
 
-> **ROI Note:** This implementation uses the 5 anatomical regions validated in Stage C, which differ from the MATLAB reference script's ROIs. The MATLAB script used `[LPFC, RPFC, LPMC, RPMC, SMA]` (bilateral motor cortex). This pipeline uses `[Left Lat PFC, Central PFC, Right Lat PFC, Left Medial M1, SMA]` — reflecting the actual optode coverage of the ASTaUND TechEn CW6 cap and the already-validated Stage C channel assignments. This is an intentional anatomical choice, not a deviation. Any comparison of GC results against the MATLAB paper must account for this difference.
+> **ROI Note:** This implementation uses the 5 anatomical regions validated in Stage C, which differ from the MATLAB reference script's ROIs. The MATLAB script used `[LPFC, RPFC, LPMC, RPMC, SMA]` (bilateral motor cortex). This pipeline uses `[LPFC, CPFC, RPFC, LM1, SMA]` — reflecting the actual optode coverage of the ASTaUND TechEn CW6 cap and the already-validated Stage C channel assignments. These are the abbreviated key names returned by `build_region_map_5()` as of the Stage D update. This is an intentional anatomical choice, not a deviation. Any comparison of GC results against the MATLAB paper must account for this difference.
 
 ---
 
@@ -32,7 +32,7 @@ ROI_NAMES = ['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']
 ```
 5 ROIs → 5×5 directed GC matrix → remove diagonal → **20 directed connections**
 
-> **Deviation from MATLAB reference:** The MATLAB script used `[LPFC, RPFC, LPMC, RPMC, SMA]`. This pipeline replaces `LPMC` and `RPMC` (bilateral motor cortex) with `CPFC` and `LM1` to match the validated Stage C ROI map. The GC computation itself is unchanged — only the region labels and channel assignments differ.
+> **Deviation from MATLAB reference:** The MATLAB script used `[LPFC, RPFC, LPMC, RPMC, SMA]`. This pipeline replaces `LPMC` and `RPMC` (bilateral motor cortex) with `CPFC` and `LM1` to match the validated Stage C ROI map. The GC computation itself is unchanged — only the region labels and channel assignments differ. `build_region_map_5()` now returns abbreviated keys directly; `03_hrf_visualization.py` maintains its own local copy with full-name keys for plot labels.
 
 ### Directed Connections (20 off-diagonal, row→col convention)
 ```
@@ -46,14 +46,14 @@ SMA→LPFC,  SMA→CPFC,  SMA→RPFC,  SMA→LM1
 ### Critical Parameters (must match MATLAB exactly)
 | Parameter | Value | Source |
 |---|---|---|
-| Sampling frequency | 25 Hz | ASTaUND TechEn CW6 |
-| Sliding window size | 54 s × 25 Hz = **1350 samples** | MATLAB: `window_size = 54*25` |
+| Sampling frequency | 25 Hz | ASTaUND TechEn CW6 (R9 resampled 50→25 Hz during Stage B; Stage B `.fif` is confirmed at 25 Hz — GC pipeline uses `.fif` sfreq at load time) |
+| Sliding window size | 54 s × 25 Hz = 1350 samples; MATLAB inclusive slice gives **1351 samples** (`Y(:,w-window_size:w)`) | MATLAB: `window_size = 54*25` |
 | Window stride | 1350 samples (**no overlap**) | MATLAB: `sT = window_size` |
 | VAR model order | **20** | MATLAB: `cca_pwcausal(...,20,20,...)` |
 | GC frequency range | 0–0.1 Hz, step 0.01 Hz | MATLAB: `freq = [0:0.01:0.1]` |
 | Neurophysio band | **0.01–0.07 Hz** | MATLAB: `idx1=0.01, idx2=0.07` |
 | GC averaging | Mean over 0.01–0.07 Hz | MATLAB: `mean(GW(:,:,idx1:idx2),3)` |
-| Subject groups | Expert: A1,A2,R7–R12 (n=7); Novice: R1–R6 (n=6) | MATLAB subject lists |
+| Subject groups | Expert: A1, A2, R7, R8, R9, R11, R12 (n=7); Novice: R1–R6 (n=6) | MATLAB subject lists; **R10 explicitly excluded** — trailing zeros in 690nm channels cause NaN after bandpass filter (Stage B quality flag; anomalously high rPCA var_removed: HbO 87%, HbR 99%) |
 
 ### Python Equivalents of MATLAB Functions
 | MATLAB | Python |
@@ -69,7 +69,7 @@ SMA→LPFC,  SMA→CPFC,  SMA→RPFC,  SMA→LM1
 ## 📁 OUTPUT STRUCTURE
 
 ```
-outputs/stage_e_granger/linear_gc/expert-novice/
+outputs/stage_d_granger/linear_gc/expert-novice/
 ├── roi_signals/
 │   └── sub-{id}_roi_signals.npz          # 5×T array per subject
 ├── gc_raw/
@@ -99,9 +99,9 @@ outputs/stage_e_granger/linear_gc/expert-novice/
 ### SECTION 1: ENVIRONMENT AND CONFIGURATION
 
 #### 1.1 Setup
-- [ ] **1.1.1** Add GC dependencies to environment: `statsmodels`, `scipy`, `nitime` (for spectral validation); verify VAR import works with `from statsmodels.tsa.vector_ar.var_model import VAR`
-- [ ] **1.1.2** Create `code/stage_e_granger/` directory and `__init__.py`; create `config` block in `config.yaml` under `stage_e_granger.linear_gc` with all parameters from the Design Requirements table above
-- [ ] **1.1.3** Create `code/stage_e_granger/utils_gc.py` — shared utility functions: `load_preprocessed_fif(subject_id, study)`, `get_event_onsets(raw)`, `get_subject_group(subject_id)` returning `'Expert'` or `'Novice'`, and `get_connection_labels()` returning the 20 directed connection strings in row→col order for `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`
+- [ ] **1.1.1** Add GC dependencies to environment: `statsmodels`, `scipy`; verify VAR import works with `from statsmodels.tsa.vector_ar.var_model import VAR`; verify `scipy.stats.shapiro` and `statsmodels.stats.multitest.fdrcorrection` are importable (`nitime` is **not** required — spectral factorization uses `numpy` directly)
+- [ ] **1.1.2** Create `code/stage_d_granger/` directory and `__init__.py`; create `config` block in `config.yaml` under `stage_d_granger.linear_gc` with all parameters from the Design Requirements table above; also add `stage_d_outputs: "outputs/stage_d_granger"` to the `paths` section of `config.yaml`
+- [ ] **1.1.3** Create `code/stage_d_granger/utils_gc.py` — shared utility functions: `load_preprocessed_fif(subject_id, study)`, `get_event_onsets(raw)`, `get_subject_group(subject_id)` returning `'Expert'` or `'Novice'`, and `get_connection_labels()` returning the 20 directed connection strings in row→col order for `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`
 
 ---
 
@@ -110,14 +110,14 @@ outputs/stage_e_granger/linear_gc/expert-novice/
 This mirrors the MATLAB section that builds `Data_Reg` (5×T) from averaged channels per ROI. Because the Stage C pipeline has already validated the channel-to-ROI mapping via `build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py`, there is no new channel mapping work required — that function is imported directly.
 
 #### 2.1 Import Stage C ROI Mapping
-- [ ] **2.1.1** Confirm that `build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py` returns a dict of the form `{'LPFC': [ch1, ch2, ...], 'CPFC': [...], 'RPFC': [...], 'LM1': [...], 'SMA': [...]}` containing HbO channel name strings; run it on A1 and print the resulting channel lists to verify the 5 regions are fully populated with no empty lists
-- [ ] **2.1.2** Add `get_roi_channel_map(raw, study='expert-novice') -> dict` to `utils_gc.py` as a thin wrapper around `build_region_map_5()` that also filters out any channels present in `raw.info['bads']` before returning; this is the single entry point for ROI channel lookup throughout the GC pipeline
+- [ ] **2.1.1** Confirm that `build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py` returns a dict of the form `{'LPFC': [ch1, ...], 'CPFC': [...], 'RPFC': [...], 'LM1': [...], 'SMA': [...]}` where values are **base channel names without the ` hbo` suffix** (e.g., `'S1_D1'`, not `'S1_D1 hbo'`); run it on A1 and print the resulting channel lists to verify the 5 regions are fully populated with no empty lists
+- [ ] **2.1.2** Add `get_roi_channel_map(raw, study='expert-novice') -> dict` to `utils_gc.py` as a wrapper around `build_region_map_5()` that: (a) filters out channels in `raw.info['bads']`, (b) converts base names to full HbO channel names by appending ` hbo` (e.g., `'S1_D1'` → `'S1_D1 hbo'`); returns `{'LPFC': ['S1_D1 hbo', ...], ...}` ready for direct `.pick_channels()` use; this is the single entry point for ROI channel lookup throughout the GC pipeline
 
 #### 2.2 ROI Extraction Function
-- [ ] **2.2.1** Implement `extract_roi_signals(raw) -> np.ndarray` in `01_extract_roi_signals.py`: calls `get_roi_channel_map(raw)` to get channel lists per ROI, selects HbO channels only, averages channels within each ROI, returns `Data_Reg` as shape `(5, T)` — mirrors MATLAB `mean(LPFC,1)` per ROI; signal is in μM (MNE haemo units from Stage B output)
+- [ ] **2.2.1** Implement `extract_roi_signals(raw) -> np.ndarray` in `01_extract_roi_signals.py`: calls `get_roi_channel_map(raw)` to get channel lists per ROI, selects HbO channels only, averages channels within each ROI, returns `Data_Reg` as shape `(5, T)` — mirrors MATLAB `mean(LPFC,1)` per ROI; signal is in **mol/L** (MNE native haemo units from Stage B output; MNE stores Hb in mol/L, not μM — GC computation is unit-agnostic as it uses log-ratios, so no conversion is applied)
 - [ ] **2.2.2** Add NaN-row removal logic to `extract_roi_signals()`: if all samples in a ROI are NaN (all contributing channels were bad), remove that ROI from `Data_Reg` and record which ROIs were dropped in a returned `valid_roi_names` list — mirrors MATLAB `Data_Reg(any(isnan(Data_Reg),2),:) = []` and `valid_Ch_names`; log a warning if any ROI is dropped
-- [ ] **2.2.3** Validate on A1: confirm `Data_Reg.shape == (5, ~26500)` with no all-NaN rows; plot all 5 ROI time series labelled with `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']` and visually confirm they are smooth HbO traces with plausible hemodynamic fluctuations; save plot to `outputs/stage_e_granger/linear_gc/expert-novice/roi_signals/sub-A1_roi_signals.png`
-- [ ] **2.2.4** Implement `run_roi_extraction(study, subjects)` batch function; process all 13 Expert/Novice subjects; save each `Data_Reg` as `sub-{id}_roi_signals.npz` with keys `data` (5×T), `roi_names` (list of valid ROI names), `sfreq`
+- [ ] **2.2.3** Validate on A1: confirm `Data_Reg.shape == (5, ~26500)` with no all-NaN rows; plot all 5 ROI time series labelled with `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']` and visually confirm they are smooth HbO traces with plausible hemodynamic fluctuations; save plot to `outputs/stage_d_granger/linear_gc/expert-novice/roi_signals/sub-A1_roi_signals.png`
+- [ ] **2.2.4** Implement `run_roi_extraction(study, subjects)` batch function; process all 13 GC-eligible Expert/Novice subjects (**R10 excluded** — trailing-zero data quality flag; see Stage B note); save each `Data_Reg` as `sub-{id}_roi_signals.npz` with keys `data` (5×T), `roi_names` (list of valid ROI names), `sfreq`
 
 ---
 
@@ -171,11 +171,11 @@ This mirrors the full MATLAB outer loops: `for m in [Exp, Nov]`, `for s in 1:N`,
 
 #### 5.2 Group Array Construction
 - [ ] **5.2.1** Implement `build_group_arrays(study='expert-novice') -> tuple[np.ndarray, np.ndarray]` in `04_subject_gc_pipeline.py`: loads all per-subject `.npz` files; stacks into `B_Exp` (n_exp_subjects × 20_conn × n_windows) and `B_Nov` (n_nov_subjects × 20_conn × n_windows) — mirrors MATLAB `B_Exp.(trial).Exp(h,:,Wn+1)` accumulation; pads with NaN for subjects with fewer windows than the max
-- [ ] **5.2.2** Save `B_Exp.npz` and `B_Nov.npz` to `outputs/stage_e_granger/linear_gc/expert-novice/group/`; also save `gc_summary.json` with: n_subjects per group, n_trials, n_windows per trial, connection labels, processing parameters
+- [ ] **5.2.2** Save `B_Exp.npz` and `B_Nov.npz` to `outputs/stage_d_granger/linear_gc/expert-novice/group/`; also save `gc_summary.json` with: n_subjects per group, n_trials, n_windows per trial, connection labels, processing parameters
 
 #### 5.3 Single-Subject Validation
 - [ ] **5.3.1** Run `process_subject_gc('A1')` end-to-end; print shape of output connectivity array; confirm it has the expected number of trials (should match trial count from `02_trial_segmentation.py`); print mean GC per connection across all windows
-- [ ] **5.3.2** Run on all 13 Expert/Novice subjects; confirm 13/13 succeed; log any subjects with reduced window counts (due to short trials or NaN ROIs); save batch processing log to `gc_batch_log.json`
+- [ ] **5.3.2** Run on all 13 GC-eligible subjects (R10 excluded; see Stage B quality flag); confirm 13/13 succeed; log any subjects with reduced window counts (due to short trials or NaN ROIs); save batch processing log to `gc_batch_log.json`
 
 ---
 
@@ -228,6 +228,8 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 | `mne` / `mne-nirs` | existing | `.fif` loading |
 | `matplotlib` | existing | Visualization |
 | `pandas` | existing | Statistics output DataFrames |
+
+> **Note:** `nitime` is **not** a dependency. It was listed in an early draft but is unused — the spectral factorization uses `numpy` and the VAR transfer function formula directly.
 
 ---
 
