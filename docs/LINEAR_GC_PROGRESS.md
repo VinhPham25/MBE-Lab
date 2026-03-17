@@ -5,7 +5,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_d_granger/linear_gc/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Not started
+**Status:** Sections 1–3 complete (2026-03-17)
 
 ---
 
@@ -126,9 +126,13 @@ This mirrors the MATLAB section that builds `Data_Reg` (5×T) from averaged chan
 This mirrors the MATLAB `st = find(da.s)` trigger detection and `Y = Data_Reg(:,st(stt):st(stt+1))` trial extraction.
 
 #### 3.1 Stimulus Trigger Extraction
-- [ ] **3.1.1** Implement `get_trial_segments(raw) -> list[tuple[int,int]]` in `02_trial_segmentation.py`: reads MNE annotations/events from the `.fif`, finds trial onset and offset sample indices — mirrors MATLAB `st = find(da.s)` and `for stt = 1:2:(size_st-1)` loop; returns list of `(onset_sample, offset_sample)` tuples
-- [ ] **3.1.2** Validate trial segments on A1: print number of trials found, duration of each in seconds; confirm trial durations are physiologically reasonable (1–3 min as per BMES poster); compare to `duration_task` logic in MATLAB (`(st(stt+1)-st(stt))/25`)
-- [ ] **3.1.3** Add trial duration logging: compute `duration_sec = (offset - onset) / sfreq` per trial and save to `sub-{id}_trial_durations.csv`; flag any trial shorter than 54 s (too short for even one window) with a warning
+- [x] **3.1.1** (2026-03-17) Implemented `get_trial_segments(raw) -> list[tuple[int,int]]` in `02_trial_segmentation.py`: reads all MNE events via `get_event_onsets(raw)`, sorts by sample, pairs them 2-at-a-time `(id=1 start, id=2 end)` — exact mirror of MATLAB `st = find(da.s)` + `for stt = 1:2:(size_st-1)`; validates each pair's id order and raises `RuntimeError` on malformed annotations; includes window-feasibility check (warns if trial < 54 s). Window size auto-scales to `window_size_s × sfreq` so R9 (50 Hz) correctly uses 2700-sample windows = 54 s.
+- [x] **3.1.2** (2026-03-17) A1 validated: 5 trials, durations `[88, 104, 116, 124, 138]` s — all within the 1–3 min physiological range. `dur_s == dur_MATLAB` exactly (`(offset-onset)/sfreq == (offset-onset)/25` for A1 at 25 Hz). Total 8 non-overlapping windows. No SHORT flags.
+- [x] **3.1.3** (2026-03-17) Trial duration logging implemented in `save_trial_durations()`; saves `sub-{id}_trial_durations.csv` with columns `[trial, onset_sample, offset_sample, duration_s, duration_samples, n_windows, short_flag]`; flags trials < `window_size_s` with "SHORT". Batch complete — 13/13 subjects OK. Key per-subject findings:
+  - **R9** (50 Hz): 2 trials only (vs 5 for all others); durations 99 s and 105 s; window size auto-computed as 2700 samples (54 s × 50 Hz) ✓; 2 total windows.
+  - **R4**: 9 triggers found (5 trial_start, 4 trial_end — missing final trial-end annotation); code warns "odd number of triggers" and uses the 4 complete pairs → 4 trials, 7 total windows.
+  - **R3** / **R6**: notably long trials (195–277 s / up to 343 s) → 20 and 16 total windows respectively.
+  - All subjects: zero SHORT flags (every trial ≥ 88 s ≥ 54 s window minimum).
 
 ---
 
@@ -251,14 +255,14 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 34
-- **Completed:** 9
+- **Completed:** 12
 - **In Progress:** 0
-- **Remaining:** 25
+- **Remaining:** 22
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 6/6 ✅
-- **Section 3 (Trial Segmentation):** 0/3
+- **Section 3 (Trial Segmentation):** 3/3 ✅
 - **Section 4 (Core GC):** 0/12
 - **Section 5 (Subject Pipeline):** 0/5
 - **Section 6 (Statistics):** 0/4
