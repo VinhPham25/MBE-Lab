@@ -114,10 +114,10 @@ This mirrors the MATLAB section that builds `Data_Reg` (5×T) from averaged chan
 - [x] **2.1.2** (2026-03-17) Added `get_roi_channel_map(raw) -> dict` to `utils_gc.py`: wraps `build_region_map_5()` via importlib, filters `raw.info['bads']`, appends ` hbo` suffix. Returns `{'LPFC': ['S1_D1 hbo', ...], ...}` with full MNE channel names. Logs warnings per-ROI for any bad channels dropped; logs ERROR if a full ROI is emptied. A1 verified: 5/5 ROIs populated, 24 HbO channels total, 0 empty ROIs.
 
 #### 2.2 ROI Extraction Function
-- [ ] **2.2.1** Implement `extract_roi_signals(raw) -> np.ndarray` in `01_extract_roi_signals.py`: calls `get_roi_channel_map(raw)` to get channel lists per ROI, selects HbO channels only, averages channels within each ROI, returns `Data_Reg` as shape `(5, T)` — mirrors MATLAB `mean(LPFC,1)` per ROI; signal is in **mol/L** (MNE native haemo units from Stage B output; MNE stores Hb in mol/L, not μM — GC computation is unit-agnostic as it uses log-ratios, so no conversion is applied)
-- [ ] **2.2.2** Add NaN-row removal logic to `extract_roi_signals()`: if all samples in a ROI are NaN (all contributing channels were bad), remove that ROI from `Data_Reg` and record which ROIs were dropped in a returned `valid_roi_names` list — mirrors MATLAB `Data_Reg(any(isnan(Data_Reg),2),:) = []` and `valid_Ch_names`; log a warning if any ROI is dropped
-- [ ] **2.2.3** Validate on A1: confirm `Data_Reg.shape == (5, ~26500)` with no all-NaN rows; plot all 5 ROI time series labelled with `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']` and visually confirm they are smooth HbO traces with plausible hemodynamic fluctuations; save plot to `outputs/stage_d_granger/linear_gc/expert-novice/roi_signals/sub-A1_roi_signals.png`
-- [ ] **2.2.4** Implement `run_roi_extraction(study, subjects)` batch function; process all 13 GC-eligible Expert/Novice subjects (**R10 excluded** — trailing-zero data quality flag; see Stage B note); save each `Data_Reg` as `sub-{id}_roi_signals.npz` with keys `data` (5×T), `roi_names` (list of valid ROI names), `sfreq`
+- [x] **2.2.1** (2026-03-17) Implemented `extract_roi_signals(raw)` in `01_extract_roi_signals.py`: calls `get_roi_channel_map(raw)`, averages HbO channels per ROI via `np.nanmean`, returns `(Data_Reg, valid_roi_names)`.
+- [x] **2.2.2** (2026-03-17) NaN-row removal: any ROI with all channels bad gets an all-NaN row inserted and then removed with warning; `valid_roi_names` tracks which ROIs survive.
+- [x] **2.2.3** (2026-03-17) A1 validated: `Data_Reg.shape == (5, 26500)` ✓, 0 NaN rows ✓, data range `[-4.6, +5.7] μM` (physiologically plausible). Plot saved to `roi_signals/sub-A1_roi_signals.png`.
+- [x] **2.2.4** (2026-03-17) Batch complete — 13/13 subjects, 0 failed. Key findings: **R9** recorded at 50 Hz (confirmed — 477 s × 50 Hz = 23,850 samples; GC pipeline uses `.fif` sfreq at load time as documented). **R11** lost LM1+SMA (16+2 channels all bad → 3-ROI output). **R2** lost SMA (2 channels all bad → 4-ROI output). All other subjects 5/5 ROIs retained.
 
 ---
 
@@ -251,13 +251,13 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 34
-- **Completed:** 5
+- **Completed:** 9
 - **In Progress:** 0
-- **Remaining:** 29
+- **Remaining:** 25
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
-- **Section 2 (ROI Extraction):** 2/6
+- **Section 2 (ROI Extraction):** 6/6 ✅
 - **Section 3 (Trial Segmentation):** 0/3
 - **Section 4 (Core GC):** 0/12
 - **Section 5 (Subject Pipeline):** 0/5
