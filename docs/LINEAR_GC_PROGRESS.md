@@ -110,8 +110,8 @@ outputs/stage_d_granger/linear_gc/expert-novice/
 This mirrors the MATLAB section that builds `Data_Reg` (5×T) from averaged channels per ROI. Because the Stage C pipeline has already validated the channel-to-ROI mapping via `build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py`, there is no new channel mapping work required — that function is imported directly.
 
 #### 2.1 Import Stage C ROI Mapping
-- [ ] **2.1.1** Confirm that `build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py` returns a dict of the form `{'LPFC': [ch1, ...], 'CPFC': [...], 'RPFC': [...], 'LM1': [...], 'SMA': [...]}` where values are **base channel names without the ` hbo` suffix** (e.g., `'S1_D1'`, not `'S1_D1 hbo'`); run it on A1 and print the resulting channel lists to verify the 5 regions are fully populated with no empty lists
-- [ ] **2.1.2** Add `get_roi_channel_map(raw, study='expert-novice') -> dict` to `utils_gc.py` as a wrapper around `build_region_map_5()` that: (a) filters out channels in `raw.info['bads']`, (b) converts base names to full HbO channel names by appending ` hbo` (e.g., `'S1_D1'` → `'S1_D1 hbo'`); returns `{'LPFC': ['S1_D1 hbo', ...], ...}` ready for direct `.pick_channels()` use; this is the single entry point for ROI channel lookup throughout the GC pipeline
+- [x] **2.1.1** (2026-03-17) Confirmed `build_region_map_5()` returns abbreviated keys `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']` with base channel names (no ` hbo` suffix). A1 result: LPFC(2), CPFC(2), RPFC(2), LM1(16), SMA(2) = 24 total channels, all 5 ROIs populated, no empty lists. A1 bad channels (`S5_D21`, `S6_D22`, `S8_D24`) are all short-sep and already excluded by `_is_short_sep()` before the region map is built.
+- [x] **2.1.2** (2026-03-17) Added `get_roi_channel_map(raw) -> dict` to `utils_gc.py`: wraps `build_region_map_5()` via importlib, filters `raw.info['bads']`, appends ` hbo` suffix. Returns `{'LPFC': ['S1_D1 hbo', ...], ...}` with full MNE channel names. Logs warnings per-ROI for any bad channels dropped; logs ERROR if a full ROI is emptied. A1 verified: 5/5 ROIs populated, 24 HbO channels total, 0 empty ROIs.
 
 #### 2.2 ROI Extraction Function
 - [ ] **2.2.1** Implement `extract_roi_signals(raw) -> np.ndarray` in `01_extract_roi_signals.py`: calls `get_roi_channel_map(raw)` to get channel lists per ROI, selects HbO channels only, averages channels within each ROI, returns `Data_Reg` as shape `(5, T)` — mirrors MATLAB `mean(LPFC,1)` per ROI; signal is in **mol/L** (MNE native haemo units from Stage B output; MNE stores Hb in mol/L, not μM — GC computation is unit-agnostic as it uses log-ratios, so no conversion is applied)
@@ -251,13 +251,13 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 34
-- **Completed:** 3
+- **Completed:** 5
 - **In Progress:** 0
-- **Remaining:** 31
+- **Remaining:** 29
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
-- **Section 2 (ROI Extraction):** 0/6
+- **Section 2 (ROI Extraction):** 2/6
 - **Section 3 (Trial Segmentation):** 0/3
 - **Section 4 (Core GC):** 0/12
 - **Section 5 (Subject Pipeline):** 0/5

@@ -1,7 +1,7 @@
 """
 Stage D — Shared Utility Functions for the Linear GC Pipeline
 
-Provides the four core helpers required across all Stage D modules:
+Provides the core helpers required across all Stage D modules:
 
   load_preprocessed_fif(subject_id, study)
       Load the Stage B preprocessed .fif for a subject.
@@ -16,14 +16,19 @@ Provides the four core helpers required across all Stage D modules:
       Return the 20 directed connection strings in MATLAB-matching order for
       ['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA'] (row→col convention).
 
-  get_roi_channel_map(raw)   [added in Section 2.1.2]
+  get_roi_channel_map(raw)
       Wrapper around build_region_map_5() that filters bad channels and appends
-      the ' hbo' suffix, returning full MNE channel names per ROI.
+      the ' hbo' suffix, returning full MNE channel names per ROI.  This is the
+      single entry point for ROI channel lookup throughout the GC pipeline.
+
+  get_gc_output_dir(subdir_key)
+      Resolve and optionally create a Stage D output subdirectory.
 
 Reference   : docs/LINEAR_GC_PROGRESS.md Section 1.1.3, 2.1.2
 MATLAB ref  : GC_freq_main_TRGC_NovExp.m (subject lists, connection ordering)
 """
 
+import importlib.util
 import logging
 import sys
 from pathlib import Path
@@ -44,6 +49,24 @@ if str(_CODE_ROOT) not in sys.path:
 from utils import load_config                       # code/utils.py
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Lazy import of build_region_map_5 from Stage C
+# Uses importlib so Stage D has no hard import dependency on Stage C's
+# module-level side effects (matplotlib backend, etc.).
+# ---------------------------------------------------------------------------
+_HRF_EXTRACTION_PATH = (
+    _CODE_ROOT / "stage_c_validation" / "01_hrf_extraction.py"
+)
+
+def _get_build_region_map_5():
+    """Return the build_region_map_5 callable from Stage C."""
+    spec = importlib.util.spec_from_file_location(
+        "hrf_extraction", _HRF_EXTRACTION_PATH
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.build_region_map_5
 
 # ---------------------------------------------------------------------------
 # ROI / connection constants
@@ -382,6 +405,90 @@ def get_gc_output_dir(
 
 
 # ===========================================================================
+# 2.1.2 — get_roi_channel_map
+# ===========================================================================
+
+def get_roi_channel_map(
+    raw: mne.io.BaseRaw,
+    warn_empty: bool = True,
+) -> dict[str, list[str]]:
+    """
+    Return per-ROI HbO channel name lists, ready for MNE channel selection.
+
+    This is the single entry point for ROI channel lookup in the GC pipeline.
+    It wraps ``build_region_map_5()`` from Stage C and applies two transforms:
+
+    1. **Bad-channel filtering** — any channel present in ``raw.info['bads']``
+       is removed from its ROI list.  This handles subjects where Stage B
+       flagged long-separation channels (rare, but possible).
+
+    2. **Base-name → full HbO name conversion** — ``build_region_map_5()``
+       returns base names without the MNE chromophore suffix (e.g. ``'S1_D1'``).
+       This function appends ``' hbo'`` to produce full channel names that can
+       be passed directly to ``raw.pick_channels()`` or indexed from
+       ``raw.ch_names`` (e.g. ``'S1_D1 hbo'``).
+
+    MATLAB equivalent: the channel-indexing loop in ``GC_freq_main_TRGC_NovExp.m``
+    (e.g. ``LPFC = D([1 2],:); LPFC(any(isnan(LPFC),2),:) = []``).
+    NaN-row removal is handled separately in ``extract_roi_signals()``.
+
+    Parameters
+    ----------
+    raw : mne.io.BaseRaw
+        Loaded Stage B preprocessed .fif (must have HbO/HbR channels).
+    warn_empty : bool
+        If True, log a warning whenever a ROI ends up with zero valid channels
+        after bad-channel filtering.
+
+    Returns
+    -------
+    roi_map : dict[str, list[str]]
+        Keys: ``['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']``.
+        Values: lists of full MNE HbO channel names, e.g. ``['S1_D1 hbo', ...]``.
+        Empty lists indicate a ROI whose channels were all marked bad.
+
+    Examples
+    --------
+    >>> raw = load_preprocessed_fif('A1')
+    >>> roi_map = get_roi_channel_map(raw)
+    >>> roi_map['LPFC']
+    ['S1_D1 hbo', 'S1_D2 hbo']
+    """
+    build_region_map_5 = _get_build_region_map_5()
+    base_map: dict[str, list[str]] = build_region_map_5(raw)
+
+    bads_set = set(raw.info.get("bads", []))
+
+    roi_map: dict[str, list[str]] = {}
+    for roi, base_names in base_map.items():
+        hbo_names = [f"{b} hbo" for b in base_names]
+        # Filter channels that MNE has marked bad
+        valid = [ch for ch in hbo_names if ch not in bads_set]
+        n_dropped = len(hbo_names) - len(valid)
+        if n_dropped:
+            logger.warning(
+                "get_roi_channel_map [%s]: %d/%d HbO channels marked bad and "
+                "excluded: %s",
+                roi, n_dropped, len(hbo_names),
+                [ch for ch in hbo_names if ch in bads_set],
+            )
+        if warn_empty and len(valid) == 0:
+            logger.warning(
+                "get_roi_channel_map [%s]: ALL channels bad — ROI will be "
+                "empty and dropped during extract_roi_signals()", roi
+            )
+        roi_map[roi] = valid
+
+    n_total = sum(len(v) for v in roi_map.values())
+    n_rois_ok = sum(1 for v in roi_map.values() if v)
+    logger.info(
+        "get_roi_channel_map: %d/%d ROIs populated, %d HbO channels total",
+        n_rois_ok, len(ROI_NAMES), n_total,
+    )
+    return roi_map
+
+
+# ===========================================================================
 # Quick smoke test (run as script)
 # ===========================================================================
 
@@ -424,6 +531,18 @@ if __name__ == "__main__":
         print(f"  First 4 events (sample, 0, id):")
         for row in events[:4]:
             print(f"    sample {row[0]:6d}  id={row[2]}")
+    except FileNotFoundError as e:
+        print(f"  [SKIP] .fif not found: {e}")
+
+    print("\n--- get_roi_channel_map(raw) ---")
+    try:
+        raw_full = load_preprocessed_fif("A1", config=cfg, preload=False)
+        roi_map = get_roi_channel_map(raw_full)
+        for roi, channels in roi_map.items():
+            print(f"  {roi:6s} ({len(channels):2d} ch): {channels}")
+        n_empty = sum(1 for v in roi_map.values() if not v)
+        print(f"  Empty ROIs: {n_empty}  |  Total HbO channels: "
+              f"{sum(len(v) for v in roi_map.values())}")
     except FileNotFoundError as e:
         print(f"  [SKIP] .fif not found: {e}")
 
