@@ -5,7 +5,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_d_granger/linear_gc/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–6 complete (2026-03-19)
+**Status:** Sections 1–7 complete (2026-03-19)
 
 ---
 
@@ -310,12 +310,40 @@ MATLAB conditions `if n >= 5` (Expert) and `if n == 6` (Novice) translate to "in
 ### SECTION 7: VISUALIZATION
 
 #### 7.1 Per-Subject Connectivity Matrix
-- [ ] **7.1.1** Implement `plot_connectivity_matrix(gc_matrix_5x5, subject_id, trial, window, group)` in `06_gc_visualization.py`: renders a 5×5 heatmap with ROI labels `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`, masked diagonal, color scale 0–max; save to `visualizations/sub-{id}_Tr{n}_Win{n}_connectivity.png`
-- [ ] **7.1.2** Plot connectivity matrices for A1 across all windows of trial 1 in a single multi-panel figure to visualize how connectivity evolves across windows; save as `sub-A1_Tr1_connectivity_evolution.png`
+- [x] **7.1.1** (2026-03-19) Implemented `plot_connectivity_matrix(gc_vec, subject_id, trial, window, group, vmax, save, ax)` in `06_gc_visualization.py`. Takes a 20-element off-diagonal GC vector, reconstructs a 5×5 matrix via `_vec20_to_mat5()` (fills diagonal indices `[0,6,12,18,24]` with 0, reshapes to 5×5), renders as an `imshow` heatmap with masked diagonal shown as grey `—` cells. Annotates each cell with its GC value; light/dark text auto-chosen from vmax. Grid lines separate cells; colorbar labeled with band. Group-colored title. Accepts an `ax` argument for multi-panel embedding. Saved to `visualizations/sub-A1_Tr_1_Win_1_connectivity.png` (1567×1388, 123 KB).
+
+- [x] **7.1.2** (2026-03-19) Implemented `plot_connectivity_evolution(subject_id='A1', trial='Tr_1')` in `06_gc_visualization.py`. Loads per-subject `.npz`, loops over all windows of the trial, calls `plot_connectivity_matrix(..., ax=ax)` per panel with a **shared vmax** across all windows for consistent color scale. Shared colorbar appended on the right. Saved as `sub-A1_Tr1_connectivity_evolution.png` (2749×1507, 200 KB — 2 windows for A1 Tr_1).
+
+  **A1 Tr_1 connectivity highlights (Win_1 → Win_2 change):**
+  - CPFC→SMA: 4.11 → 2.53 (strongest connection, decreases in Win_2)
+  - LPFC→CPFC: 2.31 → 2.69 (PFC→PFC increases)
+  - LPFC→LM1: 2.23 → 2.31 (stable)
+  - RPFC→LPFC: 0.637 → 0.66 (stable, low)
+  - LM1→RPFC: 0.089 → 0.12 (weakest connection, stable near zero)
 
 #### 7.2 Group Comparison
-- [ ] **7.2.1** Implement `plot_group_gc_comparison(B_Exp, B_Nov, connection_labels)` in `06_gc_visualization.py`: for each of the 20 connections, plot Expert mean ± SEM and Novice mean ± SEM as a bar chart; mark FDR-significant connections (from H1) with an asterisk; save as `group_gc_comparison_Tr1_Win1.png`
-- [ ] **7.2.2** Generate a brain-topology connection diagram: render the 5 ROI nodes in their approximate anatomical positions (LPFC/CPFC/RPFC anterior, LM1 lateral, SMA medial) and draw directed arrows scaled by mean GC magnitude, separately for Expert and Novice; save as `group_gc_topology_Expert.png` and `group_gc_topology_Novice.png`
+- [x] **7.2.1** (2026-03-19) Implemented `plot_group_gc_comparison(B_Exp, B_Nov, conn_labels, trial, window_idx, h1_df)` in `06_gc_visualization.py`. Bar chart with Expert (steel blue) and Novice (brick red) mean ± SEM for all 20 connections. SEM = std/√n computed ignoring NaN subjects. FDR-significant connections (from loaded H1 CSV) marked with red asterisk `*` above the taller bar. Grid lines for readability; Expert n and Novice n shown as figure subtitle. Generated for Tr_1 Win_1 (no significant connections) and Tr_5 Win_1 (CPFC→LM1 significant).
+
+  Saved:
+  - `group_gc_comparison_Tr1_Win1.png` (4493×1530, 266 KB) — no asterisks (no significant connections in Tr_1)
+  - `group_gc_comparison_Tr5_Win1.png` (4492×1530, 259 KB) — CPFC→LM1 asterisk (p_fdr=0.045, Novice>Expert)
+
+- [x] **7.2.2** (2026-03-19) Implemented `plot_group_topology(B_Exp, B_Nov, conn_labels, trial, window_idx, threshold_pct)` in `06_gc_visualization.py`. Renders Expert and Novice side-by-side with 5 ROI nodes at anatomical positions on a 2-D head outline:
+  ```
+  LPFC (-0.38, 0.72)  CPFC (0.00, 0.82)  RPFC (0.38, 0.72)   ← PFC row (anterior)
+  LM1  (-0.65, 0.15)                      SMA  (0.00, 0.30)   ← Motor row (posterior)
+  ```
+  Directed arrows drawn as curved `FancyArrowPatch` (arc3, rad=0.22) with arrow weight and color (YlOrRd colormap) proportional to GC magnitude. Connections below the `threshold_pct` percentile (default 40th) are hidden to avoid visual clutter. Shared colorbar across both panels. Also saves separate per-group figures.
+
+  Saved:
+  - `group_gc_topology_Tr1_Win1.png` (3453×2298, 374 KB) — side-by-side combined
+  - `group_gc_topology_Expert_Tr1_Win1.png` (2104×2019, 224 KB)
+  - `group_gc_topology_Novice_Tr1_Win1.png` (2104×2019, 213 KB)
+
+  **Topology observations (Tr_1 Win_1, 40th percentile threshold):**
+  - Expert: strongest arrows CPFC→SMA, LPFC→CPFC, LPFC→LM1, RPFC→LPFC — PFC drives both motor regions
+  - Novice: strongest arrows SMA→LM1, LPFC→LM1, SMA→LPFC, CPFC→LM1 — motor-dominant with SMA driving back to PFC
+  - Key difference: Expert shows top-down PFC→motor dominance; Novice shows more bidirectional SMA↔PFC coupling
 
 ---
 
@@ -360,9 +388,9 @@ MATLAB conditions `if n >= 5` (Expert) and `if n == 6` (Novice) translate to "in
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 35
-- **Completed:** 38
+- **Completed:** 42
 - **In Progress:** 0
-- **Remaining:** 6
+- **Remaining:** 2
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
@@ -371,7 +399,7 @@ MATLAB conditions `if n >= 5` (Expert) and `if n == 6` (Novice) translate to "in
 - **Section 4 (Core GC):** 13/13 ✅
 - **Section 5 (Subject Pipeline):** 5/5 ✅
 - **Section 6 (Statistics):** 8/8 ✅  ← completed 2026-03-19
-- **Section 7 (Visualization):** 0/4
+- **Section 7 (Visualization):** 4/4 ✅  ← completed 2026-03-19
 - **Section 8 (Batch Runner):** 0/2
 
 ---
