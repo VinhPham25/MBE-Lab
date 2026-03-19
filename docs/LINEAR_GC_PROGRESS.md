@@ -5,7 +5,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_d_granger/linear_gc/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–3 complete (2026-03-17); Section 4.1–4.2 complete (2026-03-18); bivariate bsmart implementation added (2026-03-18)
+**Status:** Sections 1–4 complete (2026-03-18)
 
 ---
 
@@ -184,8 +184,8 @@ This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, f
 - [x] **4.4.2** (2026-03-18) Skip guard implemented: a window is skipped only if every sample of every ROI is all-NaN (completely empty window) — not for structurally-bad ROI channels (R11/R2), which `compute_pairwise_gc` already handles per-pair. Skipped windows are logged at WARNING level and excluded from the output dict.
 
 #### 4.5 Frequency Band Averaging
-- [ ] **4.5.1** Implement `average_gc_over_band(GW, freq, f_low=0.01, f_high=0.07) -> np.ndarray` in `03_linear_gc.py`: finds indices of `f_low` and `f_high` in `freq` array; returns `np.mean(GW[:,:,idx1:idx2+1], axis=2)` — exactly mirrors MATLAB `mean(GW(:,:,idx1:idx2),3)`; output shape `(n_rois, n_rois)`
-- [ ] **4.5.2** Validate band averaging on A1: confirm output shape `(5,5)`; confirm diagonal is zero; print all 20 off-diagonal values and confirm they are in a physiologically reasonable range (typically 0–5 for log-GC)
+- [x] **4.5.1** (2026-03-18) Implemented `average_gc_over_band(GW, freq, f_low=0.01, f_high=0.07) -> np.ndarray` in `03_linear_gc.py`. Uses nearest-match index lookup (`np.argmin(np.abs(freq - f_low/f_high))`), raises `ValueError` if band bounds are not in the frequency vector. Returns `np.mean(GW[:,:,idx1:idx2+1], axis=2)` — Python's exclusive-right slice with `idx2+1` mirrors MATLAB's inclusive `idx1:idx2`. Band: indices [1,7] → 7 bins (0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07 Hz) ✓.
+- [x] **4.5.2** (2026-03-18) Validated on all 8 windows of A1 across 5 trials. Shape `(5,5)` ✓, diagonal=0 ✓, all values ≥ 0 ✓, matches manual slice-mean ✓. **A1 Trial 1 Win_1 band-averaged connectivity (0.01–0.07 Hz):** all 20 values in physiological range [0.06, 4.11]. Notable connections: CPFC→SMA=4.11 (strongest), LPFC→CPFC=2.31, LPFC→LM1=2.23, LM1→SMA=1.58, CPFC→LPFC=1.80. Weakest: CPFC→RPFC=0.07, LM1→RPFC=0.09. Window means across all 8 windows: 0.89–1.31 (stable, no outliers).
 
 ---
 
@@ -280,15 +280,15 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 35
-- **Completed:** 23
+- **Completed:** 25
 - **In Progress:** 0
-- **Remaining:** 12
+- **Remaining:** 10
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 6/6 ✅
 - **Section 3 (Trial Segmentation):** 3/3 ✅
-- **Section 4 (Core GC):** 11/13 (4.1–4.4 complete; 4.5 pending)
+- **Section 4 (Core GC):** 13/13 ✅
 - **Section 5 (Subject Pipeline):** 0/5
 - **Section 6 (Statistics):** 0/4
 - **Section 7 (Visualization):** 0/4

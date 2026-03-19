@@ -827,7 +827,85 @@ def compute_windowed_gc(
 
 
 # ===========================================================================
-# Quick standalone validation — Sections 4.1.3, 4.2.3, 4.3, 4.4
+# Section 4.5 — Frequency Band Averaging
+# ===========================================================================
+
+def average_gc_over_band(
+    GW: np.ndarray,
+    freq: np.ndarray,
+    f_low: float = 0.01,
+    f_high: float = 0.07,
+) -> np.ndarray:
+    """
+    Average the spectral GC matrix over the neurophysiological frequency band.
+
+    Mirrors MATLAB::
+
+        idx1 = find(freq == 0.01);   % → index 2 (1-indexed)
+        idx2 = find(freq == 0.07);   % → index 8 (1-indexed)
+        GC_fqmean = mean(GW(:,:,idx1:idx2), 3);
+
+    MATLAB's ``idx1:idx2`` (inclusive both ends, 1-indexed) corresponds to
+    Python's ``idx1 : idx2+1`` (exclusive right end, 0-indexed), so the same
+    7 frequency bins (0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07 Hz) are
+    averaged in both implementations.
+
+    Parameters
+    ----------
+    GW : np.ndarray, shape (n_rois, n_rois, n_freqs)
+        Spectral GC matrix from ``compute_pairwise_gc()`` or
+        ``compute_windowed_gc()``.
+    freq : np.ndarray, shape (n_freqs,)
+        Frequency vector in Hz used to produce ``GW``.
+    f_low : float
+        Lower bound of the band in Hz.  Default 0.01 Hz.
+    f_high : float
+        Upper bound of the band in Hz.  Default 0.07 Hz.
+
+    Returns
+    -------
+    GC_mean : np.ndarray, shape (n_rois, n_rois), dtype float64
+        Band-averaged GC matrix.  ``GC_mean[src, tgt]`` = mean GC from src
+        to tgt over [f_low, f_high].  Diagonal is 0, off-diagonal values ≥ 0.
+
+    Raises
+    ------
+    ValueError
+        If ``f_low`` or ``f_high`` are not found in ``freq`` (within floating-
+        point tolerance of 1e-9 Hz).
+    """
+    # Find indices using nearest-match to guard against float rounding
+    idx1 = int(np.argmin(np.abs(freq - f_low)))
+    idx2 = int(np.argmin(np.abs(freq - f_high)))
+
+    if abs(freq[idx1] - f_low) > 1e-9:
+        raise ValueError(
+            f"f_low={f_low} Hz not found in freq vector "
+            f"(nearest={freq[idx1]:.4f}). Check config frequency settings."
+        )
+    if abs(freq[idx2] - f_high) > 1e-9:
+        raise ValueError(
+            f"f_high={f_high} Hz not found in freq vector "
+            f"(nearest={freq[idx2]:.4f}). Check config frequency settings."
+        )
+
+    # Python slice idx1:idx2+1 is inclusive on both ends — mirrors MATLAB idx1:idx2
+    GC_mean = np.mean(GW[:, :, idx1 : idx2 + 1], axis=2)
+
+    logger.debug(
+        "average_gc_over_band: [%.2f–%.2f Hz]  idx=[%d,%d]  "
+        "%d bins  off-diag range=[%.4f, %.4f]",
+        f_low, f_high, idx1, idx2,
+        idx2 - idx1 + 1,
+        float(np.min(GC_mean[GC_mean > 0])) if np.any(GC_mean > 0) else 0.0,
+        float(np.max(GC_mean)),
+    )
+
+    return GC_mean
+
+
+# ===========================================================================
+# Quick standalone validation — Sections 4.1.3, 4.2.3, 4.3, 4.4, 4.5
 # Run as: python code/stage_d_granger/03_linear_gc.py
 # ===========================================================================
 
@@ -1230,4 +1308,78 @@ if __name__ == "__main__":
     assert total_wins == 8, f"FAIL: expected 8 total windows for A1, got {total_wins}"
 
     print("\n✓ All 4.4 assertions passed.")
-    print("✓ Sections 4.1 + 4.2 + 4.3 + 4.4 validation complete.\n")
+
+    # ===================================================================
+    # Section 4.5 — Frequency Band Averaging Validation
+    # ===================================================================
+    print("\n" + "="*65)
+    print("Section 4.5 — average_gc_over_band Validation")
+    print("="*65)
+
+    band_cfg = gc_cfg["band_avg"]
+    f_low  = band_cfg["f_low"]    # 0.01 Hz
+    f_high = band_cfg["f_high"]   # 0.07 Hz
+
+    # ---------------------------------------------------------------
+    # 4.5.1 — Band-average Window 1 of Trial 1
+    # ---------------------------------------------------------------
+    GW_win1 = windows_t1["Win_1"]
+    print(f"\n[11/11] Band-averaging Win_1  [{f_low}–{f_high} Hz]...")
+    GC_mean = average_gc_over_band(GW_win1, freq, f_low=f_low, f_high=f_high)
+
+    # Index check — confirm same bins as MATLAB idx1:idx2
+    idx1 = int(np.argmin(np.abs(freq - f_low)))
+    idx2 = int(np.argmin(np.abs(freq - f_high)))
+    n_bins = idx2 - idx1 + 1
+    manual_mean = np.mean(GW_win1[:, :, idx1 : idx2 + 1], axis=2)
+
+    print(f"\n  Output shape       : {GC_mean.shape}  (expected: ({n_rois}, {n_rois}))")
+    print(f"  Band idx           : [{idx1}, {idx2}]  ({n_bins} bins: "
+          f"{freq[idx1]:.2f}–{freq[idx2]:.2f} Hz)")
+    print(f"  Matches manual mean: {np.allclose(GC_mean, manual_mean)}")
+    print(f"  Diagonal all-zero  : {np.all(GC_mean[np.eye(n_rois, dtype=bool)] == 0.0)}")
+    print(f"  All values ≥ 0     : {np.all(GC_mean >= 0.0)}")
+    print(f"  GC_mean min        : {GC_mean.min():.4f}")
+    print(f"  GC_mean max        : {GC_mean.max():.4f}")
+
+    # ---------------------------------------------------------------
+    # 4.5.2 — Print all 20 directed connections
+    # ---------------------------------------------------------------
+    print(f"\n  Band-averaged GC ({f_low}–{f_high} Hz) — all 20 directed connections:")
+    for s in range(n_rois):
+        for t in range(n_rois):
+            if s == t:
+                continue
+            print(f"    {valid_roi_names[s]:4s}→{valid_roi_names[t]:4s}  :  {GC_mean[s,t]:.4f}")
+
+    # ---------------------------------------------------------------
+    # 4.5.2 — Apply to all 8 windows across all 5 trials
+    # ---------------------------------------------------------------
+    print(f"\n  Band-averaged GC across all trials/windows (max per window):")
+    for trial_idx, (on, off) in enumerate(segments):
+        Y_tr = Data_Reg[:, on : off + 1]
+        wins_tr = compute_windowed_gc(
+            Y_tr, window_size=win_size, stride=win_stride,
+            order=var_order, freq=freq, sfreq=sfreq_val,
+        )
+        for label, GW_w in wins_tr.items():
+            gc_band = average_gc_over_band(GW_w, freq, f_low=f_low, f_high=f_high)
+            off_diag = gc_band[~np.eye(n_rois, dtype=bool)]
+            print(f"    Trial {trial_idx+1} {label}: "
+                  f"max={gc_band.max():.4f}  mean={off_diag.mean():.4f}  "
+                  f"min_off={off_diag.min():.4f}")
+
+    # 4.5 assertions
+    assert GC_mean.shape == (n_rois, n_rois), \
+        f"FAIL: shape {GC_mean.shape} != ({n_rois}, {n_rois})"
+    assert np.allclose(GC_mean, manual_mean), \
+        "FAIL: result differs from manual slice-mean"
+    assert np.all(GC_mean[np.eye(n_rois, dtype=bool)] == 0.0), \
+        "FAIL: diagonal non-zero"
+    assert np.all(GC_mean >= 0.0), \
+        f"FAIL: negative values (min={GC_mean.min()})"
+    assert n_bins == 7, \
+        f"FAIL: expected 7 bins (0.01–0.07 Hz), got {n_bins}"
+
+    print("\n✓ All 4.5 assertions passed.")
+    print("✓ Section 4 (4.1–4.5) validation complete.\n")
