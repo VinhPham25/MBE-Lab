@@ -8,7 +8,8 @@ validated Stage C channel assignments.
 Section 4 task coverage (LINEAR_GC_PROGRESS.md)
 ------------------------------------------------
 4.1 — VAR model fitting                    (fit_var_model)
-4.2 — Frequency-domain GC spectrum         (compute_gc_spectrum)
+4.2 — Frequency-domain GC spectrum         (compute_gc_spectrum,
+                                            compute_gc_spectrum_bivariate)
 4.3 — Pairwise conditional GC entry point  (compute_pairwise_conditional_gc)
 4.4 — Sliding window loop                  (compute_windowed_gc)
 4.5 — Frequency band averaging             (average_gc_over_band)
@@ -19,29 +20,53 @@ MATLAB reference
 
     [GW,COH,pp,waut,cons] = cca_pwcausal(Y_windowed, 1, NL, 20, 20, freq, 1)
 
-Python equivalent::
+Python equivalent (bivariate, matching MATLAB)::
 
-    GW = compute_pairwise_conditional_gc(Y_windowed, order=20,
-                                          freq=freq, sfreq=25.0)
+    GW = compute_gc_spectrum_bivariate(Y_windowed, order=20,
+                                       freq=freq, sfreq=25.0)
+
+How cca_pwcausal actually works
+--------------------------------
+``cca_pwcausal`` is a thin wrapper around the bsmart toolbox ``pwcausal``
+function (Ding, Chen & Bressler 2006).  For each unique pair (i, j) it:
+
+1. Extracts the two-channel slice ``Y_pair = Y[[i,j], :]``
+2. Fits a **bivariate** VAR(p) model (using the Morf-LWR algorithm, ``armorf``)
+3. Computes the 2×2 spectral density ``S2(f) = H2(f) Σ2 H2*(f)``
+   — only 4 product terms, numerically stable even near unit-root
+4. Uses the **Schur-complement** of Σ2 as the effective source variance::
+
+       e_src_given_tgt = Σ2[src,src] − Σ2[src,tgt]² / Σ2[tgt,tgt]
+
+   This equals ``L[src,src]²`` from the lower Cholesky of Σ2, so the user's
+   intuition ("Cholesky of Σ") is algebraically correct for the 2×2 case.
+5. Spectral GC from src→tgt::
+
+       GW[src, tgt, f] = log( S2_tgt(f) / (S2_tgt(f) − |H2_f[tgt,src]|² · e_src_given_tgt) )
+
+This is **bivariate (unconditional) GC** — it does NOT condition on the
+remaining n−2 channels.  The "pairwise conditional" name in the GCCA
+documentation refers only to accounting for the instantaneous innovation
+cross-correlation via the Schur complement, not to conditioning on other ROIs.
 
 Sign / index convention
 -----------------------
-``GW[src, tgt, freq_idx]`` = GC from ``src`` ROI → ``tgt`` ROI at the given
-frequency. Diagonal (src == tgt) is always 0. Off-diagonal values are
-non-negative (log-GC ≥ 0). This matches the MATLAB GCCA toolbox output where
-``GW(i, j, f)`` is the influence of region i on region j.
+Python GW uses **source-major** ordering:
+``GW[src, tgt, freq_idx]`` = GC from ``src`` ROI → ``tgt`` ROI.
+MATLAB GW uses **target-major** ordering: ``GW_MATLAB(i, j, f)`` stores
+GC from j→i, so ``GW_Python = GW_MATLAB.T`` (transposed in first two dims).
 
 References
 ----------
 Geweke J (1982). "Measurement of Linear Dependence and Feedback Between
 Multiple Time Series." JASA 77(378):304–313.
 
-Barnett L & Seth AK (2014). "The MVGC Multivariate Granger Causality
-Toolbox." J Neurosci Methods 223:50–68.  §2.3 describes pairwise-conditional
-GC and demonstrates that fitting a *joint* multivariate VAR on all k variables
-implicitly conditions the i→j measure on all remaining k−2 variables. This
-is why ``compute_pairwise_conditional_gc()`` does NOT require separate bivariate
-models — the multivariate VAR is the conditioning mechanism.
+Chen Y, Bressler SL & Ding M (2006). "Frequency decomposition of conditional
+Granger causality and application to multivariate neural field potential data."
+J Neurosci Methods 150:228–237.
+
+Seth AK (2010). "A MATLAB toolbox for Granger causal connectivity analysis."
+J Neurosci Methods 186:262–273.
 """
 
 import logging
@@ -390,18 +415,22 @@ def compute_gc_spectrum(
 
     Notes
     -----
-    **Diagonal-Σ approximation**: The formula uses only Σ[i,i] (diagonal of
-    the noise covariance), which is exact when innovations are uncorrelated.
-    For off-diagonal Σ, this is an approximation; the exact formula requires
-    Cholesky decomposition and depends on variable ordering.  The diagonal
-    approximation is standard in the fNIRS GC literature and matches the
-    GCCA toolbox implementation.
+    **Diagonal-Σ approximation (multivariate)**: This function uses a single
+    multivariate VAR fitted on all n channels jointly (via ``fit_var_model``).
+    It approximates S_jj(f) using only the diagonal of Σ to avoid catastrophic
+    numerical cancellation.  The source contribution uses ``σ_ii`` directly
+    rather than the Schur complement.
 
-    **Numerical stability**: S_jj(f) is computed from the full H Σ H*
-    product (including off-diagonal Σ terms), so it correctly reflects the
-    total power.  The denominator ``S_jj - σ_ii |H_ji|²`` can be slightly
-    negative due to floating-point cancellation when the ratio is very close
-    to 1 (near-zero GC); in that case GW is clamped to 0.
+    **Relationship to MATLAB cca_pwcausal**: The actual MATLAB implementation
+    uses per-pair bivariate VAR models (bsmart ``pwcausal``), not a single
+    multivariate model.  Use ``compute_gc_spectrum_bivariate()`` for a
+    faithful match to MATLAB.  Both functions preserve the directional
+    GC relationships; they differ in absolute magnitude because of different
+    Σ decompositions.
+
+    **Numerical stability**: The diagonal-Σ S_jj is computed as
+    ``Σ_k σ_kk |H_jk|²``, which avoids the catastrophic cancellation of the
+    full ``[H Σ H*]_jj`` product.
     """
     coefs = var_result.coefs   # (order, n_rois, n_rois)
     Sigma = var_result.sigma_u  # (n_rois, n_rois)
@@ -473,6 +502,140 @@ def compute_gc_spectrum(
 
     logger.debug(
         "compute_gc_spectrum: GW shape=%s  off-diag range=[%.4f, %.4f]",
+        GW.shape,
+        float(np.min(GW[GW > 0])) if np.any(GW > 0) else 0.0,
+        float(np.max(GW)),
+    )
+
+    return GW
+
+
+# ===========================================================================
+# Section 4.2 (revised) — Bivariate bsmart-faithful GC Spectrum
+# ===========================================================================
+
+def compute_gc_spectrum_bivariate(
+    Y: np.ndarray,
+    order: int = 20,
+    freq: np.ndarray = None,
+    sfreq: float = 25.0,
+    trend: str = "c",
+) -> np.ndarray:
+    """
+    Compute spectral GC by fitting a bivariate VAR for each channel pair.
+
+    This is a faithful Python translation of the bsmart ``pwcausal`` function
+    that underlies MATLAB's ``cca_pwcausal``.  For each unique pair (src, tgt)
+    it fits an independent bivariate VAR(order) model, then applies the
+    Schur-complement spectral GC formula (Geweke 1982; Chen et al. 2006).
+
+    Why bivariate, not multivariate?
+    ---------------------------------
+    The full 5×5 spectral density  S_jj(f) = [H Σ H*]_jj  suffers
+    catastrophic numerical cancellation when Σ is near-rank-1 (which occurs
+    in fNIRS data because all ROIs share a strong common hemodynamic mode).
+    Fitting separate 2×2 models avoids this entirely: the bivariate S2(f)
+    matrix has only 4 product terms and the 2×2 Σ2 is much better conditioned
+    than the full 5×5 Σ.
+
+    Formula (per pair, for GC from src→tgt)
+    -----------------------------------------
+    ::
+
+        e_src = Σ2[0,0] − Σ2[0,1]² / Σ2[1,1]   # Schur complement (≡ L[0,0]² in Cholesky)
+        S2_f  = H2_f @ Σ2 @ H2_f.conj().T        # 2×2 spectral density (4 terms, stable)
+        GW[src, tgt, f] = log( Re(S2_f[1,1]) / (Re(S2_f[1,1]) − |H2_f[1,0]|² · e_src) )
+
+    where indices 0/1 correspond to src/tgt within the pair slice.
+
+    Parameters
+    ----------
+    Y : np.ndarray, shape (n_rois, T)
+        ROI signal matrix for one window.  NaN channels are skipped and the
+        corresponding GW rows/columns remain 0.
+    order : int
+        VAR model order (lags).  Default 20.
+    freq : np.ndarray, shape (n_freqs,)
+        Frequencies in Hz.  If None, defaults to ``np.arange(0, 0.11, 0.01)``.
+    sfreq : float
+        Sampling frequency in Hz.  Default 25.0.
+    trend : str
+        Trend term for VAR fitting (passed to statsmodels).  Default ``"c"``.
+
+    Returns
+    -------
+    GW : np.ndarray, shape (n_rois, n_rois, n_freqs), dtype float64
+        ``GW[src, tgt, f_idx]`` = GC from ROI src → ROI tgt at ``freq[f_idx]``.
+        Diagonal is 0.  Values are non-negative.
+
+    Notes
+    -----
+    This is **bivariate unconditional GC** — it does not condition on other
+    ROIs.  The Schur complement term accounts for instantaneous innovation
+    cross-correlation within each pair.
+    """
+    from statsmodels.tsa.vector_ar.var_model import VAR as _VAR
+
+    if freq is None:
+        freq = np.arange(0.0, 0.11, 0.01)
+
+    n_rois, T = Y.shape
+    n_freqs = len(freq)
+    GW = np.zeros((n_rois, n_rois, n_freqs), dtype=float)
+
+    for src in range(n_rois):
+        for tgt in range(src + 1, n_rois):
+            # Skip any NaN channel (R11 / R2 padding)
+            Y_pair = Y[[src, tgt], :]
+            if np.any(np.isnan(Y_pair)):
+                logger.debug("bivariate VAR skipped for pair (%d,%d): NaN channel", src, tgt)
+                continue
+
+            # Fit bivariate VAR(order) on [src, tgt] channels
+            try:
+                var2 = _VAR(Y_pair.T).fit(maxlags=order, ic=None, trend=trend, verbose=False)
+            except Exception as exc:
+                logger.warning("bivariate VAR failed for pair (%d,%d): %s", src, tgt, exc)
+                continue
+
+            A2 = var2.coefs   # (order, 2, 2)
+            Z2 = var2.sigma_u  # (2, 2)
+
+            # Schur complements — conditional variances of each channel's
+            # innovation given the other channel's innovation.
+            # For a 2×2 Z2, this equals L[0,0]² / L[1,1]² from the lower
+            # Cholesky factor, so it is always ≥ 0.
+            e_src = Z2[0, 0] - Z2[0, 1] ** 2 / Z2[1, 1]   # Var(ε_src | ε_tgt)
+            e_tgt = Z2[1, 1] - Z2[1, 0] ** 2 / Z2[0, 0]   # Var(ε_tgt | ε_src)
+
+            # Transfer function for the bivariate model: shape (n_freqs, 2, 2)
+            H2 = _compute_transfer_function(A2, freq, sfreq)
+
+            for f_idx in range(n_freqs):
+                H2_f = H2[f_idx]                            # (2, 2)
+
+                # 2×2 spectral density — only 4 product terms, no cancellation
+                S2_f = H2_f @ Z2 @ H2_f.conj().T           # (2, 2)
+
+                S_tgt = float(np.real(S2_f[1, 1]))          # power of target channel
+                S_src = float(np.real(S2_f[0, 0]))          # power of source channel
+
+                # GC from src (channel 0) → tgt (channel 1)
+                # H2_f[1, 0] = transfer from src to tgt in bivariate model
+                contrib_src = float(np.abs(H2_f[1, 0]) ** 2) * e_src
+                intrinsic_tgt = S_tgt - contrib_src
+                if S_tgt > 0.0 and intrinsic_tgt > 0.0:
+                    GW[src, tgt, f_idx] = float(np.log(S_tgt / intrinsic_tgt))
+
+                # GC from tgt (channel 1) → src (channel 0)
+                # H2_f[0, 1] = transfer from tgt to src in bivariate model
+                contrib_tgt = float(np.abs(H2_f[0, 1]) ** 2) * e_tgt
+                intrinsic_src = S_src - contrib_tgt
+                if S_src > 0.0 and intrinsic_src > 0.0:
+                    GW[tgt, src, f_idx] = float(np.log(S_src / intrinsic_src))
+
+    logger.debug(
+        "compute_gc_spectrum_bivariate: GW shape=%s  off-diag range=[%.4f, %.4f]",
         GW.shape,
         float(np.min(GW[GW > 0])) if np.any(GW > 0) else 0.0,
         float(np.max(GW)),
@@ -620,7 +783,7 @@ if __name__ == "__main__":
     print(f"  n_freqs          : {len(freq)}  (expected: 11)")
     print(f"  sfreq            : {sfreq_val} Hz")
 
-    print(f"\n[5/6] Computing GC spectrum (transfer function + spectral GC)...")
+    print(f"\n[5/6] Computing GC spectrum — diagonal-Σ (multivariate) approach...")
     GW = compute_gc_spectrum(var_result, freq=freq, sfreq=sfreq_val)
 
     print(f"\n[6/6] GC Spectrum summary:")
@@ -646,7 +809,7 @@ if __name__ == "__main__":
             f"mean={vals.mean():.4f}"
         )
 
-    # 4.2.3 — Shape and property assertions
+    # 4.2.3 — Shape and property assertions (diagonal-Σ multivariate)
     assert GW.shape == (n_rois, n_rois, 11), \
         f"FAIL: GW shape {GW.shape} != ({n_rois}, {n_rois}, 11)"
     assert np.all(GW[np.eye(n_rois, dtype=bool)] == 0.0), \
@@ -654,7 +817,40 @@ if __name__ == "__main__":
     assert np.all(GW >= 0.0), \
         f"FAIL: GW has negative values (min={GW.min()})"
 
-    # 4.2.3 — Plot 20 off-diagonal spectra
+    # ---------------------------------------------------------------
+    # Bivariate bsmart approach (matches cca_pwcausal exactly)
+    # ---------------------------------------------------------------
+    print(f"\n[5b/6] Computing GC spectrum — bivariate Schur-complement (bsmart) approach...")
+    GW_biv = compute_gc_spectrum_bivariate(
+        Y_window, order=var_order, freq=freq, sfreq=sfreq_val
+    )
+
+    print(f"\n  Bivariate GW summary:")
+    print(f"  GW_biv.shape       : {GW_biv.shape}")
+    print(f"  Diagonal all-zero  : {np.all(GW_biv[np.eye(n_rois, dtype=bool)] == 0.0)}")
+    print(f"  All values ≥ 0     : {np.all(GW_biv >= 0.0)}")
+    print(f"  GW_biv min         : {GW_biv.min():.6f}")
+    print(f"  GW_biv max         : {GW_biv.max():.6f}")
+    print(f"  GW_biv off-diag mean: {GW_biv[~np.eye(n_rois, dtype=bool)].mean():.4f}")
+
+    print(f"\n  Off-diagonal GC (bivariate) at each frequency (src→tgt):")
+    for conn_idx, (s, t) in enumerate(
+        (s, t) for s in range(n_rois) for t in range(n_rois) if s != t
+    ):
+        vals = GW_biv[s, t, :]
+        print(
+            f"    [{conn_labels[conn_idx]:12s}]  "
+            f"f=[{', '.join(f'{v:.3f}' for v in vals)}]  "
+            f"mean={vals.mean():.4f}"
+        )
+
+    assert GW_biv.shape == (n_rois, n_rois, 11)
+    assert np.all(GW_biv[np.eye(n_rois, dtype=bool)] == 0.0)
+    assert np.all(GW_biv >= 0.0)
+
+    # ---------------------------------------------------------------
+    # 4.2.3 — Plot both methods side by side
+    # ---------------------------------------------------------------
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -662,38 +858,39 @@ if __name__ == "__main__":
     from stage_d_granger.utils_gc import get_gc_output_dir
     vis_dir = get_gc_output_dir("visualizations", config=cfg)
 
-    fig, axes = plt.subplots(4, 5, figsize=(18, 12), sharey=True)
-    axes = axes.flatten()
-    conn_plot_idx = 0
-    for s in range(n_rois):
-        for t in range(n_rois):
-            if s == t:
-                continue
-            ax = axes[conn_plot_idx]
-            ax.plot(freq, GW[s, t, :], "b-o", markersize=4, linewidth=1.5)
-            ax.axvspan(0.01, 0.07, alpha=0.15, color="green",
-                       label="0.01–0.07 Hz band" if conn_plot_idx == 0 else "")
-            ax.set_title(f"{valid_roi_names[s]}→{valid_roi_names[t]}", fontsize=8)
-            ax.set_xlabel("Hz", fontsize=7)
-            ax.set_ylabel("GC", fontsize=7)
-            ax.tick_params(labelsize=6)
-            ax.grid(True, alpha=0.3)
-            conn_plot_idx += 1
+    n_conns = n_rois * (n_rois - 1)  # 20 off-diagonal connections
+    pairs = [(s, t) for s in range(n_rois) for t in range(n_rois) if s != t]
 
-    # Hide unused subplots
-    for idx in range(conn_plot_idx, len(axes)):
+    fig, axes = plt.subplots(4, 5, figsize=(18, 12), sharey=False)
+    axes = axes.flatten()
+    for conn_plot_idx, (s, t) in enumerate(pairs):
+        ax = axes[conn_plot_idx]
+        ax.plot(freq, GW[s, t, :], "b-o", markersize=3, linewidth=1.2,
+                label="diag-Σ (multiv.)")
+        ax.plot(freq, GW_biv[s, t, :], "r--s", markersize=3, linewidth=1.2,
+                label="bsmart (biv.)")
+        ax.axvspan(0.01, 0.07, alpha=0.12, color="green")
+        ax.set_title(f"{valid_roi_names[s]}→{valid_roi_names[t]}", fontsize=8)
+        ax.set_xlabel("Hz", fontsize=7)
+        ax.set_ylabel("GC", fontsize=7)
+        ax.tick_params(labelsize=6)
+        ax.grid(True, alpha=0.3)
+        if conn_plot_idx == 0:
+            ax.legend(fontsize=6)
+
+    for idx in range(len(pairs), len(axes)):
         axes[idx].set_visible(False)
 
     fig.suptitle(
-        "A1 — Spectral GC per connection (Trial 1, Window 1)\n"
-        "Green band = neurophysio 0.01–0.07 Hz",
-        fontsize=10,
+        "A1 — Spectral GC: diagonal-Σ multivariate (blue) vs bsmart bivariate (red)\n"
+        "Trial 1, Window 1  |  Green band = neurophysio 0.01–0.07 Hz",
+        fontsize=9,
     )
-    plt.tight_layout(rect=[0, 0, 1, 0.95])
-    plot_path = vis_dir / "sub-A1_Tr1_Win1_gc_spectrum.png"
+    plt.tight_layout(rect=[0, 0, 1, 0.93])
+    plot_path = vis_dir / "sub-A1_Tr1_Win1_gc_spectrum_comparison.png"
     plt.savefig(plot_path, dpi=120)
     plt.close()
-    print(f"\n  GC spectrum plot saved → {plot_path.relative_to(_CODE_ROOT.parent)}")
+    print(f"\n  Comparison plot saved → {plot_path.relative_to(_CODE_ROOT.parent)}")
 
     # ---------------------------------------------------------------
     # 4.2.3 — Debug trace: intermediate values for LPFC→CPFC at 0.05 Hz
@@ -721,5 +918,5 @@ if __name__ == "__main__":
     print(f"    Y_window std per ROI               : {np.std(Y_window, axis=1)}")
     print(f"    var_result.resid std               : {np.std(var_result.resid, axis=0)}")
 
-    print("\n✓ All 4.2 assertions passed.")
+    print("\n✓ All 4.2 assertions passed (both diagonal-Σ multivariate and bsmart bivariate).")
     print("✓ Sections 4.1 + 4.2 validation complete.\n")

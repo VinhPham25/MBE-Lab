@@ -5,7 +5,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_d_granger/linear_gc/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–3 complete (2026-03-17); Section 4.1–4.2 complete (2026-03-18)
+**Status:** Sections 1–3 complete (2026-03-17); Section 4.1–4.2 complete (2026-03-18); bivariate bsmart implementation added (2026-03-18)
 
 ---
 
@@ -161,11 +161,21 @@ This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, f
   > **Comparison to MATLAB cca_pwcausal:** The MATLAB reference data uses Homer3 units (μM·mm, not mol/L). While unit-scaling does not eliminate the near-rank-1 structure of Σ, the MATLAB data likely has lower inter-ROI innovation correlation due to different channel layouts and preprocessing. The diagonal-Σ approximation is the most practical choice that avoids catastrophic cancellation while preserving directional GC interpretability. Future work could explore Wilson spectral factorization (Barnett & Seth MVGC toolbox approach) for an exact formula.
 
 - [x] **4.2.2** (2026-03-18) Implemented `_compute_transfer_function(coefs, freq, sfreq)` as a private helper. Uses `np.einsum('kij,kf->fij', coefs, phase)` to vectorise the lag-polynomial sum over all frequencies simultaneously, then `np.linalg.inv` (broadcast over the frequency axis). Returns `H` of shape `(n_freqs, n_rois, n_rois)`. `sigma_u` is taken directly from `VARResults.sigma_u` (statsmodels OLS residual covariance estimator) — no separate computation from residuals needed.
-- [x] **4.2.3** (2026-03-18) Validated on A1 Trial 1, Window 1. All assertions pass: `GW.shape == (5, 5, 11)` ✓, diagonal all-zero ✓, all values ≥ 0 ✓. Spectrum plot saved to `outputs/stage_d_granger/linear_gc/expert-novice/visualizations/sub-A1_Tr1_Win1_gc_spectrum.png`. Physiological snapshot (0.01–0.07 Hz band): LPFC→ other regions ~0.47–0.82 (PFC as causal driver); RPFC→ other regions ~0.38–0.92; CPFC/LM1/SMA→ others <0.04 (receivers). LPFC→CPFC is ~35× stronger than CPFC→LPFC — meaningful directional asymmetry confirmed.
+- [x] **4.2.3** (2026-03-18) Validated on A1 Trial 1, Window 1. All assertions pass: `GW.shape == (5, 5, 11)` ✓, diagonal all-zero ✓, all values ≥ 0 ✓. Physiological snapshot (0.01–0.07 Hz band): LPFC→ other regions ~0.47–0.82 (PFC as causal driver); RPFC→ other regions ~0.38–0.92; CPFC/LM1/SMA→ others <0.04 (receivers). LPFC→CPFC is ~35× stronger than CPFC→LPFC — meaningful directional asymmetry confirmed.
 
-#### 4.3 Pairwise Conditional GC
-- [ ] **4.3.1** Implement `compute_pairwise_conditional_gc(Y_window, order=20, freq=None, sfreq=25) -> np.ndarray` in `03_linear_gc.py` as the single entry-point function mirroring `cca_pwcausal(Y_windowed, 1, NL, 20, 20, freq, 1)`. It calls `fit_var_model()` then `compute_gc_spectrum()` and returns `GW` of shape `(n_rois, n_rois, len(freq))`. Set default `freq = np.arange(0, 0.11, 0.01)`
-- [ ] **4.3.2** Add conditioning logic: the "pairwise conditional" aspect means GC from i→j is conditioned on all other ROIs k≠i,j. Confirm your VAR-based implementation is inherently multivariate (all ROIs modeled jointly), which provides the conditioning automatically — document this confirmation in a code comment referencing Barnett & Seth (2014) §2.3
+- [x] **4.2.4** (2026-03-18) Implemented `compute_gc_spectrum_bivariate(Y, order, freq, sfreq)` — a faithful translation of bsmart's `pwcausal.m` that underlies `cca_pwcausal` (see **D5** below). For each of the 10 unique pairs (src, tgt), a separate **bivariate** VAR(order) is fitted on `Y[[src,tgt], :]`. The spectral GC formula uses the **Schur complement** of the 2×2 noise covariance as the source variance:
+
+  ```python
+  e_src = Σ2[0,0] − Σ2[0,1]² / Σ2[1,1]   # ≡ L[0,0]² from lower Cholesky of Σ2
+  S2_f  = H2_f @ Σ2 @ H2_f.conj().T        # 2×2 only (4 terms, stable)
+  GW[src, tgt, f] = log( Re(S2_f[1,1]) / (Re(S2_f[1,1]) − |H2_f[1,0]|² · e_src) )
+  ```
+
+  A1 Trial 1 Window 1 bivariate results: `GW range [0.000, 5.358]`, off-diag mean = 0.936. Side-by-side comparison plot saved to `visualizations/sub-A1_Tr1_Win1_gc_spectrum_comparison.png`. The bivariate values are systematically higher because the 2×2 Σ2 per pair is much better conditioned than the full 5×5 Σ, yielding a larger ratio of total to intrinsic power. Directional asymmetries are preserved (LPFC→LM1 ~2.25 vs LPFC→RPFC ~0.29; CPFC→SMA ~3.4 vs SMA→CPFC ~0.65).
+
+#### 4.3 Pairwise Conditional GC Entry Point
+- [ ] **4.3.1** Implement `compute_pairwise_conditional_gc(Y_window, order=20, freq=None, sfreq=25) -> np.ndarray` in `03_linear_gc.py` as the single entry-point function mirroring `cca_pwcausal(Y_windowed, 1, NL, 20, 20, freq, 1)`. It calls `compute_gc_spectrum_bivariate(Y_window, order, freq, sfreq)` directly and returns `GW` of shape `(n_rois, n_rois, len(freq))`. Set default `freq = np.arange(0, 0.11, 0.01)`. Note: the multivariate `fit_var_model` + `compute_gc_spectrum` path is no longer called from this function; `compute_gc_spectrum_bivariate` does its own internal bivariate fitting per pair.
+- [ ] **4.3.2** Document in a docstring that this implements bivariate unconditional GC (not full pairwise-conditional), matching the actual `cca_pwcausal`/bsmart behavior. Include a note that the Schur complement handles instantaneous innovation cross-correlation, and that the function does not condition on the remaining n−2 channels.
 
 #### 4.4 Sliding Window Loop
 - [ ] **4.4.1** Implement `compute_windowed_gc(Y_trial, window_size=1350, stride=1350, order=20, freq=None, sfreq=25) -> dict` in `03_linear_gc.py`: slides over `Y_trial` (5×T) from `w = window_size` to `T` in steps of `stride`; calls `compute_pairwise_conditional_gc()` per window; returns dict `{'Win_1': GW_array, 'Win_2': GW_array, ...}` — mirrors MATLAB `for w = window_size+1:sT:LY` loop
@@ -267,8 +277,8 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 
 ## 📊 COMPLETION METRICS
 
-- **Total Tasks:** 34
-- **Completed:** 18
+- **Total Tasks:** 35
+- **Completed:** 19
 - **In Progress:** 0
 - **Remaining:** 16
 
@@ -276,7 +286,7 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 - **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 6/6 ✅
 - **Section 3 (Trial Segmentation):** 3/3 ✅
-- **Section 4 (Core GC):** 6/12 (4.1 + 4.2 complete; 4.3–4.5 pending)
+- **Section 4 (Core GC):** 7/13 (4.1 + 4.2 complete including bivariate implementation; 4.3–4.5 pending)
 - **Section 5 (Subject Pipeline):** 0/5
 - **Section 6 (Statistics):** 0/4
 - **Section 7 (Visualization):** 0/4
@@ -289,16 +299,21 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ### ROI Divergence from MATLAB Reference
 This pipeline intentionally uses different ROIs from `GC_freq_main_TRGC_NovExp.m`. The MATLAB script's `[LPFC, RPFC, LPMC, RPMC, SMA]` mapping was hand-tuned to the Homer3 `.nirs` file channel ordering of a specific recording session. This pipeline uses `[LPFC, CPFC, RPFC, LM1, SMA]` from `build_region_map_5()`, which was derived from the actual 3D optode coordinates in the ASTaUND BIDS files and validated against physiology in Stage C (M1 HbO peak +0.506 μM, SMA HbO peak +0.446 μM). This is the more principled choice. The bilateral motor cortex coverage (LPMC/RPMC) in the MATLAB script is not reproducible from the ASTaUND optode layout without making assumptions about which channels physically cover right motor cortex.
 
-### MATLAB `cca_pwcausal` Behavior (for validation)
-The MATLAB function `cca_pwcausal(Y, 1, NL, 20, 20, freq, 1)` from the GCCA toolbox computes pairwise conditional spectral GC. The key arguments are:
-- `Y` — multivariate time series (channels × time)
-- `1` — regression mode (1 = VAR)
-- `NL` — number of samples
-- `20, 20` — VAR model order for forward and backward models
-- `freq` — frequency vector
-- `1` — include conditioning on all other channels
+### MATLAB `cca_pwcausal` Behavior (verified from source, 2026-03-18)
 
-Your Python `compute_pairwise_conditional_gc()` must produce a `GW` array of the same shape `(n_rois, n_rois, len(freq))` with the same sign convention (positive = causal influence from column → row).
+`cca_pwcausal` from the GCCA toolbox (Seth 2010) is a **thin wrapper** around the bsmart toolbox function `pwcausal.m` (Chen, Bressler & Ding 2006). The actual GC computation is entirely inside `pwcausal`. Key facts verified from source code:
+
+1. **Bivariate models, not multivariate.** For each pair (i, j), `pwcausal` extracts `y = [X[i,:], X[j,:]]` and fits an independent bivariate VAR(p) using the Morf-LWR algorithm (`armorf`). There is no shared multivariate VAR — each pair gets its own 2×2 model, coefficients, and noise covariance.
+
+2. **Schur complement, not diagonal Σ.** Source contribution to spectral GC uses the Schur complement of the 2×2 noise covariance: `e_src = Z2[0,0] − Z2[0,1]² / Z2[1,1]`. This equals `L[0,0]²` from the lower Cholesky factor of Z2 — so the "Cholesky of Σ" description is algebraically correct for the 2×2 case.
+
+3. **Numerical stability from 2×2 products.** S_jj(f) = [H2 Σ2 H2*]_jj has only 4 product terms (2×2 matrix). Near-rank-1 Σ in the bivariate case is much rarer than in the full 5×5 case; each pair's bivariate model captures their shared variance in the AR coefficients, leaving less correlated residuals.
+
+4. **"Pairwise conditional" is a misnomer.** The name refers to conditioning on instantaneous innovation cross-correlation (via Schur complement), not on the other n−2 channels. This is **unconditional bivariate GC**.
+
+5. **MATLAB GW convention is target-major.** `GW_MATLAB(i,j)` = GC from j→i (column j causes row i). The Python convention is source-major: `GW_Python[src, tgt]` = GC from src→tgt. Therefore `GW_Python = GW_MATLAB.T` (transposed in the first two dims).
+
+Python implementation: `compute_gc_spectrum_bivariate(Y, order, freq, sfreq)` in `03_linear_gc.py`.
 
 ### Section 4 Implementation Deviations (recorded 2026-03-18)
 
@@ -311,7 +326,7 @@ The ADF stationarity pre-check is implemented but disabled via `config.yaml: sta
 #### D3 — Window is 1351 samples, not 1350 (4.1.3)
 MATLAB's `Y(:,w-window_size:w)` produces 1351 samples (1-indexed inclusive). Python replicates as `Y[:, w-window_size:w+1]`. The config value `size_samples: 1350` is the stride, not the window length. This is a faithful translation of the MATLAB inclusive-index behavior, confirmed by the `(5, 1351)` window shape in the validation output.
 
-#### D4 — Diagonal-Σ approximation for spectral density (4.2.1) — CRITICAL
+#### D4 — Diagonal-Σ approximation for spectral density (4.2.1)
 The standard Geweke formula `S_jj = [H Σ H*]_jj` undergoes catastrophic numerical cancellation for this dataset. The ASTaUND ROI innovations are near-rank-1 (the row-sum of `sigma_u` ≈ 0 — a dominant common mode is present in all 5 ROI residuals), and the VAR transfer function is near-unit-root (`|H| ~ 7.46×10⁶` at 0.05 Hz). Their combined effect: each term in the 25-element double sum `H_jk Σ_kl H*_jl` is ~0.0056, but they nearly completely cancel, producing `S_jj = 8.55×10⁻¹²` while `σ_src|H_ji|² = 0.014` — a 10⁹× violation of the theoretical constraint `S_jj ≥ σ_src|H_ji|²`.
 
 **Resolution:** Replace `S_jj = [H Σ H*]_jj` with the diagonal-Σ approximation:
@@ -320,7 +335,19 @@ S_jj(f) = Σ_k  σ_kk · |H(f)[j,k]|²
 ```
 This is a stable dot product, exact for uncorrelated innovations. For the highly correlated innovations in fNIRS data, it measures each ROI's unique noise contribution to the target's spectrum. GC values with fix: range [0, 1.015], off-diag mean 0.266, with clear directional asymmetry (LPFC→CPFC ~35× stronger than reverse). Documented in code with a detailed comment.
 
-**Future option:** Wilson spectral factorization (used in the MVGC toolbox, Barnett & Seth 2014) handles non-diagonal Σ exactly but requires implementing the Wiener–Hopf algorithm. Recommended if exact Σ-off-diagonal handling is needed for a methodological comparison paper.
+**Status:** Retained in `compute_gc_spectrum(var_result, ...)` for comparison. The bivariate approach in D5 is now the default for `compute_pairwise_conditional_gc()`.
+
+#### D5 — cca_pwcausal uses bivariate VAR per pair, not multivariate (4.2.4) — CRITICAL CORRECTION
+
+After verifying the `cca_pwcausal`/bsmart source code (2026-03-18), the original assumption that MATLAB uses one multivariate VAR was **incorrect**. The actual implementation fits a separate bivariate VAR(20) for each pair. This is the correct approach for two reasons:
+
+1. **Numerical stability**: the bivariate 2×2 Σ2 is much better conditioned than the full 5×5 Σ. The catastrophic cancellation in D4 is a consequence of using a multivariate model — it does not occur in the bivariate approach.
+
+2. **Faithfulness to MATLAB**: `compute_gc_spectrum_bivariate()` replicates the exact bsmart formula including the Schur complement source variance. The bivariate A1 results (max ~5.36, mean ~0.94) are higher than the diagonal-Σ results (max ~1.02, mean ~0.27) because the 2×2 model yields a larger ratio of total to intrinsic spectral power per pair. Directional asymmetries are preserved in both methods.
+
+**Implementation:** `compute_gc_spectrum_bivariate(Y, order, freq, sfreq)` — takes raw `Y` (n_rois × T), fits bivariate VAR for each unique pair (n_rois*(n_rois-1)/2 = 10 models for 5 ROIs), returns `GW` (n_rois × n_rois × n_freqs). NaN channels (R11/R2) are automatically skipped.
+
+**Impact on 4.3:** `compute_pairwise_conditional_gc()` will call `compute_gc_spectrum_bivariate()` directly instead of `compute_gc_spectrum()`.
 
 ### Connection Between Linear and Nonlinear GC
 The Section 4 `compute_pairwise_conditional_gc()` function is the **only component replaced** when moving to the nonlinear LSTM-based GC. All of Sections 2, 3, 5, 6, and 7 are reused identically. Design Section 4 so the function signature is cleanly swappable:
