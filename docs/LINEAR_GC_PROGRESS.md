@@ -142,7 +142,7 @@ This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, f
 
 #### 4.1 VAR Model Fitting
 - [ ] **4.1.1** Implement `fit_var_model(Y: np.ndarray, order: int = 20) -> VARResults` in `03_linear_gc.py`: fits a VAR(order) model on `Y` (n_rois × T) using `statsmodels.tsa.vector_ar.var_model.VAR`; transpose to (T × n_rois) as required by statsmodels; return the fitted `VARResults` object
-- [ ] **4.1.2** Add stationarity pre-check to `fit_var_model()`: run ADF test on each ROI signal via `statsmodels.tsa.stattools.adfuller`; if any series is non-stationary (p > 0.05), apply first-differencing and log the occurrence — matches the implicit stationarity assumption of linear VAR/GC
+- [ ] **4.1.2** Add stationarity pre-check to `fit_var_model()`: run Augmented Dickey-Fuller (ADF) test on each ROI signal via `statsmodels.tsa.stattools.adfuller`; if any series is non-stationary (p > 0.05), apply first-differencing and log the occurrence — matches the implicit stationarity assumption of linear VAR/GC
 - [ ] **4.1.3** Validate VAR fit on a single A1 window: confirm `model.coefs` shape is `(20, 5, 5)` (lag × rois × rois); print AIC/BIC; confirm no fitting errors on the 1350-sample window
 
 #### 4.2 Frequency-Domain GC Spectrum
