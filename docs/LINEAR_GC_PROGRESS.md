@@ -180,8 +180,8 @@ This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, f
 - [x] **4.3.2** (2026-03-18) NaN-channel handling validated: simulated R11 (LM1 + SMA padded with NaN) — all pairs involving NaN ROIs produce GW = 0, valid LPFC/CPFC/RPFC pairs retain correct GC values (`LPFC→CPFC mean = 2.16` unchanged). Docstring documents bivariate unconditional GC; notes the Schur complement as a weaker but numerically stable form of conditioning (not full multivariate conditioning on all other ROIs).
 
 #### 4.4 Sliding Window Loop
-- [ ] **4.4.1** Implement `compute_windowed_gc(Y_trial, window_size=1350, stride=1350, order=20, freq=None, sfreq=25) -> dict` in `03_linear_gc.py`: slides over `Y_trial` (5×T) from `w = window_size` to `T` in steps of `stride`; calls `compute_pairwise_gc()` per window; returns dict `{'Win_1': GW_array, 'Win_2': GW_array, ...}` — mirrors MATLAB `for w = window_size+1:sT:LY` loop
-- [ ] **4.4.2** Add minimum-length guard: skip a window if `Y_windowed` contains NaN values in any ROI channel (can occur for subjects with bad ROI channels); log skipped windows with reason
+- [x] **4.4.1** (2026-03-18) Implemented `compute_windowed_gc(Y_trial, window_size=1350, stride=1350, order=20, freq=None, sfreq=25.0) -> dict` in `03_linear_gc.py`. Loop: `for w in range(window_size, T, stride)` → `Y_win = Y_trial[:, w-window_size : w+1]` (1351 samples, matching MATLAB inclusive slice). Returns `{'Win_1': GW, 'Win_2': GW, ...}` with 1-indexed keys matching MATLAB `sprintf('Win_%d', Wn+1)`. Validated on A1: Trial 1 → 2 windows (Win_1 max=5.36, Win_2 max=4.32), all 5 trials → 8 total windows ✓.
+- [x] **4.4.2** (2026-03-18) Skip guard implemented: a window is skipped only if every sample of every ROI is all-NaN (completely empty window) — not for structurally-bad ROI channels (R11/R2), which `compute_pairwise_gc` already handles per-pair. Skipped windows are logged at WARNING level and excluded from the output dict.
 
 #### 4.5 Frequency Band Averaging
 - [ ] **4.5.1** Implement `average_gc_over_band(GW, freq, f_low=0.01, f_high=0.07) -> np.ndarray` in `03_linear_gc.py`: finds indices of `f_low` and `f_high` in `freq` array; returns `np.mean(GW[:,:,idx1:idx2+1], axis=2)` — exactly mirrors MATLAB `mean(GW(:,:,idx1:idx2),3)`; output shape `(n_rois, n_rois)`
@@ -280,15 +280,15 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 35
-- **Completed:** 21
+- **Completed:** 23
 - **In Progress:** 0
-- **Remaining:** 14
+- **Remaining:** 12
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 6/6 ✅
 - **Section 3 (Trial Segmentation):** 3/3 ✅
-- **Section 4 (Core GC):** 9/13 (4.1–4.3 complete; 4.4–4.5 pending)
+- **Section 4 (Core GC):** 11/13 (4.1–4.4 complete; 4.5 pending)
 - **Section 5 (Subject Pipeline):** 0/5
 - **Section 6 (Statistics):** 0/4
 - **Section 7 (Visualization):** 0/4

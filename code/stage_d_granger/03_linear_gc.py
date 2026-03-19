@@ -726,7 +726,108 @@ def compute_pairwise_gc(
 
 
 # ===========================================================================
-# Quick standalone validation — Sections 4.1.3, 4.2.3, 4.3
+# Section 4.4 — Sliding Window Loop
+# ===========================================================================
+
+def compute_windowed_gc(
+    Y_trial: np.ndarray,
+    window_size: int = 1350,
+    stride: int = 1350,
+    order: int = 20,
+    freq: np.ndarray = None,
+    sfreq: float = 25.0,
+    trend: str = "c",
+) -> dict:
+    """
+    Slide a fixed-size window over one trial and compute GC per window.
+
+    Mirrors MATLAB's inner loop::
+
+        for w = window_size+1 : sT : LY
+            Y_windowed = Y(:, w-window_size : w);   % 1351 samples (inclusive)
+            [GW,...] = cca_pwcausal(Y_windowed, ...);
+
+    The Python indexing ``Y_trial[:, w-window_size : w+1]`` replicates the
+    MATLAB inclusive slice, producing exactly ``window_size + 1 = 1351``
+    samples per window (see Deviation D3 in docs/LINEAR_GC_PROGRESS.md).
+
+    Parameters
+    ----------
+    Y_trial : np.ndarray, shape (n_rois, T)
+        Full ROI signal matrix for one trial.  May contain all-NaN rows for
+        bad ROI channels (e.g. R11, R2) — handled gracefully per window.
+    window_size : int
+        Number of stride samples (base step).  Actual window length is
+        ``window_size + 1`` to match the MATLAB inclusive slice.  Default 1350
+        (54 s × 25 Hz).
+    stride : int
+        Step between window starts in samples.  Default 1350 (no overlap).
+    order : int
+        VAR model order passed to ``compute_pairwise_gc()``.  Default 20.
+    freq : np.ndarray, optional
+        Frequency vector in Hz.  Default ``np.arange(0, 0.11, 0.01)``.
+    sfreq : float
+        Sampling frequency in Hz.  Default 25.0.
+    trend : str
+        Trend term for VAR fits.  Default ``"c"``.
+
+    Returns
+    -------
+    windows : dict
+        ``{'Win_1': GW_array, 'Win_2': GW_array, ...}``
+        Each value is ``np.ndarray`` of shape ``(n_rois, n_rois, n_freqs)``.
+        Keys are 1-indexed strings matching MATLAB ``W = sprintf('Win_%d', Wn+1)``.
+        Empty dict if the trial is shorter than one full window.
+
+    Notes
+    -----
+    **Skipping logic:** A window is skipped (and not included in the output
+    dict) only if every ROI channel is all-NaN — meaning there is literally
+    no signal to model.  Structurally NaN ROIs (bad channels, as in R11/R2)
+    are *not* a skip condition; ``compute_pairwise_gc`` handles them per-pair.
+    """
+    if freq is None:
+        freq = np.arange(0.0, 0.11, 0.01)
+
+    n_rois, T = Y_trial.shape
+    windows: dict = {}
+    win_num = 0          # 0-indexed counter → label uses win_num+1
+
+    # Mirror: for w = window_size+1 : stride : LY  (MATLAB 1-indexed)
+    # Python: w starts at window_size (0-indexed), increments by stride,
+    #         while w < T so that Y_trial[:, w-window_size : w+1] is in-bounds.
+    for w in range(window_size, T, stride):
+        Y_win = Y_trial[:, w - window_size : w + 1]   # (n_rois, window_size+1)
+
+        # Skip only if every sample of every ROI is NaN (completely empty)
+        if np.all(np.isnan(Y_win)):
+            logger.warning(
+                "Window %d skipped: all-NaN data (samples %d–%d)",
+                win_num + 1, w - window_size, w,
+            )
+            continue
+
+        label = f"Win_{win_num + 1}"
+        logger.info(
+            "  %s: samples [%d, %d]  shape=%s",
+            label, w - window_size, w, Y_win.shape,
+        )
+
+        GW = compute_pairwise_gc(
+            Y_win, order=order, freq=freq, sfreq=sfreq, trend=trend
+        )
+        windows[label] = GW
+        win_num += 1
+
+    logger.info(
+        "compute_windowed_gc: %d windows extracted from trial of %d samples",
+        len(windows), T,
+    )
+    return windows
+
+
+# ===========================================================================
+# Quick standalone validation — Sections 4.1.3, 4.2.3, 4.3, 4.4
 # Run as: python code/stage_d_granger/03_linear_gc.py
 # ===========================================================================
 
@@ -1058,4 +1159,75 @@ if __name__ == "__main__":
     assert valid_nonzero, "FAIL: valid ROI pairs all-zero even without NaN channels"
 
     print("\n✓ All 4.3 assertions passed.")
-    print("✓ Sections 4.1 + 4.2 + 4.3 validation complete.\n")
+
+    # ===================================================================
+    # Section 4.4 — Sliding Window Loop Validation
+    # ===================================================================
+    print("\n" + "="*65)
+    print("Section 4.4 — compute_windowed_gc Validation")
+    print("="*65)
+
+    window_cfg = gc_cfg["window"]
+    win_size   = window_cfg["size_samples"]    # 1350
+    win_stride = window_cfg["stride_samples"]  # 1350
+
+    # ---------------------------------------------------------------
+    # Trial 1: expected 2 windows (2901 samples / 1350 stride)
+    # ---------------------------------------------------------------
+    print(f"\n[9/10] Trial 1 — {Y_trial.shape[1]} samples "
+          f"(window={win_size}, stride={win_stride})...")
+    windows_t1 = compute_windowed_gc(
+        Y_trial,
+        window_size=win_size,
+        stride=win_stride,
+        order=var_order,
+        freq=freq,
+        sfreq=sfreq_val,
+    )
+
+    # Expected window count: number of valid w in range(win_size, T, stride)
+    T_t1 = Y_trial.shape[1]
+    expected_wins_t1 = len(range(win_size, T_t1, win_stride))
+    print(f"\n  Windows found      : {len(windows_t1)}  (expected: {expected_wins_t1})")
+    for label, GW_w in windows_t1.items():
+        diag_ok   = np.all(GW_w[np.eye(n_rois, dtype=bool)] == 0.0)
+        values_ok = np.all(GW_w >= 0.0)
+        print(f"  {label}: shape={GW_w.shape}  diag=0:{diag_ok}  "
+              f"≥0:{values_ok}  max={GW_w.max():.4f}  mean_off={GW_w[~np.eye(n_rois,dtype=bool)].mean():.4f}")
+
+    assert len(windows_t1) == expected_wins_t1, \
+        f"FAIL: {len(windows_t1)} windows != expected {expected_wins_t1}"
+    for label, GW_w in windows_t1.items():
+        assert GW_w.shape == (n_rois, n_rois, len(freq)), \
+            f"FAIL: {label} shape {GW_w.shape}"
+        assert np.all(GW_w >= 0.0), f"FAIL: {label} has negative GC"
+        assert np.all(GW_w[np.eye(n_rois, dtype=bool)] == 0.0), \
+            f"FAIL: {label} diagonal non-zero"
+
+    # ---------------------------------------------------------------
+    # All 5 trials — check window counts match expected totals
+    # ---------------------------------------------------------------
+    print(f"\n[10/10] All 5 trials — sliding window counts...")
+    total_wins = 0
+    for trial_idx, (on, off) in enumerate(segments):
+        Y_tr = Data_Reg[:, on : off + 1]
+        wins_tr = compute_windowed_gc(
+            Y_tr,
+            window_size=win_size,
+            stride=win_stride,
+            order=var_order,
+            freq=freq,
+            sfreq=sfreq_val,
+        )
+        n_w = len(wins_tr)
+        total_wins += n_w
+        dur_s = Y_tr.shape[1] / sfreq_val
+        expected_w = len(range(win_size, Y_tr.shape[1], win_stride))
+        ok = "✓" if n_w == expected_w else "✗"
+        print(f"  Trial {trial_idx+1}: {dur_s:.0f} s  →  {n_w}/{expected_w} windows {ok}")
+
+    print(f"\n  Total windows (all trials): {total_wins}  (expected: 8 for A1)")
+    assert total_wins == 8, f"FAIL: expected 8 total windows for A1, got {total_wins}"
+
+    print("\n✓ All 4.4 assertions passed.")
+    print("✓ Sections 4.1 + 4.2 + 4.3 + 4.4 validation complete.\n")
