@@ -5,7 +5,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_d_granger/linear_gc/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–4 complete (2026-03-18)
+**Status:** Sections 1–5 complete (2026-03-19)
 
 ---
 
@@ -194,17 +194,54 @@ This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, f
 This mirrors the full MATLAB outer loops: `for m in [Exp, Nov]`, `for s in 1:N`, building `B_Exp` and `B_Nov`.
 
 #### 5.1 Per-Subject GC Pipeline
-- [ ] **5.1.1** Implement `process_subject_gc(subject_id, study='expert-novice') -> dict` in `04_subject_gc_pipeline.py`: orchestrates ROI extraction → trial segmentation → windowed GC → band averaging for a single subject; returns nested dict `{trial_id: {window_id: connectivity_matrix_20x1}}` — mirrors MATLAB per-subject logic building `GC_fqmean`
-- [ ] **5.1.2** Add diagonal removal inside `process_subject_gc()`: reshape 5×5 matrix to 25 elements, remove indices [0,6,12,18,24] (diagonal), leaving 20 elements in the exact MATLAB connection order — mirrors MATLAB `B_Exp.(trial)(:,[1 7 13 19 25],:) = []`
-- [ ] **5.1.3** Save per-subject output as `sub-{id}_gc_connectivity.npz` with keys: `connectivity` (shape: n_trials × 20_connections × n_windows), `trial_ids`, `window_counts`, `roi_names_used`, `params` dict
+- [x] **5.1.1** (2026-03-19) Implemented `process_subject_gc(subject_id, study='expert_novice') -> dict` in `04_subject_gc_pipeline.py`. Uses lazy module loading (importlib) to avoid matplotlib side-effects when importing sibling modules. Orchestrates: load .fif → `extract_roi_signals` → `get_trial_segments` → `compute_windowed_gc` per trial → `average_gc_over_band` per window. Returns nested dict `{'Tr_1': {'Win_1': array(20,), ...}, ...}` — leaf values are 1D arrays of 20 directed GC values. Supports `overwrite=False` for caching (skips recomputation if .npz exists).
+- [x] **5.1.2** (2026-03-19) Diagonal removal implemented with **canonical ROI expansion** (deviation from plan, intentional): `GC_mean` is first expanded from `(n_valid_rois × n_valid_rois)` to the canonical `(5 × 5)` layout by mapping valid ROI names back to their `ROI_NAMES` index positions. Missing ROI pairs (R11: LM1+SMA absent, R2: SMA absent) are zero-filled at their canonical positions. Then diagonal indices `[0, 6, 12, 18, 24]` are removed from the 25-element flattened matrix, always yielding exactly 20 elements regardless of how many ROIs survived bad-channel filtering. This ensures uniform group array shapes across all subjects. Mirrors MATLAB: `B_Exp.(trial)(:,[1 7 13 19 25],:) = []`.
+- [x] **5.1.3** (2026-03-19) Per-subject `.npz` saved to `gc_connectivity/sub-{id}_gc_connectivity.npz`. **Storage design deviation from plan (intentional):** Rather than a padded 3D array `(n_trials × 20 × n_windows)`, each trial is stored as a separate 2D key `Tr_1_connectivity: (20, n_wins_tr1)`, `Tr_2_connectivity: (20, n_wins_tr2)`, etc. This preserves the ragged structure (subjects differ in trial count and windows per trial) without introducing ambiguous NaN padding at the subject level. Also stored: `trial_ids`, `window_counts`, `roi_names_used`, `connection_labels`, `n_trials`, `subject_id`, `group`, `params_json` (JSON string with all processing parameters).
+
+  > **Deviation note — 5.1.1 return type:** The plan said `connectivity_matrix_20x1` (shape `(20,1)`). Implementation uses shape `(20,)` (1D vector) — more natural for downstream stacking. Downstream `np.column_stack` in `_save_subject_gc_npz` converts to `(20, n_windows)` correctly.
 
 #### 5.2 Group Array Construction
-- [ ] **5.2.1** Implement `build_group_arrays(study='expert-novice') -> tuple[np.ndarray, np.ndarray]` in `04_subject_gc_pipeline.py`: loads all per-subject `.npz` files; stacks into `B_Exp` (n_exp_subjects × 20_conn × n_windows) and `B_Nov` (n_nov_subjects × 20_conn × n_windows) — mirrors MATLAB `B_Exp.(trial).Exp(h,:,Wn+1)` accumulation; pads with NaN for subjects with fewer windows than the max
-- [ ] **5.2.2** Save `B_Exp.npz` and `B_Nov.npz` to `outputs/stage_d_granger/linear_gc/expert-novice/group/`; also save `gc_summary.json` with: n_subjects per group, n_trials, n_windows per trial, connection labels, processing parameters
+- [x] **5.2.1** (2026-03-19) Implemented `build_group_arrays(study='expert_novice') -> tuple[dict, dict]` in `04_subject_gc_pipeline.py`. Loads all 13 per-subject `.npz` files; stacks into **per-trial** group arrays. Return type is `(B_Exp: dict, B_Nov: dict)` where each key is a trial ID.
+
+  > **Deviation from plan (intentional):** The plan describes `B_Exp (n_exp_subjects × 20_conn × n_windows)` as a single 3D array. The implementation returns dicts `B_Exp['Tr_1'] = array(7, 20, max_wins_tr1)`, etc., because subjects differ in trial count (R9=2 trials, R4=4 trials, others=5). A single 3D array flattening all trials would be uninterpretable. This is faithful to MATLAB's `B_Exp.(trial).Exp(h,:,Wn+1)` per-trial struct. NaN-padding is applied within each trial for subjects with fewer windows than the maximum for that trial, or subjects missing that trial entirely (R9 for Tr_3–5, R4 for Tr_5).
+
+  **Final group array shapes:**
+  | Trial | B_Exp | B_Nov | Notes |
+  |---|---|---|---|
+  | Tr_1 | (7, 20, 6) | (6, 20, 6) | max 6 windows — R3 and R6 contribute most |
+  | Tr_2 | (7, 20, 4) | (6, 20, 4) | all subjects have data |
+  | Tr_3 | (7, 20, 4) | (6, 20, 4) | R9 NaN-filled (only 2 trials recorded) |
+  | Tr_4 | (7, 20, 4) | (6, 20, 4) | R9 NaN-filled |
+  | Tr_5 | (7, 20, 3) | (6, 20, 3) | R9 + R4 NaN-filled; R4 missing final trial-end annotation |
+
+- [x] **5.2.2** (2026-03-19) Saved `B_Exp.npz` and `B_Nov.npz` to `outputs/stage_d_granger/linear_gc/expert-novice/group/`. Each .npz stores per-trial arrays as keys (`Tr_1`, `Tr_2`, ...) plus `subject_ids` array. `gc_summary.json` saved with: n_subjects per group, per-trial max window counts, connection labels, per-subject trial/window counts and ROI names.
 
 #### 5.3 Single-Subject Validation
-- [ ] **5.3.1** Run `process_subject_gc('A1')` end-to-end; print shape of output connectivity array; confirm it has the expected number of trials (should match trial count from `02_trial_segmentation.py`); print mean GC per connection across all windows
-- [ ] **5.3.2** Run on all 13 GC-eligible subjects (R10 excluded; see Stage B quality flag); confirm 13/13 succeed; log any subjects with reduced window counts (due to short trials or NaN ROIs); save batch processing log to `gc_batch_log.json`
+- [x] **5.3.1** (2026-03-19) `process_subject_gc('A1')` validated end-to-end. A1 results: 5 trials, 8 total windows, all connectivity vectors shape `(20,)`, all values ≥ 0. Mean GC across all 8 windows printed (excerpt: LPFC→CPFC=2.509, LPFC→LM1=2.274, CPFC→SMA=2.289, LM1→SMA=2.242; weakest: LM1→RPFC=0.119, SMA→LPFC=0.160). `.npz` verified: `Tr_1_connectivity` shape `(20, 2)`, `roi_names_used=['LPFC','CPFC','RPFC','LM1','SMA']`. **Note:** A1's window counts differ from the Section 4 validation (8 vs 8 ✓), but the per-trial distribution changed: Tr_4 and Tr_5 now each have 1 window (previously counted 2 each), confirming the `onset:offset+1` inclusive slice reduces those shorter trials to 1 window at 25 Hz. Total is still 8 ✓.
+- [x] **5.3.2** (2026-03-19) Batch complete — **13/13 subjects succeeded, 0 failed**. `gc_batch_log.json` saved to `gc_connectivity/`. Key per-subject findings:
+  - **R9** (50 Hz .fif → resampled to 25 Hz in-memory): 2 trials, 2 total windows ⚠ `FEWER TRIALS: 2/5`
+  - **R11**: 5 trials, 9 windows, 3/5 ROIs (LPFC, CPFC, RPFC only — LM1+SMA bad) ⚠ `REDUCED ROIs: 3/5`
+  - **R2**: 5 trials, 8 windows, 4/5 ROIs (LPFC, CPFC, RPFC, LM1 — SMA bad) ⚠ `REDUCED ROIs: 4/5`
+  - **R4**: 4 trials, 7 windows ⚠ `FEWER TRIALS: 4/5` (confirmed missing final trial-end annotation from Section 3)
+  - **R3**: 5 trials, 20 total windows (notably long trials → most windows of any subject)
+  - **R6**: 5 trials, 16 windows; **R8**: 5 trials, 10 windows
+  - All others: 5 trials, 5–9 windows, 5/5 ROIs
+
+  | Subject | Group | Trials | Windows | ROIs |
+  |---|---|---|---|---|
+  | A1 | Expert | 5 | 8 | 5 |
+  | A2 | Expert | 5 | 5 | 5 |
+  | R7 | Expert | 5 | 7 | 5 |
+  | R8 | Expert | 5 | 10 | 5 |
+  | R9 | Expert | 2 | 2 | 5 ⚠ |
+  | R11 | Expert | 5 | 9 | 3 ⚠ |
+  | R12 | Expert | 5 | 5 | 5 |
+  | R1 | Novice | 5 | 9 | 5 |
+  | R2 | Novice | 5 | 8 | 4 ⚠ |
+  | R3 | Novice | 5 | 20 | 5 |
+  | R4 | Novice | 4 | 7 | 5 ⚠ |
+  | R5 | Novice | 5 | 14 | 5 |
+  | R6 | Novice | 5 | 16 | 5 |
 
 ---
 
@@ -280,16 +317,16 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 35
-- **Completed:** 25
+- **Completed:** 30
 - **In Progress:** 0
-- **Remaining:** 10
+- **Remaining:** 5
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 6/6 ✅
 - **Section 3 (Trial Segmentation):** 3/3 ✅
 - **Section 4 (Core GC):** 13/13 ✅
-- **Section 5 (Subject Pipeline):** 0/5
+- **Section 5 (Subject Pipeline):** 5/5 ✅
 - **Section 6 (Statistics):** 0/4
 - **Section 7 (Visualization):** 0/4
 - **Section 8 (Batch Runner):** 0/2
@@ -350,6 +387,20 @@ After verifying the `cca_pwcausal`/bsmart source code (2026-03-18), the original
 **Implementation:** `compute_gc_spectrum_bivariate(Y, order, freq, sfreq)` — takes raw `Y` (n_rois × T), fits bivariate VAR for each unique pair (n_rois*(n_rois-1)/2 = 10 models for 5 ROIs), returns `GW` (n_rois × n_rois × n_freqs). NaN channels (R11/R2) are automatically skipped.
 
 **Impact on 4.3:** `compute_pairwise_gc()` calls `compute_gc_spectrum_bivariate()` directly.
+
+### Section 5 Implementation Deviations (recorded 2026-03-19)
+
+#### D6 — Ragged per-trial storage instead of padded 3D array (5.1.3)
+The plan described `connectivity (shape: n_trials × 20_connections × n_windows)` as a padded 3D array per subject. The implementation stores per-trial 2D keys (`Tr_1_connectivity: (20, n_wins_tr1)`, etc.) because:
+1. Different subjects have different trial counts (R9=2, R4=4, most=5).
+2. Different trials have different window counts for the same subject.
+A uniform 3D array would require two-level NaN padding with ambiguous indexing. Separate trial keys are cleaner and self-documenting. Downstream `build_group_arrays` stacks these into uniform per-trial 3D group arrays with explicit NaN padding.
+
+#### D7 — dict return type for B_Exp / B_Nov instead of bare np.ndarray (5.2.1)
+The plan describes `build_group_arrays` returning `tuple[np.ndarray, np.ndarray]`. The implementation returns `tuple[dict, dict]` where each dict key is a trial ID (`'Tr_1'`, `'Tr_2'`, etc.) and each value is `array(n_subs, 20, max_wins_for_trial)`. This is faithful to MATLAB's per-trial struct `B_Exp.(trial).Exp(h,:,Wn+1)`. The `B_Exp.npz` file stores each trial as a separate key, so loading gives the same structure.
+
+#### D8 — Canonical ROI expansion before diagonal removal (5.1.2)
+For subjects R11 (3 valid ROIs) and R2 (4 valid ROIs), `average_gc_over_band` returns a `(3,3)` or `(4,4)` matrix instead of `(5,5)`. The plan said to flatten and remove diagonal from whatever size matrix results. This would yield 6 or 12 connections instead of 20, breaking group array stacking. Fix: expand to canonical `(5,5)` first by mapping valid ROI names to their `ROI_NAMES` index positions, zero-filling missing connections. Then diagonal removal always yields exactly 20 elements. Missing-ROI connections are consistently 0 (matching `compute_pairwise_gc`'s own 0-fill for NaN channels).
 
 ### Connection Between Linear and Nonlinear GC
 The Section 4 `compute_pairwise_gc()` function is the **only component replaced** when moving to the nonlinear LSTM-based GC. All of Sections 2, 3, 5, 6, and 7 are reused identically. Design Section 4 so the function signature is cleanly swappable:
