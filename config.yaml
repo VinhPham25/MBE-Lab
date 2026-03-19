@@ -365,7 +365,7 @@ stage_d_granger:
     # --------------------------------------------------------------------------
     var:
       order: 20            # model order (p) — both forward and backward in MATLAB
-      stationarity_check: true   # run ADF test before fitting; difference if needed
+      stationarity_check: false  # ADF+differencing disabled: matches MATLAB cca_pwcausal (no pre-check)
       adf_pvalue_threshold: 0.05 # non-stationary if p > threshold
 
     # --------------------------------------------------------------------------
