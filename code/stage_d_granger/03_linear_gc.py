@@ -10,7 +10,7 @@ Section 4 task coverage (LINEAR_GC_PROGRESS.md)
 4.1 — VAR model fitting                    (fit_var_model)
 4.2 — Frequency-domain GC spectrum         (compute_gc_spectrum,
                                             compute_gc_spectrum_bivariate)
-4.3 — Pairwise conditional GC entry point  (compute_pairwise_conditional_gc)
+4.3 — Pairwise GC entry point              (compute_pairwise_gc)
 4.4 — Sliding window loop                  (compute_windowed_gc)
 4.5 — Frequency band averaging             (average_gc_over_band)
 
@@ -22,8 +22,7 @@ MATLAB reference
 
 Python equivalent (bivariate, matching MATLAB)::
 
-    GW = compute_gc_spectrum_bivariate(Y_windowed, order=20,
-                                       freq=freq, sfreq=25.0)
+    GW = compute_pairwise_gc(Y_windowed, order=20, freq=freq, sfreq=25.0)
 
 How cca_pwcausal actually works
 --------------------------------
@@ -44,10 +43,11 @@ function (Ding, Chen & Bressler 2006).  For each unique pair (i, j) it:
 
        GW[src, tgt, f] = log( S2_tgt(f) / (S2_tgt(f) − |H2_f[tgt,src]|² · e_src_given_tgt) )
 
-This is **bivariate (unconditional) GC** — it does NOT condition on the
-remaining n−2 channels.  The "pairwise conditional" name in the GCCA
-documentation refers only to accounting for the instantaneous innovation
-cross-correlation via the Schur complement, not to conditioning on other ROIs.
+This is **bivariate unconditional GC** — it does NOT condition on the
+remaining n−2 channels.  The Schur complement accounts for instantaneous
+innovation cross-correlation within each pair; this is a weaker but
+numerically stable form of conditioning compared to full multivariate
+conditioning on all other ROIs.
 
 Sign / index convention
 -----------------------
@@ -645,7 +645,88 @@ def compute_gc_spectrum_bivariate(
 
 
 # ===========================================================================
-# Quick standalone validation — Section 4.1.3 + 4.2.3
+# Section 4.3 — Pairwise GC Entry Point (mirror of cca_pwcausal)
+# ===========================================================================
+
+def compute_pairwise_gc(
+    Y_window: np.ndarray,
+    order: int = 20,
+    freq: np.ndarray = None,
+    sfreq: float = 25.0,
+    trend: str = "c",
+) -> np.ndarray:
+    """
+    Compute bivariate unconditional spectral GC for one window.
+
+    This is the public entry-point mirroring MATLAB's::
+
+        [GW,COH,pp,waut,cons] = cca_pwcausal(Y_windowed, 1, NL, 20, 20, freq, 1)
+
+    Internally delegates to ``compute_gc_spectrum_bivariate()``, which fits a
+    separate bivariate VAR(order) for each unique channel pair and applies the
+    bsmart Schur-complement spectral GC formula.
+
+    This function computes **bivariate unconditional GC** — it does not
+    condition on the remaining n−2 channels.  The Schur-complement term
+    ``e_src = Σ2[src,src] − Σ2[src,tgt]² / Σ2[tgt,tgt]``
+    accounts for instantaneous noise cross-correlation within each pair;
+    this is a weaker but numerically stable form of conditioning compared to
+    full multivariate conditioning on all other ROIs.
+
+    Parameters
+    ----------
+    Y_window : np.ndarray, shape (n_rois, T)
+        ROI signal matrix for one 1351-sample window.  NaN rows (e.g. for
+        subjects R11 or R2 with bad ROI channels) are handled gracefully —
+        the corresponding GW rows/columns remain 0.
+    order : int
+        VAR model order.  Default 20 (matches MATLAB reference).
+    freq : np.ndarray, shape (n_freqs,), optional
+        Frequency vector in Hz.  Default ``np.arange(0, 0.11, 0.01)`` → 11
+        points matching MATLAB ``freq = [0:0.01:0.1]``.
+    sfreq : float
+        Sampling frequency in Hz.  Default 25.0.
+    trend : str
+        Trend term for bivariate VAR fits.  Default ``"c"`` (constant).
+
+    Returns
+    -------
+    GW : np.ndarray, shape (n_rois, n_rois, n_freqs), dtype float64
+        Spectral GC matrix.  ``GW[src, tgt, f_idx]`` = GC from ROI src to ROI
+        tgt at ``freq[f_idx]`` Hz.  Diagonal is 0, off-diagonal values ≥ 0.
+
+    Notes
+    -----
+    **Sign convention:** Python uses source-major ordering (``GW[src, tgt]``),
+    which is the transpose of MATLAB's target-major ``GW_MATLAB(tgt, src)``.
+
+    **NaN handling:** Any pair involving a NaN channel is skipped and both
+    ``GW[src, tgt]`` and ``GW[tgt, src]`` remain 0 for all frequencies.
+    Downstream band-averaging and diagonal-removal handle this cleanly.
+    """
+    if freq is None:
+        freq = np.arange(0.0, 0.11, 0.01)
+
+    GW = compute_gc_spectrum_bivariate(
+        Y_window,
+        order=order,
+        freq=freq,
+        sfreq=sfreq,
+        trend=trend,
+    )
+
+    logger.info(
+        "compute_pairwise_gc: GW shape=%s  off-diag range=[%.4f, %.4f]",
+        GW.shape,
+        float(np.min(GW[GW > 0])) if np.any(GW > 0) else 0.0,
+        float(np.max(GW)),
+    )
+
+    return GW
+
+
+# ===========================================================================
+# Quick standalone validation — Sections 4.1.3, 4.2.3, 4.3
 # Run as: python code/stage_d_granger/03_linear_gc.py
 # ===========================================================================
 
@@ -919,4 +1000,62 @@ if __name__ == "__main__":
     print(f"    var_result.resid std               : {np.std(var_result.resid, axis=0)}")
 
     print("\n✓ All 4.2 assertions passed (both diagonal-Σ multivariate and bsmart bivariate).")
-    print("✓ Sections 4.1 + 4.2 validation complete.\n")
+
+    # ===================================================================
+    # Section 4.3 — compute_pairwise_gc Validation
+    # ===================================================================
+    print("\n" + "="*65)
+    print("Section 4.3 — compute_pairwise_gc Validation")
+    print("="*65)
+
+    print(f"\n[7/8] Calling compute_pairwise_gc on Window 1...")
+    GW_entry = compute_pairwise_gc(
+        Y_window, order=var_order, freq=freq, sfreq=sfreq_val
+    )
+
+    print(f"\n  Entry-point GW summary:")
+    print(f"  GW_entry.shape         : {GW_entry.shape}  (expected: ({n_rois}, {n_rois}, 11))")
+    print(f"  Diagonal all-zero      : {np.all(GW_entry[np.eye(n_rois, dtype=bool)] == 0.0)}")
+    print(f"  All values ≥ 0         : {np.all(GW_entry >= 0.0)}")
+    print(f"  GW_entry matches GW_biv: {np.allclose(GW_entry, GW_biv)}")
+    print(f"  GW_entry off-diag mean : {GW_entry[~np.eye(n_rois, dtype=bool)].mean():.4f}")
+    print(f"  GW_entry off-diag max  : {GW_entry.max():.4f}")
+
+    # 4.3 assertions
+    assert GW_entry.shape == (n_rois, n_rois, 11), \
+        f"FAIL: GW shape {GW_entry.shape} != ({n_rois}, {n_rois}, 11)"
+    assert np.all(GW_entry[np.eye(n_rois, dtype=bool)] == 0.0), \
+        "FAIL: diagonal contains non-zero values"
+    assert np.all(GW_entry >= 0.0), \
+        f"FAIL: GW has negative values"
+    assert np.allclose(GW_entry, GW_biv), \
+        "FAIL: entry-point output differs from compute_gc_spectrum_bivariate"
+
+    # ---------------------------------------------------------------
+    # 4.3 — NaN-channel handling check (simulates R11/R2 padding)
+    # ---------------------------------------------------------------
+    print(f"\n[8/8] NaN-channel handling (simulates R11/R2 — pad LM1+SMA with NaN)...")
+    Y_nan = Y_window.copy().astype(float)
+    Y_nan[3, :] = np.nan   # LM1 → NaN (as in R11)
+    Y_nan[4, :] = np.nan   # SMA → NaN (as in R11)
+    GW_nan = compute_pairwise_gc(
+        Y_nan, order=var_order, freq=freq, sfreq=sfreq_val
+    )
+
+    # Pairs involving NaN ROIs (3=LM1, 4=SMA) must be all-zero
+    nan_rois = [3, 4]
+    non_nan_rois = [0, 1, 2]
+    nan_rows_zero = np.all(GW_nan[nan_rois, :, :] == 0.0)
+    nan_cols_zero = np.all(GW_nan[:, nan_rois, :] == 0.0)
+    valid_nonzero = np.any(GW_nan[np.ix_(non_nan_rois, non_nan_rois)] > 0)
+    print(f"  GW_nan[LM1+SMA rows] all-zero  : {nan_rows_zero}")
+    print(f"  GW_nan[LM1+SMA cols] all-zero  : {nan_cols_zero}")
+    print(f"  GW_nan[LPFC/CPFC/RPFC] has GC  : {valid_nonzero}")
+    print(f"  LPFC→CPFC mean (valid pair)    : {GW_nan[0,1,:].mean():.4f}")
+
+    assert nan_rows_zero, "FAIL: NaN ROI rows contain non-zero GC"
+    assert nan_cols_zero, "FAIL: NaN ROI cols contain non-zero GC"
+    assert valid_nonzero, "FAIL: valid ROI pairs all-zero even without NaN channels"
+
+    print("\n✓ All 4.3 assertions passed.")
+    print("✓ Sections 4.1 + 4.2 + 4.3 validation complete.\n")

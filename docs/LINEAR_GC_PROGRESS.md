@@ -13,6 +13,8 @@
 
 Implement the frequency-domain pairwise conditional Granger Causality (GC) pipeline in Python as an extension of the existing ASTaUND preprocessing pipeline, operating on the preprocessed `.fif` files produced by Stage B. The GC computation methodology is adapted from `GC_freq_main_TRGC_NovExp.m` (MATLAB reference), but the ROI definitions, channel mappings, and data loading are carried forward directly from the validated Stage C pipeline (`build_region_map_5()` in `code/stage_c_validation/01_hrf_extraction.py`, which now returns abbreviated keys `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`). The output is a per-subject, per-trial, per-window connectivity matrix (subjects × 20 directed connections × windows) that serves as the validated linear baseline before implementing the nonlinear LSTM-based GC in Phase 2.
 
+> **Terminology note:** The GCCA toolbox calls its function "pairwise conditional GC," but inspection of the source code shows it computes **bivariate unconditional GC** — fitting a separate 2-variable VAR for each pair without conditioning on the other n−2 channels. The Schur complement of the 2×2 noise covariance accounts for instantaneous innovation cross-correlation within each pair; this is a weaker but numerically stable form of conditioning. This pipeline uses the same bivariate approach, accessed through `compute_pairwise_gc()`.
+
 > **ROI Note:** This implementation uses the 5 anatomical regions validated in Stage C, which differ from the MATLAB reference script's ROIs. The MATLAB script used `[LPFC, RPFC, LPMC, RPMC, SMA]` (bilateral motor cortex). This pipeline uses `[LPFC, CPFC, RPFC, LM1, SMA]` — reflecting the actual optode coverage of the ASTaUND TechEn CW6 cap and the already-validated Stage C channel assignments. These are the abbreviated key names returned by `build_region_map_5()` as of the Stage D update. This is an intentional anatomical choice, not a deviation. Any comparison of GC results against the MATLAB paper must account for this difference.
 
 ---
@@ -58,7 +60,7 @@ SMA→LPFC,  SMA→CPFC,  SMA→RPFC,  SMA→LM1
 ### Python Equivalents of MATLAB Functions
 | MATLAB | Python |
 |---|---|
-| `cca_pwcausal()` | Custom `compute_pairwise_conditional_gc()` using `statsmodels.tsa.VAR` |
+| `cca_pwcausal()` | `compute_pairwise_gc()` — bivariate unconditional GC using `statsmodels.tsa.VAR` per pair |
 | `swtest()` | `scipy.stats.shapiro()` |
 | `anova1()` | `scipy.stats.f_oneway()` |
 | `mafdr()` | `statsmodels.stats.multitest.fdrcorrection()` |
@@ -138,7 +140,7 @@ This mirrors the MATLAB `st = find(da.s)` trigger detection and `Y = Data_Reg(:,
 
 ### SECTION 4: CORE GC COMPUTATION — `cca_pwcausal` EQUIVALENT
 
-This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, freq, 1)` computes pairwise-conditional, frequency-domain Granger Causality using a VAR(20) model. The function returns `GW` (5×5×length(freq)) — the GC spectrum matrix.
+This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, freq, 1)` computes bivariate unconditional, frequency-domain Granger Causality using per-pair VAR(20) models. The function returns `GW` (5×5×length(freq)) — the GC spectrum matrix. Despite the "pairwise conditional" name in the GCCA documentation, the actual implementation fits bivariate models per pair (see Reference Notes for full explanation).
 
 #### 4.1 VAR Model Fitting
 - [x] **4.1.1** (2026-03-18) Implemented `fit_var_model(Y, order=20, stationarity_check, adf_pvalue_threshold, trend)` in `03_linear_gc.py`. Takes `Y` of shape `(n_rois, T)`, transposes to `(T, n_rois)` for statsmodels, fits `VAR(order)` using `model.fit(maxlags=order, ic=None, trend='c')` — `ic=None` forces exact order, `trend='c'` includes a constant matching GCCA toolbox convention. Returns `(VARResults, differenced_rois_list)`. Key attributes used downstream: `coefs` (order × n_rois × n_rois), `sigma_u` (n_rois × n_rois), `resid` ((T−order) × n_rois), `.aic`, `.bic`.
@@ -174,11 +176,11 @@ This is the central translation task. MATLAB's `cca_pwcausal(Y, 1, NL, 20, 20, f
   A1 Trial 1 Window 1 bivariate results: `GW range [0.000, 5.358]`, off-diag mean = 0.936. Side-by-side comparison plot saved to `visualizations/sub-A1_Tr1_Win1_gc_spectrum_comparison.png`. The bivariate values are systematically higher because the 2×2 Σ2 per pair is much better conditioned than the full 5×5 Σ, yielding a larger ratio of total to intrinsic power. Directional asymmetries are preserved (LPFC→LM1 ~2.25 vs LPFC→RPFC ~0.29; CPFC→SMA ~3.4 vs SMA→CPFC ~0.65).
 
 #### 4.3 Pairwise Conditional GC Entry Point
-- [ ] **4.3.1** Implement `compute_pairwise_conditional_gc(Y_window, order=20, freq=None, sfreq=25) -> np.ndarray` in `03_linear_gc.py` as the single entry-point function mirroring `cca_pwcausal(Y_windowed, 1, NL, 20, 20, freq, 1)`. It calls `compute_gc_spectrum_bivariate(Y_window, order, freq, sfreq)` directly and returns `GW` of shape `(n_rois, n_rois, len(freq))`. Set default `freq = np.arange(0, 0.11, 0.01)`. Note: the multivariate `fit_var_model` + `compute_gc_spectrum` path is no longer called from this function; `compute_gc_spectrum_bivariate` does its own internal bivariate fitting per pair.
-- [ ] **4.3.2** Document in a docstring that this implements bivariate unconditional GC (not full pairwise-conditional), matching the actual `cca_pwcausal`/bsmart behavior. Include a note that the Schur complement handles instantaneous innovation cross-correlation, and that the function does not condition on the remaining n−2 channels.
+- [x] **4.3.1** (2026-03-18) Implemented `compute_pairwise_gc(Y_window, order=20, freq=None, sfreq=25.0, trend="c") -> np.ndarray` in `03_linear_gc.py`. Delegates directly to `compute_gc_spectrum_bivariate()`. Default `freq = np.arange(0, 0.11, 0.01)` (11 points). Validated on A1 Trial 1 Window 1: `GW.shape == (5, 5, 11)` ✓, output identical to `compute_gc_spectrum_bivariate` ✓, off-diag mean = 0.9362, max = 5.358.
+- [x] **4.3.2** (2026-03-18) NaN-channel handling validated: simulated R11 (LM1 + SMA padded with NaN) — all pairs involving NaN ROIs produce GW = 0, valid LPFC/CPFC/RPFC pairs retain correct GC values (`LPFC→CPFC mean = 2.16` unchanged). Docstring documents bivariate unconditional GC; notes the Schur complement as a weaker but numerically stable form of conditioning (not full multivariate conditioning on all other ROIs).
 
 #### 4.4 Sliding Window Loop
-- [ ] **4.4.1** Implement `compute_windowed_gc(Y_trial, window_size=1350, stride=1350, order=20, freq=None, sfreq=25) -> dict` in `03_linear_gc.py`: slides over `Y_trial` (5×T) from `w = window_size` to `T` in steps of `stride`; calls `compute_pairwise_conditional_gc()` per window; returns dict `{'Win_1': GW_array, 'Win_2': GW_array, ...}` — mirrors MATLAB `for w = window_size+1:sT:LY` loop
+- [ ] **4.4.1** Implement `compute_windowed_gc(Y_trial, window_size=1350, stride=1350, order=20, freq=None, sfreq=25) -> dict` in `03_linear_gc.py`: slides over `Y_trial` (5×T) from `w = window_size` to `T` in steps of `stride`; calls `compute_pairwise_gc()` per window; returns dict `{'Win_1': GW_array, 'Win_2': GW_array, ...}` — mirrors MATLAB `for w = window_size+1:sT:LY` loop
 - [ ] **4.4.2** Add minimum-length guard: skip a window if `Y_windowed` contains NaN values in any ROI channel (can occur for subjects with bad ROI channels); log skipped windows with reason
 
 #### 4.5 Frequency Band Averaging
@@ -278,15 +280,15 @@ Directly mirrors the MATLAB statistical sections (normality, H0, H1, H4, HIV).
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 35
-- **Completed:** 19
+- **Completed:** 21
 - **In Progress:** 0
-- **Remaining:** 16
+- **Remaining:** 14
 
 ### By Section
 - **Section 1 (Setup):** 3/3 ✅
 - **Section 2 (ROI Extraction):** 6/6 ✅
 - **Section 3 (Trial Segmentation):** 3/3 ✅
-- **Section 4 (Core GC):** 7/13 (4.1 + 4.2 complete including bivariate implementation; 4.3–4.5 pending)
+- **Section 4 (Core GC):** 9/13 (4.1–4.3 complete; 4.4–4.5 pending)
 - **Section 5 (Subject Pipeline):** 0/5
 - **Section 6 (Statistics):** 0/4
 - **Section 7 (Visualization):** 0/4
@@ -335,7 +337,7 @@ S_jj(f) = Σ_k  σ_kk · |H(f)[j,k]|²
 ```
 This is a stable dot product, exact for uncorrelated innovations. For the highly correlated innovations in fNIRS data, it measures each ROI's unique noise contribution to the target's spectrum. GC values with fix: range [0, 1.015], off-diag mean 0.266, with clear directional asymmetry (LPFC→CPFC ~35× stronger than reverse). Documented in code with a detailed comment.
 
-**Status:** Retained in `compute_gc_spectrum(var_result, ...)` for comparison. The bivariate approach in D5 is now the default for `compute_pairwise_conditional_gc()`.
+**Status:** Retained in `compute_gc_spectrum(var_result, ...)` for comparison. The bivariate approach in D5 is now the default used by `compute_pairwise_gc()`.
 
 #### D5 — cca_pwcausal uses bivariate VAR per pair, not multivariate (4.2.4) — CRITICAL CORRECTION
 
@@ -347,13 +349,13 @@ After verifying the `cca_pwcausal`/bsmart source code (2026-03-18), the original
 
 **Implementation:** `compute_gc_spectrum_bivariate(Y, order, freq, sfreq)` — takes raw `Y` (n_rois × T), fits bivariate VAR for each unique pair (n_rois*(n_rois-1)/2 = 10 models for 5 ROIs), returns `GW` (n_rois × n_rois × n_freqs). NaN channels (R11/R2) are automatically skipped.
 
-**Impact on 4.3:** `compute_pairwise_conditional_gc()` will call `compute_gc_spectrum_bivariate()` directly instead of `compute_gc_spectrum()`.
+**Impact on 4.3:** `compute_pairwise_gc()` calls `compute_gc_spectrum_bivariate()` directly.
 
 ### Connection Between Linear and Nonlinear GC
-The Section 4 `compute_pairwise_conditional_gc()` function is the **only component replaced** when moving to the nonlinear LSTM-based GC. All of Sections 2, 3, 5, 6, and 7 are reused identically. Design Section 4 so the function signature is cleanly swappable:
+The Section 4 `compute_pairwise_gc()` function is the **only component replaced** when moving to the nonlinear LSTM-based GC. All of Sections 2, 3, 5, 6, and 7 are reused identically. Design Section 4 so the function signature is cleanly swappable:
 ```python
-# Linear
-gc_matrix = compute_pairwise_conditional_gc(Y_window, order=20, ...)
+# Linear (bivariate unconditional GC)
+gc_matrix = compute_pairwise_gc(Y_window, order=20, ...)
 
 # Nonlinear (Phase 2 — same interface)
 gc_matrix = compute_lstm_gc(Y_window, model=trained_lstm, ...)
