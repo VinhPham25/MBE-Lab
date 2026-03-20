@@ -345,6 +345,28 @@ MATLAB conditions `if n >= 5` (Expert) and `if n == 6` (Novice) translate to "in
   - Novice: strongest arrows SMA→LM1, LPFC→LM1, SMA→LPFC, CPFC→LM1 — motor-dominant with SMA driving back to PFC
   - Key difference: Expert shows top-down PFC→motor dominance; Novice shows more bidirectional SMA↔PFC coupling
 
+**Averaged visualizations (justified by Section 6 statistical results)**
+
+Following the HIV and H0 results (both groups stable across trials and within trials), three additional averaged plots were added to `06_gc_visualization.py` using `compute_subject_averaged_gc()`:
+
+- **`group_gc_comparison_averaged.png`** — bar chart of Expert vs Novice group mean ± SEM using per-subject averages across all trials × windows. This is the statistically correct estimator (subject = unit of analysis).
+
+- **`group_gc_topology_averaged.png`** + per-group pngs — topology diagram using the same subject-level averages.
+
+- **`group_connectivity_matrix_averaged.png`** — side-by-side 5×5 group-mean heatmaps plus an Expert−Novice difference panel (RdBu_r colormap: blue = Novice stronger, red = Expert stronger).
+
+**Averaged group findings (neurophysiologically interpretable):**
+
+| Rank | Expert top connections | Novice top connections |
+|------|------------------------|------------------------|
+| 1 | RPFC→CPFC (1.36 ± 0.60) | **LPFC→LM1 (1.76 ± 0.47)** |
+| 2 | LPFC→CPFC (1.04 ± 0.36) | **CPFC→LM1 (1.49 ± 0.42)** |
+| 3 | RPFC→LPFC (0.93 ± 0.49) | **RPFC→LM1 (1.44 ± 0.45)** |
+| 4 | LM1→CPFC  (0.86 ± 0.47) | SMA→LM1  (1.14 ± 0.49) |
+| 5 | CPFC→LPFC (0.81 ± 0.24) | LPFC→SMA (0.72 ± 0.43) |
+
+> **Key interpretation:** Expert subjects show dominant **intra-PFC** causal connectivity (RPFC→CPFC, LPFC→CPFC, CPFC→LPFC) — consistent with consolidated executive control where PFC regions coordinate internally. Novice subjects show dominant **PFC→LM1** causal connectivity across all three PFC subregions — consistent with effortful top-down motor commands requiring explicit prefrontal guidance for a task not yet automatised. The Expert pattern reflects more efficient, distributed motor execution with reduced overt PFC-to-motor drive.
+
 ---
 
 ### SECTION 8: INTEGRATION AND BATCH RUNNER
@@ -388,7 +410,7 @@ MATLAB conditions `if n >= 5` (Expert) and `if n == 6` (Novice) translate to "in
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 35
-- **Completed:** 42
+- **Completed:** 45
 - **In Progress:** 0
 - **Remaining:** 2
 

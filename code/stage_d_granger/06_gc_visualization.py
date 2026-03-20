@@ -1,14 +1,34 @@
 """
 Stage D — Step D7: Visualization for Linear GC Pipeline
 
-Implements all Section 7 visualizations from LINEAR_GC_PROGRESS.md.
+Implements all Section 7 visualizations from LINEAR_GC_PROGRESS.md, plus
+trial-and-window-averaged group summary plots justified by the statistical
+tests in Section 6.
 
 Section 7 task coverage
 -----------------------
-7.1.1 — plot_connectivity_matrix()      per-subject 5×5 GC heatmap
-7.1.2 — plot_connectivity_evolution()   A1 multi-panel across windows of Tr_1
-7.2.1 — plot_group_gc_comparison()      Expert vs Novice bar chart with FDR markers
-7.2.2 — plot_group_topology()           Brain-topology directed-arrow diagrams
+7.1.1 — plot_connectivity_matrix()               per-subject 5×5 GC heatmap
+7.1.2 — plot_connectivity_evolution()            A1 multi-panel across windows of Tr_1
+7.2.1 — plot_group_gc_comparison()               Expert vs Novice bar chart (single window)
+7.2.2 — plot_group_topology()                    Brain-topology diagram (single window)
+
+Statistical averaging (justified by Section 6 results)
+-------------------------------------------------------
+HIV (across-trial stability): 0 FDR-significant connections for both groups
+  → safe to average across trials for Expert and Novice.
+H0 (within-trial stability): 0 FDR-significant connections for Novice
+  (Expert untestable — only 1 valid window/trial)
+  → safe to average across windows for Novice; Expert has ≤1 window/trial
+  so the average is essentially using all available windows regardless.
+
+Conclusion: for both groups it is valid to compute a **per-subject mean**
+across all their trials × windows, then use those per-subject averages as
+the unit of analysis for group comparison plots.  This is implemented in:
+
+  compute_subject_averaged_gc()            per-subject trial×window average
+  plot_group_gc_comparison_averaged()      bar chart using subject averages
+  plot_group_topology_averaged()           topology diagram using subject averages
+  plot_group_connectivity_matrix_averaged() side-by-side 5×5 group-mean heatmaps
 
 Conventions
 -----------
@@ -17,13 +37,13 @@ Conventions
   20-vector → 5×5 matrix: insert zeros at diagonal indices [0,6,12,18,24]
   and reshape to (5,5).
 
-Output paths
-------------
-  visualizations/sub-{id}_Tr{n}_Win{n}_connectivity.png
-  visualizations/sub-A1_Tr1_connectivity_evolution.png
-  visualizations/group_gc_comparison_Tr1_Win1.png
-  visualizations/group_gc_topology_Expert.png
-  visualizations/group_gc_topology_Novice.png
+Output paths (averaged plots)
+------------------------------
+  visualizations/group_gc_comparison_averaged.png
+  visualizations/group_gc_topology_averaged.png
+  visualizations/group_gc_topology_Expert_averaged.png
+  visualizations/group_gc_topology_Novice_averaged.png
+  visualizations/group_connectivity_matrix_averaged.png
 """
 
 from __future__ import annotations
@@ -647,6 +667,506 @@ def plot_group_topology(
 
 
 # ---------------------------------------------------------------------------
+# Subject lists (mirrors config.yaml stage_d_granger.linear_gc.subjects)
+# ---------------------------------------------------------------------------
+
+_EXPERT_SUBJECTS = ["A1", "A2", "R7", "R8", "R9", "R11", "R12"]
+_NOVICE_SUBJECTS = ["R1", "R2", "R3", "R4", "R5", "R6"]
+
+
+# ---------------------------------------------------------------------------
+# Subject-level averaging (justified by HIV + H0 statistical results)
+# ---------------------------------------------------------------------------
+
+def compute_subject_averaged_gc(study: str = "expert_novice") -> dict[str, np.ndarray]:
+    """
+    Compute each subject's mean GC vector averaged across ALL trials × windows.
+
+    Statistical justification
+    -------------------------
+    * HIV (across-trial): 0 FDR-significant connections for both groups
+      → averaging across trials is valid.
+    * H0 (within-trial): 0 FDR-significant connections for Novice; Expert
+      untestable (only 1 window/trial on average) → averaging across windows
+      is valid.  Expert subjects have so few windows that averaging is the
+      only sensible option regardless.
+
+    Each subject is treated as the unit of analysis.  The per-subject average
+    is computed by stacking all their (20, n_wins_k) arrays across trials into
+    a single (20, total_wins) matrix and taking np.nanmean across axis=1.
+
+    Parameters
+    ----------
+    study : str  (unused beyond path resolution; kept for API consistency)
+
+    Returns
+    -------
+    subject_avgs : dict[str, np.ndarray]
+        Keys are subject IDs (e.g. 'A1'), values are shape-(20,) arrays of
+        trial-and-window-averaged GC connectivity for that subject.
+    """
+    gc_dir = get_gc_output_dir("gc_connectivity")
+    all_subjects = _EXPERT_SUBJECTS + _NOVICE_SUBJECTS
+    subject_avgs: dict[str, np.ndarray] = {}
+
+    for sid in all_subjects:
+        npz_path = gc_dir / f"sub-{sid}_gc_connectivity.npz"
+        if not npz_path.exists():
+            logger.warning("Subject %s: .npz not found, skipping", sid)
+            continue
+        data = np.load(npz_path, allow_pickle=True)
+        trial_ids = data["trial_ids"]
+
+        all_windows: list[np.ndarray] = []
+        for tid in trial_ids:
+            key = f"{tid}_connectivity"
+            if key in data:
+                arr = data[key]   # (20, n_wins)
+                all_windows.append(arr)
+
+        if not all_windows:
+            logger.warning("Subject %s: no connectivity data found", sid)
+            continue
+
+        stacked = np.hstack(all_windows)                    # (20, total_wins)
+        subject_avgs[sid] = np.nanmean(stacked, axis=1)    # (20,)
+        logger.debug(
+            "Subject %s: averaged %d windows across %d trials",
+            sid, stacked.shape[1], len(trial_ids),
+        )
+
+    logger.info(
+        "Subject averages computed: %d subjects total (%d Expert, %d Novice)",
+        len(subject_avgs),
+        sum(1 for s in subject_avgs if s in _EXPERT_SUBJECTS),
+        sum(1 for s in subject_avgs if s in _NOVICE_SUBJECTS),
+    )
+    return subject_avgs
+
+
+def _group_stats_from_subject_avgs(
+    subject_avgs: dict[str, np.ndarray],
+    subject_list: list[str],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """
+    Compute group mean, SEM, and per-subject matrix from subject averages.
+
+    Returns
+    -------
+    group_mat   : np.ndarray  (n_subs, 20) — per-subject rows
+    group_mean  : np.ndarray  (20,)
+    group_sem   : np.ndarray  (20,)
+    n           : int  — number of subjects with valid data
+    """
+    rows = [subject_avgs[s] for s in subject_list if s in subject_avgs]
+    if not rows:
+        return np.empty((0, 20)), np.full(20, np.nan), np.full(20, np.nan), 0
+    group_mat = np.array(rows)           # (n_subs, 20)
+    n = group_mat.shape[0]
+    group_mean = np.nanmean(group_mat, axis=0)
+    group_sem  = np.nanstd(group_mat, axis=0, ddof=1) / np.sqrt(n)
+    return group_mat, group_mean, group_sem, n
+
+
+# ---------------------------------------------------------------------------
+# Averaged bar chart
+# ---------------------------------------------------------------------------
+
+def plot_group_gc_comparison_averaged(
+    conn_labels: list[str],
+    subject_avgs: Optional[dict[str, np.ndarray]] = None,
+    h1_df: Optional[pd.DataFrame] = None,
+    save: bool = True,
+) -> plt.Figure:
+    """
+    Bar chart comparing Expert vs Novice GC using per-subject trial×window averages.
+
+    Each bar height is the group mean of per-subject averages.  Error bars are
+    SEM across subjects.  This is the statistically appropriate estimator
+    because each subject is the independent unit of analysis.
+
+    Parameters
+    ----------
+    conn_labels  : list[str]  20 connection labels
+    subject_avgs : dict or None  — output of compute_subject_averaged_gc();
+                   computed on demand if None
+    h1_df        : pd.DataFrame or None  H1 results for FDR markers
+    save         : bool
+
+    Returns
+    -------
+    fig : plt.Figure
+    """
+    if subject_avgs is None:
+        subject_avgs = compute_subject_averaged_gc()
+
+    _, exp_mean, exp_sem, n_exp = _group_stats_from_subject_avgs(
+        subject_avgs, _EXPERT_SUBJECTS
+    )
+    _, nov_mean, nov_sem, n_nov = _group_stats_from_subject_avgs(
+        subject_avgs, _NOVICE_SUBJECTS
+    )
+
+    # FDR-significant connections: any (trial, window) with significance
+    sig_conns: set[str] = set()
+    if h1_df is not None:
+        sig_conns = set(h1_df.loc[h1_df["significant"] == True, "connection"].tolist())
+
+    n_conn = len(conn_labels)
+    x = np.arange(n_conn)
+    bar_w = 0.38
+
+    fig, ax = plt.subplots(figsize=(15, 5))
+
+    ax.bar(x - bar_w / 2, exp_mean, bar_w,
+           color=_EXPERT_COLOR, alpha=0.88, label=f"Expert (n={n_exp})",
+           yerr=exp_sem, capsize=3, error_kw={"elinewidth": 1.2})
+    ax.bar(x + bar_w / 2, nov_mean, bar_w,
+           color=_NOVICE_COLOR, alpha=0.88, label=f"Novice (n={n_nov})",
+           yerr=nov_sem, capsize=3, error_kw={"elinewidth": 1.2})
+
+    # Mark FDR-significant connections
+    y_max_all = float(np.nanmax(
+        np.concatenate([exp_mean + exp_sem, nov_mean + nov_sem])
+    ))
+    for i, lbl in enumerate(conn_labels):
+        if lbl in sig_conns:
+            y_star = max(exp_mean[i] + exp_sem[i], nov_mean[i] + nov_sem[i]) + 0.05 * y_max_all
+            ax.text(i, y_star, "*", ha="center", va="bottom",
+                    fontsize=14, fontweight="bold", color="#E74C3C")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(conn_labels, rotation=55, ha="right", fontsize=8)
+    ax.set_ylabel("GC magnitude (0.01–0.07 Hz)", fontsize=11)
+    ax.set_title(
+        "Expert vs. Novice GC Connectivity — All-Trial All-Window Average\n"
+        "(per-subject mean across all trials × windows;  * = any FDR-significant"
+        " trial/window, BH α=0.05)",
+        fontsize=11, fontweight="bold", pad=8,
+    )
+    ax.legend(fontsize=10, framealpha=0.9)
+    ax.set_ylim(bottom=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.yaxis.grid(True, alpha=0.35, linewidth=0.7)
+    ax.set_axisbelow(True)
+
+    fig.tight_layout()
+
+    if save:
+        vis_dir = get_gc_output_dir("visualizations")
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        out = vis_dir / "group_gc_comparison_averaged.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        logger.info("Saved %s", out.name)
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Averaged topology diagram
+# ---------------------------------------------------------------------------
+
+def plot_group_topology_averaged(
+    conn_labels: list[str],
+    subject_avgs: Optional[dict[str, np.ndarray]] = None,
+    threshold_pct: float = 40.0,
+    save: bool = True,
+) -> plt.Figure:
+    """
+    Brain-topology diagram using per-subject trial×window-averaged GC.
+
+    Same layout as plot_group_topology() but the GC values driving the arrow
+    weights come from the group mean of per-subject averages rather than a
+    single trial/window snapshot.
+
+    Parameters
+    ----------
+    conn_labels  : list[str]  20 connection labels
+    subject_avgs : dict or None  — output of compute_subject_averaged_gc()
+    threshold_pct: float  percentile threshold for displaying arrows (default 40)
+    save         : bool
+
+    Returns
+    -------
+    fig : plt.Figure
+    """
+    if subject_avgs is None:
+        subject_avgs = compute_subject_averaged_gc()
+
+    _, exp_mean, _, _ = _group_stats_from_subject_avgs(subject_avgs, _EXPERT_SUBJECTS)
+    _, nov_mean, _, _ = _group_stats_from_subject_avgs(subject_avgs, _NOVICE_SUBJECTS)
+
+    combined = np.concatenate([exp_mean, nov_mean])
+    gc_max = float(np.nanmax(combined)) if np.any(~np.isnan(combined)) else 1.0
+    gc_max = max(gc_max, 0.01)
+    threshold = float(np.nanpercentile(combined, threshold_pct))
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 7.5))
+
+    for ax, gc_mean, group_name, group_color in [
+        (axes[0], exp_mean, "Expert", _EXPERT_COLOR),
+        (axes[1], nov_mean, "Novice", _NOVICE_COLOR),
+    ]:
+        ax.set_xlim(-1.1, 1.1)
+        ax.set_ylim(-0.5, 1.25)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        head_circle = plt.Circle((0, 0.35), 1.0, fill=False, ec="#CCCCCC",
+                                  lw=2.0, zorder=0)
+        ax.add_patch(head_circle)
+        ax.plot([0], [1.36], "^", ms=8, color="#CCCCCC", zorder=1)
+
+        gc_mat = _vec20_to_mat5(gc_mean)
+        arrow_cmap = plt.get_cmap(_CMAP_TOPO)
+
+        for src_idx, src_roi in enumerate(ROI_NAMES):
+            for tgt_idx, tgt_roi in enumerate(ROI_NAMES):
+                if src_idx == tgt_idx:
+                    continue
+                w = gc_mat[src_idx, tgt_idx]
+                if w < threshold or np.isnan(w):
+                    continue
+                norm_w = w / gc_max
+                rgba = arrow_cmap(0.3 + 0.7 * norm_w)
+                _draw_curved_arrow(
+                    ax,
+                    src_xy=_ROI_POSITIONS[src_roi],
+                    tgt_xy=_ROI_POSITIONS[tgt_roi],
+                    weight=norm_w,
+                    color=rgba,
+                    alpha=0.85,
+                    lw_max=5.5,
+                    node_radius=0.09,
+                )
+
+        for roi, (px, py) in _ROI_POSITIONS.items():
+            circle = plt.Circle((px, py), 0.09, color=group_color,
+                                  zorder=5, alpha=0.95, ec="white", lw=1.8)
+            ax.add_patch(circle)
+            ax.text(px, py, roi, ha="center", va="center",
+                    fontsize=8.5, fontweight="bold", color="white", zorder=6)
+
+        n_shown = int(np.sum((gc_mean >= threshold) & ~np.isnan(gc_mean)))
+        ax.set_title(
+            f"{group_name}  [All trials × windows averaged]\n"
+            f"{n_shown}/20 connections shown (≥{threshold_pct:.0f}th pctl)",
+            fontsize=11, fontweight="bold", color=group_color, pad=10,
+        )
+
+    # Shared colorbar
+    sm = ScalarMappable(
+        cmap=plt.get_cmap(_CMAP_TOPO),
+        norm=Normalize(vmin=0.3 * gc_max, vmax=gc_max),
+    )
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes, fraction=0.025, pad=0.03, shrink=0.55)
+    cbar.set_label("GC magnitude (0.01–0.07 Hz, trial×window avg)", fontsize=9)
+
+    fig.suptitle(
+        "Group GC Connectivity Topology — All-Trial All-Window Average\n"
+        "Nodes: anatomical ROIs  |  Arrows: directed causal influence  |  "
+        "Arrow weight ∝ GC magnitude",
+        fontsize=11, y=1.00,
+    )
+
+    if save:
+        vis_dir = get_gc_output_dir("visualizations")
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        out = vis_dir / "group_gc_topology_averaged.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        logger.info("Saved %s", out.name)
+
+        # Individual Expert / Novice topology figures
+        for gc_mean, g in [(exp_mean, "Expert"), (nov_mean, "Novice")]:
+            group_color = _EXPERT_COLOR if g == "Expert" else _NOVICE_COLOR
+            fig_s, ax_s = plt.subplots(figsize=(7, 7.5))
+            ax_s.set_xlim(-1.1, 1.1)
+            ax_s.set_ylim(-0.5, 1.25)
+            ax_s.set_aspect("equal")
+            ax_s.axis("off")
+
+            head_c = plt.Circle((0, 0.35), 1.0, fill=False, ec="#CCCCCC",
+                                  lw=2.0, zorder=0)
+            ax_s.add_patch(head_c)
+            ax_s.plot([0], [1.36], "^", ms=8, color="#CCCCCC", zorder=1)
+
+            gc_mat = _vec20_to_mat5(gc_mean)
+            arrow_cmap = plt.get_cmap(_CMAP_TOPO)
+
+            for src_idx, src_roi in enumerate(ROI_NAMES):
+                for tgt_idx, tgt_roi in enumerate(ROI_NAMES):
+                    if src_idx == tgt_idx:
+                        continue
+                    w = gc_mat[src_idx, tgt_idx]
+                    if w < threshold or np.isnan(w):
+                        continue
+                    norm_w = w / gc_max
+                    rgba = arrow_cmap(0.3 + 0.7 * norm_w)
+                    _draw_curved_arrow(
+                        ax_s,
+                        src_xy=_ROI_POSITIONS[src_roi],
+                        tgt_xy=_ROI_POSITIONS[tgt_roi],
+                        weight=norm_w,
+                        color=rgba,
+                        alpha=0.85,
+                        lw_max=5.5,
+                        node_radius=0.09,
+                    )
+
+            for roi, (px, py) in _ROI_POSITIONS.items():
+                c = plt.Circle((px, py), 0.09, color=group_color,
+                                zorder=5, alpha=0.95, ec="white", lw=1.8)
+                ax_s.add_patch(c)
+                ax_s.text(px, py, roi, ha="center", va="center",
+                          fontsize=8.5, fontweight="bold", color="white", zorder=6)
+
+            n_shown = int(np.sum((gc_mean >= threshold) & ~np.isnan(gc_mean)))
+            ax_s.set_title(
+                f"{g}  [All trials × windows averaged]\n"
+                f"{n_shown}/20 connections shown (≥{threshold_pct:.0f}th pctl)",
+                fontsize=12, fontweight="bold", color=group_color, pad=12,
+            )
+            cbar_s = fig_s.colorbar(
+                ScalarMappable(
+                    cmap=plt.get_cmap(_CMAP_TOPO),
+                    norm=Normalize(vmin=0.3 * gc_max, vmax=gc_max),
+                ),
+                ax=ax_s, fraction=0.04, pad=0.02, shrink=0.6,
+            )
+            cbar_s.set_label("GC magnitude", fontsize=9)
+            fig_s.tight_layout()
+            out_s = vis_dir / f"group_gc_topology_{g}_averaged.png"
+            fig_s.savefig(out_s, dpi=300, bbox_inches="tight")
+            plt.close(fig_s)
+            logger.info("Saved %s", out_s.name)
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Averaged group connectivity heatmap (side-by-side Expert and Novice)
+# ---------------------------------------------------------------------------
+
+def plot_group_connectivity_matrix_averaged(
+    conn_labels: list[str],
+    subject_avgs: Optional[dict[str, np.ndarray]] = None,
+    save: bool = True,
+) -> plt.Figure:
+    """
+    Side-by-side 5×5 heatmaps of group-mean GC using per-subject averages.
+
+    Left panel = Expert group mean, right panel = Novice group mean.
+    A third difference panel (Expert − Novice) highlights which connections
+    are stronger in each group.  Shared symmetric colormap for the difference.
+
+    Parameters
+    ----------
+    conn_labels  : list[str]  20 connection labels (for reference only)
+    subject_avgs : dict or None  — output of compute_subject_averaged_gc()
+    save         : bool
+
+    Returns
+    -------
+    fig : plt.Figure
+    """
+    if subject_avgs is None:
+        subject_avgs = compute_subject_averaged_gc()
+
+    _, exp_mean, exp_sem, n_exp = _group_stats_from_subject_avgs(
+        subject_avgs, _EXPERT_SUBJECTS
+    )
+    _, nov_mean, nov_sem, n_nov = _group_stats_from_subject_avgs(
+        subject_avgs, _NOVICE_SUBJECTS
+    )
+
+    exp_mat = _vec20_to_mat5(exp_mean)   # (5, 5)
+    nov_mat = _vec20_to_mat5(nov_mean)
+    diff_mat = exp_mat - nov_mat         # Expert − Novice (positive = Expert stronger)
+
+    # Mask diagonal
+    diag_mask = np.eye(5, dtype=bool)
+    exp_display  = np.where(diag_mask, np.nan, exp_mat)
+    nov_display  = np.where(diag_mask, np.nan, nov_mat)
+    diff_display = np.where(diag_mask, np.nan, diff_mat)
+
+    vmax_abs = float(np.nanmax([np.nanmax(np.abs(exp_display)),
+                                np.nanmax(np.abs(nov_display))]))
+    vmax_abs = max(vmax_abs, 0.01)
+    diff_abs = float(np.nanmax(np.abs(diff_display)))
+    diff_abs = max(diff_abs, 0.01)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 5.2))
+
+    panels = [
+        (axes[0], exp_display,  0, vmax_abs, _CMAP_HEATMAP, f"Expert (n={n_exp})",  _EXPERT_COLOR, "GC"),
+        (axes[1], nov_display,  0, vmax_abs, _CMAP_HEATMAP, f"Novice (n={n_nov})",  _NOVICE_COLOR, "GC"),
+        (axes[2], diff_display, -diff_abs, diff_abs, "RdBu_r",
+         "Expert − Novice", "#555555", "Δ GC"),
+    ]
+
+    ims = []
+    for ax, mat, vmin, vmax, cmap, title, title_color, cbar_lbl in panels:
+        im = ax.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
+        ims.append((im, ax, cbar_lbl))
+
+        for r in range(5):
+            for c in range(5):
+                if r == c:
+                    ax.add_patch(plt.Rectangle(
+                        (c - 0.5, r - 0.5), 1, 1,
+                        facecolor="#CCCCCC", edgecolor="none", zorder=2,
+                    ))
+                    ax.text(c, r, "—", ha="center", va="center",
+                            fontsize=8, color="#888888", zorder=3)
+                else:
+                    val = mat[r, c]
+                    if not np.isnan(val):
+                        # For difference panel use midpoint for text color
+                        if cmap == "RdBu_r":
+                            txt_color = "white" if abs(val) > 0.55 * diff_abs else "black"
+                        else:
+                            txt_color = "white" if val > 0.55 * vmax else "black"
+                        ax.text(c, r, f"{val:.2f}", ha="center", va="center",
+                                fontsize=7.5, color=txt_color, zorder=3, fontweight="bold")
+
+        ax.set_xticks(range(5))
+        ax.set_yticks(range(5))
+        ax.set_xticklabels(ROI_NAMES, fontsize=9)
+        ax.set_yticklabels(ROI_NAMES, fontsize=9)
+        ax.set_xlabel("Target ROI", fontsize=9)
+        ax.set_ylabel("Source ROI", fontsize=9)
+        ax.set_xticks(np.arange(-0.5, 5, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, 5, 1), minor=True)
+        ax.grid(which="minor", color="white", linewidth=1.2, zorder=4)
+        ax.tick_params(which="minor", length=0)
+        ax.set_title(title, fontsize=11, fontweight="bold",
+                     color=title_color, pad=6)
+
+    # Individual colorbars
+    for im, ax, lbl in ims:
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, shrink=0.85)
+        cb.set_label(lbl, fontsize=8)
+
+    fig.suptitle(
+        "Group-Mean GC Connectivity Matrix — All-Trial All-Window Average\n"
+        "(row = Source, col = Target;  diagonal masked)",
+        fontsize=11, y=1.02,
+    )
+    fig.tight_layout()
+
+    if save:
+        vis_dir = get_gc_output_dir("visualizations")
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        out = vis_dir / "group_connectivity_matrix_averaged.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        logger.info("Saved %s", out.name)
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
 
@@ -706,6 +1226,22 @@ def run_all_visualizations(study: str = "expert_novice") -> None:
         B_Exp, B_Nov, conn_labels,
         trial="Tr_1", window_idx=0,
     )
+    plt.close(fig)
+
+    # ---- Averaged plots (justified by H0/HIV statistical results) ----
+    logger.info("Computing per-subject trial×window averages (H0+HIV: 0 sig)...")
+    subject_avgs = compute_subject_averaged_gc(study)
+
+    logger.info("7.2.1avg — Generating averaged group GC comparison bar chart...")
+    fig = plot_group_gc_comparison_averaged(conn_labels, subject_avgs, h1_df)
+    plt.close(fig)
+
+    logger.info("7.2.2avg — Generating averaged brain topology diagram...")
+    fig = plot_group_topology_averaged(conn_labels, subject_avgs)
+    plt.close(fig)
+
+    logger.info("7.2.3avg — Generating averaged group connectivity heatmaps...")
+    fig = plot_group_connectivity_matrix_averaged(conn_labels, subject_avgs)
     plt.close(fig)
 
     # List all generated visualizations
