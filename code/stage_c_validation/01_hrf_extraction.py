@@ -158,13 +158,13 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
     """
     5-region classification matching Figure 3c (Kamat et al. 2023).
 
-    Regions
+    Regions (abbreviated keys used for GC pipeline compatibility)
     -------
-    Left Lateral PFC  : source S1
-    Central PFC       : source S2
-    Right Lateral PFC : source S3
-    Left Medial M1    : sources S4-S7
-    SMA               : source S8
+    LPFC : Left Lateral PFC  — source S1
+    CPFC : Central PFC       — source S2
+    RPFC : Right Lateral PFC — source S3
+    LM1  : Left Medial M1    — sources S4-S7
+    SMA  : Supplementary Motor Area — source S8
 
     Parameters
     ----------
@@ -173,15 +173,24 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
 
     Returns
     -------
-    region_map : dict  {region_name: [channel_base_names]}
-        Five keys matching Figure 3c panel labels.
+    region_map : dict  {abbreviated_region_name: [channel_base_names]}
+        Five keys: 'LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA'.
+        Channel names are base names without the ' hbo' suffix (e.g. 'S1_D1').
+        The Stage D GC pipeline (utils_gc.py) appends ' hbo' when selecting
+        channels from raw.ch_names.
+
+    Note
+    ----
+    03_hrf_visualization.py maintains its own local copy of this function
+    with full-name keys ('Left Lateral PFC', etc.) required for panel labels.
+    Only this canonical copy uses abbreviated keys.
     """
     region_map: dict[str, list[str]] = {
-        "Left Lateral PFC":  [],
-        "Central PFC":       [],
-        "Right Lateral PFC": [],
-        "Left Medial M1":    [],
-        "SMA":               [],
+        "LPFC": [],
+        "CPFC": [],
+        "RPFC": [],
+        "LM1":  [],
+        "SMA":  [],
     }
 
     for ch in raw.info["chs"]:
@@ -196,13 +205,13 @@ def build_region_map_5(raw: mne.io.BaseRaw) -> dict[str, list[str]]:
         base = ch_name.split(" ")[0]
         src_n = _source_number(ch_name)
         if src_n == 1:
-            region_map["Left Lateral PFC"].append(base)
+            region_map["LPFC"].append(base)
         elif src_n == 2:
-            region_map["Central PFC"].append(base)
+            region_map["CPFC"].append(base)
         elif src_n == 3:
-            region_map["Right Lateral PFC"].append(base)
+            region_map["RPFC"].append(base)
         elif src_n in M1_SOURCES:
-            region_map["Left Medial M1"].append(base)
+            region_map["LM1"].append(base)
         elif src_n in SMA_SOURCES:
             region_map["SMA"].append(base)
 
@@ -594,7 +603,7 @@ def run_hrf_extraction(
     print(f"\n[1.2] 5-region classification (Figure 3c — Kamat et al. 2023)")
     region_map_5 = build_region_map_5(raw)
     for region, bases in region_map_5.items():
-        print(f"  {region:20s}: {len(bases)} pairs")
+        print(f"  {region:6s}: {len(bases)} pairs")
 
     region_map_5_path = out_dir / f"{subject_id}_hrf_region_map_5.json"
     with open(region_map_5_path, "w") as f:
