@@ -31,3 +31,13 @@ patsy>=0.5.0
 # Optional but recommended
 ipython>=7.0.0
 jupyter>=1.0.0
+
+# Stage E: Transfer Entropy (added 2026-03-23)
+# pyswarms: PSO weight optimisation for Phase 3 bimodal fusion (optional; disabled by default)
+# Install note: if system Python is protected (macOS SIP), use:
+#   pip install pyswarms --target=.pip_deps/
+#   and add .pip_deps/ to sys.path in the TE scripts.
+pyswarms>=1.3.0
+# neuralgas: No matching PyPI package found (evaluated 2026-03-23).
+# Neural-Gas algorithm is implemented from scratch in code/stage_e_transfer_entropy/utils_te.py
+# (see code/stage_e_transfer_entropy/NG_LIBRARY_EVAL.md for evaluation record).

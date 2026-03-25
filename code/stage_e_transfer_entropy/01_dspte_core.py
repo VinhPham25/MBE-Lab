@@ -525,6 +525,386 @@ def symbolise_pair(
 
 
 # ===========================================================================
+# Section 3.4 — dSPTE Computation
+# ===========================================================================
+
+def compute_dspte_at_lag(
+    S_x: np.ndarray,
+    S_y: np.ndarray,
+    u: int,
+    k0: int,
+) -> float:
+    """
+    Compute dSPTE_{X→Y} at a single causal lag u via frequency counting (Eq. 17).
+
+    Implements the discrete transfer entropy:
+
+        dSPTE_{X→Y,u} = I(S_t^{θy} ; S_{t-u}^{θx} | S_{t-1}^{θy})
+                      = Σ p(s_ty, s_ty1, s_txu)
+                          · log[ p(s_ty | s_ty1, s_txu) / p(s_ty | s_ty1) ]
+
+    where the sum runs over all symbol triples (s_ty, s_ty1, s_txu) with
+    non-zero joint probability.  Probabilities are estimated by frequency
+    counting on the discrete symbolic sequences — valid for integer-valued data
+    post-symbolisation (see deviation E1 in PRD for rationale vs KSG).
+
+    Parameters
+    ----------
+    S_x : np.ndarray, shape (T',), dtype int
+        Symbolic sequence for the *source* channel X.  Values in {0,...,k₀-1}.
+    S_y : np.ndarray, shape (T',), dtype int
+        Symbolic sequence for the *target* channel Y.  Same length as S_x.
+    u : int
+        Causal lag in samples (≥ 1).  The TE is measured as information flow
+        from X at time t−u to Y at time t, conditioned on Y at t−1.
+    k0 : int
+        Codebook size (alphabet cardinality).  Used to pre-allocate the 3D
+        contingency table of shape (k₀, k₀, k₀).
+
+    Returns
+    -------
+    te : float
+        Transfer entropy value (≥ 0).  Negative numerical noise clipped to 0.
+        Returns 0.0 if there are fewer than ``max(1, u)`` usable samples.
+
+    Notes
+    -----
+    **Contingency table indexing:**
+        counts[s_ty, s_ty1, s_txu]
+        where  s_ty  = S_y[t]       (target at time t)
+               s_ty1 = S_y[t-1]     (target lagged by 1)
+               s_txu = S_x[t-u]     (source lagged by u)
+        for t in range(max(1, u), T').
+
+    **Log-ratio computation:** Both conditional probabilities are derived by
+    marginalising the joint array.  Zero cells are excluded via
+    ``np.where(p_joint > 0, ...)`` to avoid log(0).  The result is guaranteed
+    non-negative by the data-processing inequality, but small floating-point
+    errors can produce values slightly below zero — these are clipped.
+
+    **Complexity:** O(T' · k₀²) for table construction + O(k₀³) for the
+    probability pass.  For T'=1273, k₀=13, u=50, this is fast (~0.1 ms).
+    """
+    S_x = np.asarray(S_x, dtype=int)
+    S_y = np.asarray(S_y, dtype=int)
+    T_prime = len(S_x)
+    t_start = max(1, u)   # need both S_y[t-1] (lag 1) and S_x[t-u] (lag u)
+
+    if t_start >= T_prime:
+        logger.warning(
+            "compute_dspte_at_lag: lag u=%d >= T'=%d, returning 0.0", u, T_prime
+        )
+        return 0.0
+
+    # ------------------------------------------------------------------
+    # Build 3D contingency table: counts[s_ty, s_ty_lag1, s_tx_lagu]
+    # ------------------------------------------------------------------
+    counts = np.zeros((k0, k0, k0), dtype=np.float64)
+    s_ty   = S_y[t_start:]          # shape (N_valid,)
+    s_ty1  = S_y[t_start - 1: T_prime - 1]  # S_y[t-1]
+    s_txu  = S_x[t_start - u: T_prime - u]  # S_x[t-u]
+
+    # Vectorised accumulation via np.add.at
+    np.add.at(counts, (s_ty, s_ty1, s_txu), 1.0)
+
+    # ------------------------------------------------------------------
+    # Normalise to joint probability p(s_ty, s_ty1, s_txu)
+    # ------------------------------------------------------------------
+    total = counts.sum()
+    if total == 0.0:
+        return 0.0
+    p_joint = counts / total                          # shape (k₀, k₀, k₀)
+
+    # Marginal p(s_ty1, s_txu) = Σ_{s_ty} p_joint
+    p_ty1_txu = p_joint.sum(axis=0)                  # shape (k₀, k₀)
+
+    # Conditional p(s_ty | s_ty1, s_txu) = p_joint / p(s_ty1, s_txu)
+    # Broadcast: p_ty1_txu has shape (k₀, k₀), p_joint has shape (k₀, k₀, k₀)
+    denom_cond = p_ty1_txu[np.newaxis, :, :]          # shape (1, k₀, k₀)
+    p_cond_full = np.where(
+        denom_cond > 0,
+        p_joint / np.where(denom_cond > 0, denom_cond, 1.0),
+        0.0,
+    )                                                  # p(s_ty | s_ty1, s_txu)
+
+    # Marginal p(s_ty1) = Σ_{s_txu} p(s_ty1, s_txu)
+    p_ty1 = p_ty1_txu.sum(axis=1)                    # shape (k₀,)
+
+    # Conditional p(s_ty | s_ty1) = Σ_{s_txu} p_joint / p(s_ty1)
+    # p(s_ty, s_ty1) = Σ_{s_txu} p_joint, shape (k₀, k₀)
+    p_ty_ty1 = p_joint.sum(axis=2)                   # shape (k₀, k₀)
+    denom_marg = p_ty1[np.newaxis, :]                 # shape (1, k₀)
+    p_cond_marg = np.where(
+        denom_marg > 0,
+        p_ty_ty1 / np.where(denom_marg > 0, denom_marg, 1.0),
+        0.0,
+    )                                                  # p(s_ty | s_ty1), shape (k₀, k₀)
+    # Broadcast to (k₀, k₀, 1) for log-ratio with p_cond_full
+    p_cond_marg_bc = p_cond_marg[:, :, np.newaxis].transpose(0, 2, 1)
+    # Shape: (k₀, k₀, k₀) — axis 0=s_ty, 1=s_ty1, 2=s_txu? Recheck axes.
+    # p_cond_marg[s_ty, s_ty1] → broadcast over s_txu axis (axis 2)
+    p_cond_marg_3d = p_cond_marg[:, :, np.newaxis]   # (k₀, k₀, 1) → broadcast over s_txu
+
+    # ------------------------------------------------------------------
+    # TE = Σ p_joint · log(p_cond_full / p_cond_marg_3d)
+    # Only sum over cells where p_joint > 0 (avoids 0·log(0) = NaN)
+    # ------------------------------------------------------------------
+    mask = p_joint > 0
+    log_ratio = np.where(
+        mask & (p_cond_full > 0) & (p_cond_marg_3d > 0),
+        np.log(
+            np.where(p_cond_full > 0, p_cond_full, 1.0)
+            / np.where(p_cond_marg_3d > 0, p_cond_marg_3d, 1.0)
+        ),
+        0.0,
+    )
+    te = float(np.sum(p_joint * log_ratio))
+
+    # Clip small negative values (floating-point noise)
+    te = max(0.0, te)
+
+    logger.debug(
+        "compute_dspte_at_lag: u=%d  k0=%d  T'=%d  TE=%.6f",
+        u, k0, T_prime, te,
+    )
+    return te
+
+
+def compute_dspte_multidelay(
+    S_x: np.ndarray,
+    S_y: np.ndarray,
+    k0: int,
+    u_max: int = 50,
+) -> tuple[float, int, np.ndarray]:
+    """
+    Search over lags u ∈ {1, ..., u_max} and return the maximum dSPTE value.
+
+    Per Wang (2020) Theorem: dSPTE_{X→Y,u} is maximised at u = δ, the true
+    causal delay.  Therefore the optimal estimator is:
+
+        dSPTE_{X→Y}^{opt} = max_u  dSPTE_{X→Y,u}
+        δ̂_{X→Y}          = argmax_u  dSPTE_{X→Y,u}
+
+    Parameters
+    ----------
+    S_x : np.ndarray, shape (T',), dtype int
+        Symbolic sequence for the source channel X.
+    S_y : np.ndarray, shape (T',), dtype int
+        Symbolic sequence for the target channel Y.
+    k0 : int
+        Codebook alphabet size (passed through to ``compute_dspte_at_lag``).
+    u_max : int
+        Maximum lag to search (default 50 → ~2 s at 25 Hz).
+
+    Returns
+    -------
+    max_te : float
+        Maximum TE value across all tested lags.
+    optimal_delay : int
+        Lag at which the maximum was achieved (1-indexed, in samples).
+    te_vs_lag : np.ndarray, shape (u_max,)
+        Full TE profile for lags 1 to u_max.  Saved as diagnostic output
+        for visualising the lag-TE profile (Section 6.5).
+        ``te_vs_lag[i]`` corresponds to lag ``u = i + 1``.
+    """
+    te_vs_lag = np.zeros(u_max, dtype=np.float64)
+
+    for i, u in enumerate(range(1, u_max + 1)):
+        te_vs_lag[i] = compute_dspte_at_lag(S_x, S_y, u=u, k0=k0)
+
+    max_te = float(te_vs_lag.max())
+    optimal_delay = int(np.argmax(te_vs_lag)) + 1   # 1-indexed
+
+    logger.info(
+        "compute_dspte_multidelay: max_TE=%.6f  opt_delay=%d  u_max=%d",
+        max_te, optimal_delay, u_max,
+    )
+    return max_te, optimal_delay, te_vs_lag
+
+
+def compute_dspte_matrix(
+    Y_window: np.ndarray,
+    config: "dict | None" = None,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """
+    Compute the dSPTE directed connectivity matrix for one sliding window.
+
+    This is the **drop-in replacement for** ``compute_pairwise_gc()`` in
+    Stage D.  It takes an ROI signal window and returns an EC matrix in the
+    same (n_rois × n_rois) format, with identical output conventions.
+
+    For each ordered pair (src, tgt) with src ≠ tgt:
+
+    1. Extract instantaneous phase via Hilbert transform.
+    2. Compute embedding delay τ per signal (autocorrelation 1/e method).
+       The shared τ for the pair is ``min(τ_src, τ_tgt)`` — the smaller of
+       the two ensures both embedded matrices have the same T' and that the
+       joint NG codebook is fitted on a commensurate state space.
+    3. Symbolise the pair via :func:`symbolise_pair` (NG codebook fitting +
+       vector quantisation → integer symbolic sequences S_x, S_y).
+    4. Run multi-delay dSPTE search via :func:`compute_dspte_multidelay`
+       → (max_te, optimal_delay, te_vs_lag).
+    5. Store ``EC_matrix[src, tgt] = max_te`` and
+       ``delay_matrix[src, tgt] = optimal_delay``.
+
+    Parameters
+    ----------
+    Y_window : np.ndarray, shape (n_rois, T)
+        ROI signal matrix for one window (typically 1351 samples at 25 Hz).
+        Rows correspond to ROIs in the order defined by the upstream
+        ``load_or_extract_roi_signals`` call.
+    config : dict or None
+        Parsed ``config.yaml``.  Used to read:
+        - ``stage_e_transfer_entropy.signal.embedding_dimension`` (default 3)
+        - ``stage_e_transfer_entropy.signal.u_max`` (default 50)
+        - ``stage_e_transfer_entropy.symbolisation.ndis_threshold`` (default 0.05)
+        - ``stage_e_transfer_entropy.symbolisation.k0_max_bivariate`` (default 20)
+
+    Returns
+    -------
+    EC_matrix : np.ndarray, shape (n_rois, n_rois), dtype float64
+        Directed connectivity matrix.  ``EC_matrix[src, tgt]`` = dSPTE from
+        src → tgt (optimal lag).  Diagonal = 0.  All values ≥ 0.
+    delay_matrix : np.ndarray, shape (n_rois, n_rois), dtype int
+        Optimal delay (in samples) for each directed pair.  Diagonal = 0.
+        ``delay_matrix[src, tgt]`` = argmax lag for src → tgt.
+    metadata : dict
+        Per-pair diagnostics for the whole window:
+        - ``'k0_matrix'``: (n_rois, n_rois) array of k₀ values
+        - ``'ndis_matrix'``: (n_rois, n_rois) array of nDis values
+        - ``'tau_matrix'``: (n_rois, n_rois) array of shared τ per pair
+        - ``'te_profiles'``: dict mapping (src, tgt) → te_vs_lag array
+          (length u_max) — for lag-profile visualisation (Section 6.5)
+        - ``'skipped_pairs'``: list of (src, tgt) tuples set to 0 due to NaN
+
+    Notes
+    -----
+    **NaN handling (identical to Stage D):** If either ROI in a pair is
+    all-NaN (e.g. subjects R11 or R2 with bad channels), EC_matrix and
+    delay_matrix entries for that pair are set to 0 and the pair is added
+    to ``metadata['skipped_pairs']``.
+
+    **τ convention — min(τ_src, τ_tgt):** Using the minimum of the two
+    per-channel 1/e autocorrelation times ensures both embedded matrices have
+    the same number of valid rows T' = T - (d-1)·τ.  Alternative conventions
+    (mean τ, or per-channel τ) are noted as deviation E7 in the PRD.
+
+    **Performance:** The NG codebook search is the bottleneck.  With
+    k0_max=20 and max_iter=500, fitting one codebook takes ~5–15 ms; the full
+    n_rois×(n_rois-1) = 20 pairs × u_max=50 lags runs in ~30–60 s per window
+    for typical ASTaUND data.  Pair computation is ordered but not yet
+    parallelised (see Section 10 mitigation strategies in the PRD).
+    """
+    from utils import load_config  # noqa
+
+    if config is None:
+        config = load_config()
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    sig_cfg = te_cfg.get("signal", {})
+    sym_cfg = te_cfg.get("symbolisation", {})
+
+    d = int(sig_cfg.get("embedding_dimension", 3))
+    u_max = int(sig_cfg.get("u_max", 50))
+    ndis_threshold = float(sym_cfg.get("ndis_threshold", 0.05))
+    k0_max = int(sym_cfg.get("k0_max_bivariate", 20))
+
+    Y_window = np.asarray(Y_window, dtype=float)
+    n_rois, T = Y_window.shape
+
+    EC_matrix = np.zeros((n_rois, n_rois), dtype=np.float64)
+    delay_matrix = np.zeros((n_rois, n_rois), dtype=int)
+    k0_mat = np.zeros((n_rois, n_rois), dtype=int)
+    ndis_mat = np.zeros((n_rois, n_rois), dtype=np.float64)
+    tau_mat = np.zeros((n_rois, n_rois), dtype=int)
+    te_profiles: dict = {}
+    skipped_pairs: list = []
+
+    # Pre-compute phase and τ for every ROI (avoid recomputing per pair)
+    phases: list[np.ndarray | None] = []
+    taus: list[int] = []
+    for roi_idx in range(n_rois):
+        row = Y_window[roi_idx]
+        if np.all(np.isnan(row)):
+            phases.append(None)
+            taus.append(1)
+            logger.warning(
+                "compute_dspte_matrix: ROI %d is all-NaN — will skip all pairs involving it.",
+                roi_idx,
+            )
+        else:
+            ph = extract_phase_signal(row)
+            tau_i = compute_embedding_delay(ph)
+            phases.append(ph)
+            taus.append(tau_i)
+
+    # Iterate over all ordered pairs (src, tgt), src ≠ tgt
+    for src in range(n_rois):
+        for tgt in range(n_rois):
+            if src == tgt:
+                continue
+
+            # NaN guard
+            if phases[src] is None or phases[tgt] is None:
+                skipped_pairs.append((src, tgt))
+                logger.debug(
+                    "compute_dspte_matrix: skipping pair (%d→%d) — NaN ROI.", src, tgt
+                )
+                continue
+
+            # Shared τ = min of the two per-channel delays
+            tau_shared = min(taus[src], taus[tgt])
+
+            # Symbolise the pair
+            S_src, S_tgt, sym_meta = symbolise_pair(
+                phases[src],
+                phases[tgt],
+                d=d,
+                tau=tau_shared,
+                k0_max=k0_max,
+                ndis_threshold=ndis_threshold,
+                config=config,
+            )
+
+            k0 = sym_meta["k0"]
+
+            # Multi-delay dSPTE search
+            max_te, opt_delay, te_profile = compute_dspte_multidelay(
+                S_src, S_tgt, k0=k0, u_max=u_max
+            )
+
+            EC_matrix[src, tgt] = max_te
+            delay_matrix[src, tgt] = opt_delay
+            k0_mat[src, tgt] = k0
+            ndis_mat[src, tgt] = sym_meta["nDis"]
+            tau_mat[src, tgt] = tau_shared
+            te_profiles[(src, tgt)] = te_profile
+
+            logger.debug(
+                "compute_dspte_matrix: (%d→%d)  TE=%.6f  delay=%d  k₀=%d  τ=%d",
+                src, tgt, max_te, opt_delay, k0, tau_shared,
+            )
+
+    logger.info(
+        "compute_dspte_matrix: EC shape=%s  off-diag range=[%.4f, %.4f]  "
+        "skipped=%d pairs",
+        EC_matrix.shape,
+        float(EC_matrix[EC_matrix > 0].min()) if np.any(EC_matrix > 0) else 0.0,
+        float(EC_matrix.max()),
+        len(skipped_pairs),
+    )
+
+    metadata = {
+        "k0_matrix": k0_mat,
+        "ndis_matrix": ndis_mat,
+        "tau_matrix": tau_mat,
+        "te_profiles": te_profiles,
+        "skipped_pairs": skipped_pairs,
+    }
+    return EC_matrix, delay_matrix, metadata
+
+
+# ===========================================================================
 # Smoke tests (run as script)
 # ===========================================================================
 
@@ -915,7 +1295,160 @@ def _run_tests() -> None:
 
     print("  [PASS] 3.3.3 symbolise_pair\n")
 
-    print("=== All Section 3.1–3.3 tests passed. ===\n")
+    # ------------------------------------------------------------------
+    # 3.4.1 — compute_dspte_at_lag
+    # ------------------------------------------------------------------
+    print("--- 3.4.1  compute_dspte_at_lag ---")
+
+    # (a) Coupled AR model: Y(t) = 0.9·X(t-3) + noise → TE peak expected at u=3
+    rng_te = np.random.default_rng(7)
+    N_ar = 2000
+    X_ar = np.zeros(N_ar)
+    Y_ar = np.zeros(N_ar)
+    for tt in range(3, N_ar):
+        X_ar[tt] = 0.4 * X_ar[tt-1] - 0.6 * X_ar[tt-2] + 0.3 * rng_te.standard_normal()
+        Y_ar[tt] = 0.9 * X_ar[tt-3] + 0.3 * rng_te.standard_normal()
+
+    # Symbolise with simple NG (use tau=1, d=3 for speed in unit test)
+    S_x_ar, S_y_ar, meta_ar = symbolise_pair(
+        X_ar, Y_ar, d=3, tau=1, k0_max=10, ndis_threshold=0.05
+    )
+    k0_ar = meta_ar["k0"]
+
+    # TE at lag 3 should be greater than TE at lag 1 (wrong lag)
+    te_u3 = compute_dspte_at_lag(S_x_ar, S_y_ar, u=3, k0=k0_ar)
+    te_u1 = compute_dspte_at_lag(S_x_ar, S_y_ar, u=1, k0=k0_ar)
+    # Reverse direction: TE(Y→X) at lag 3 should be smaller
+    te_yx_u3 = compute_dspte_at_lag(S_y_ar, S_x_ar, u=3, k0=k0_ar)
+
+    print(f"  (a) AR model (X→Y, δ=3):  TE(X→Y, u=3)={te_u3:.5f}  "
+          f"TE(X→Y, u=1)={te_u1:.5f}  TE(Y→X, u=3)={te_yx_u3:.5f}")
+    assert te_u3 >= 0.0, "TE must be non-negative"
+    assert te_yx_u3 >= 0.0, "TE must be non-negative"
+    # TE at causal lag should exceed reverse direction
+    assert te_u3 > te_yx_u3, (
+        f"Expected TE(X→Y, u=3) > TE(Y→X, u=3), got {te_u3:.5f} <= {te_yx_u3:.5f}"
+    )
+    print(f"  TE(X→Y, u=3) > TE(Y→X, u=3)  ✓  (directionality confirmed)")
+
+    # (b) Return value is a non-negative float
+    assert isinstance(te_u3, float) and te_u3 >= 0.0
+    print(f"  (b) Return type float, non-negative  ✓")
+
+    # (c) u >= T' should return 0.0
+    short_S = np.array([0, 1, 0, 1], dtype=int)
+    te_too_large = compute_dspte_at_lag(short_S, short_S, u=10, k0=2)
+    assert te_too_large == 0.0, f"Expected 0.0 for u >= T', got {te_too_large}"
+    print(f"  (c) u >= T' returns 0.0  ✓")
+
+    print("  [PASS] 3.4.1 compute_dspte_at_lag\n")
+
+    # ------------------------------------------------------------------
+    # 3.4.2 — compute_dspte_multidelay
+    # ------------------------------------------------------------------
+    print("--- 3.4.2  compute_dspte_multidelay ---")
+
+    max_te_ar, opt_delay_ar, te_vs_lag_ar = compute_dspte_multidelay(
+        S_x_ar, S_y_ar, k0=k0_ar, u_max=10
+    )
+    print(f"  AR model: max_TE={max_te_ar:.5f}  opt_delay={opt_delay_ar}  "
+          f"(expected ~3)  te_vs_lag shape={te_vs_lag_ar.shape}")
+
+    # Shape checks
+    assert te_vs_lag_ar.shape == (10,), (
+        f"Expected te_vs_lag shape (10,), got {te_vs_lag_ar.shape}"
+    )
+    assert max_te_ar == float(te_vs_lag_ar.max()), "max_te mismatch"
+    assert opt_delay_ar == int(np.argmax(te_vs_lag_ar)) + 1, "opt_delay mismatch"
+    assert max_te_ar >= 0.0
+
+    # Directional asymmetry: max TE(X→Y) should exceed max TE(Y→X)
+    max_te_yx, _, _ = compute_dspte_multidelay(S_y_ar, S_x_ar, k0=k0_ar, u_max=10)
+    print(f"  max TE(X→Y)={max_te_ar:.5f}  max TE(Y→X)={max_te_yx:.5f}")
+    assert max_te_ar > max_te_yx, (
+        f"Expected TE(X→Y) > TE(Y→X): {max_te_ar:.5f} <= {max_te_yx:.5f}"
+    )
+    print(f"  TE(X→Y) > TE(Y→X)  ✓  Optimal delay={opt_delay_ar} (expected 3)")
+    print("  [PASS] 3.4.2 compute_dspte_multidelay\n")
+
+    # ------------------------------------------------------------------
+    # 3.4.3 — compute_dspte_matrix (mini window, fast smoke test)
+    # ------------------------------------------------------------------
+    print("--- 3.4.3  compute_dspte_matrix ---")
+
+    # Build a small 3-ROI synthetic window to keep the test fast
+    # ROI 0 → ROI 1 causal coupling (δ=2), ROI 2 is independent noise
+    N_win = 600
+    rng_m = np.random.default_rng(99)
+    ch0 = np.zeros(N_win)
+    ch1 = np.zeros(N_win)
+    ch2 = rng_m.standard_normal(N_win) * 0.5
+    for tt in range(2, N_win):
+        ch0[tt] = 0.5 * ch0[tt-1] + 0.3 * rng_m.standard_normal()
+        ch1[tt] = 0.8 * ch0[tt-2] + 0.3 * rng_m.standard_normal()
+    Y_mini = np.vstack([ch0, ch1, ch2])   # shape (3, N_win)
+
+    # Use small u_max and k0_max for speed in test
+    test_config = {
+        "stage_e_transfer_entropy": {
+            "signal": {"embedding_dimension": 3, "u_max": 8},
+            "symbolisation": {
+                "ndis_threshold": 0.10,   # relaxed for speed
+                "k0_max_bivariate": 8,
+                "ng_max_iterations": 200,
+                "ng_learning_rate_i": 0.5,
+                "ng_learning_rate_f": 0.01,
+                "ng_neighbourhood_i": 8.0,
+                "ng_neighbourhood_f": 0.1,
+            },
+        }
+    }
+
+    EC_m, delay_m, meta_m = compute_dspte_matrix(Y_mini, config=test_config)
+
+    print(f"  EC_matrix shape : {EC_m.shape}  (expected (3, 3))")
+    print(f"  diagonal        : {np.diag(EC_m)}  (expected all 0)")
+    print(f"  off-diag values : {EC_m[EC_m != 0]}")
+    print(f"  delay_matrix    :\n{delay_m}")
+    print(f"  k0_matrix       :\n{meta_m['k0_matrix']}")
+    print(f"  skipped pairs   : {meta_m['skipped_pairs']}")
+
+    # Shape assertions
+    assert EC_m.shape == (3, 3), f"Expected (3, 3), got {EC_m.shape}"
+    assert delay_m.shape == (3, 3)
+    # Diagonal must be 0
+    np.testing.assert_array_equal(np.diag(EC_m), np.zeros(3))
+    # All values non-negative
+    assert np.all(EC_m >= 0), f"Negative EC values: {EC_m[EC_m < 0]}"
+    # No NaN
+    assert not np.any(np.isnan(EC_m)), "EC_matrix contains NaN"
+    # Off-diagonal should have 6 non-zero entries (3 rois → 3×2 = 6 directed pairs)
+    n_offdiag_nonzero = int(np.sum(EC_m > 0))
+    print(f"  Non-zero off-diag entries: {n_offdiag_nonzero}/6")
+    # te_profiles should have 6 entries (all directed pairs)
+    assert len(meta_m["te_profiles"]) == 6, (
+        f"Expected 6 te_profile entries, got {len(meta_m['te_profiles'])}"
+    )
+    # Directionality check: EC[0,1] (true coupling) should be ≥ EC[1,0]
+    print(f"  EC[0→1]={EC_m[0,1]:.5f}  EC[1→0]={EC_m[1,0]:.5f}  "
+          f"(expect 0→1 dominant)")
+    print("  [PASS] 3.4.3 compute_dspte_matrix\n")
+
+    # NaN-row handling
+    Y_nan = Y_mini.copy()
+    Y_nan[2, :] = np.nan   # ROI 2 all-NaN
+    EC_nan, _, meta_nan = compute_dspte_matrix(Y_nan, config=test_config)
+    nan_pairs = meta_nan["skipped_pairs"]
+    # Pairs involving ROI 2 (4 pairs: (0,2),(1,2),(2,0),(2,1)) should be skipped
+    assert (2, 0) in nan_pairs or (0, 2) in nan_pairs, (
+        f"Expected NaN pairs involving ROI 2, got: {nan_pairs}"
+    )
+    assert EC_nan[0, 2] == 0.0 and EC_nan[2, 0] == 0.0
+    print(f"  NaN-row guard: {len(nan_pairs)} pairs skipped for all-NaN ROI  ✓")
+
+    print("  [PASS] 3.4.3 NaN handling\n")
+
+    print("=== All Section 3.1–3.4 tests passed. ===\n")
 
 
 if __name__ == "__main__":

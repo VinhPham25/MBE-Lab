@@ -430,5 +430,93 @@ stage_d_granger:
       hiv_min_trials: 2         # minimum trials with valid data to run across-trial ANOVA
 
 # ==============================================================================
+# STAGE E: TRANSFER ENTROPY PARAMETERS
+# ==============================================================================
+# Reference: docs/TRANSFER_ENTROPY_PROGRESS.md
+# Papers:
+#   Wang (2020) — dSPTE: doi:10.1088/1741-2552/abb4a4
+#   Wang (2022) — MTENUE: doi:10.1016/j.bspc.2021.103422
+
+stage_e_transfer_entropy:
+
+  # --------------------------------------------------------------------------
+  # Output paths (relative to project root)
+  # --------------------------------------------------------------------------
+  paths:
+    output_root: "outputs/stage_e_transfer_entropy"
+
+  # --------------------------------------------------------------------------
+  # Subject groups (R10 excluded — same reason as Stage D)
+  # Note: capitalisation matches Stage D convention (Expert / Novice)
+  # --------------------------------------------------------------------------
+  subjects:
+    Expert: ["A1", "A2", "R7", "R8", "R9", "R11", "R12"]   # n=7
+    Novice: ["R1", "R2", "R3", "R4", "R5", "R6"]            # n=6
+    excluded: ["R10"]   # data quality flag — trailing zeros, anomalous rPCA
+
+  # --------------------------------------------------------------------------
+  # Signal processing parameters
+  # --------------------------------------------------------------------------
+  signal:
+    sfreq: 25.0                           # Hz (R9 resampled from 50 Hz in-memory)
+    embedding_dimension: 3                # d — Wang (2020) standard for fNIRS phase-TE
+    embedding_delay_method: "autocorr_1_over_e"  # lag where ACF first drops below 1/e ≈ 0.368
+    u_max: 50                             # maximum lag for multi-delay search (~2 s at 25 Hz)
+
+  # --------------------------------------------------------------------------
+  # Sliding window parameters (identical to Stage D)
+  # MATLAB: window_size=54*25=1350; Y(:,w-window_size:w) → 1351 samples inclusive
+  # --------------------------------------------------------------------------
+  window:
+    size_s: 54             # seconds
+    size_samples: 1350     # = size_s * sfreq
+    stride_samples: 1350   # no overlap
+    min_samples: 1350      # trials shorter than this skipped
+
+  # --------------------------------------------------------------------------
+  # Neural-Gas symbolisation parameters
+  # Wang (2020) Eq. 11 — nDis threshold for optimal codebook size k₀
+  # --------------------------------------------------------------------------
+  symbolisation:
+    ndis_threshold: 0.05           # 5% — Wang (2020) Section 3.2
+    k0_min: 2                      # minimum codebook size to test
+    k0_max_bivariate: 20           # guard against codebook explosion (bivariate)
+    k0_max_multivariate: 8         # sample-scarcity guard for 4D+ contingency tables (Phase 2)
+    ng_max_iterations: 500         # Neural-Gas training iterations per k
+    ng_learning_rate_i: 0.5        # initial learning rate λ_i
+    ng_learning_rate_f: 0.01       # final learning rate λ_f
+    ng_neighbourhood_i: 10.0       # initial neighbourhood width σ_i
+    ng_neighbourhood_f: 0.1        # final neighbourhood width σ_f
+
+  # --------------------------------------------------------------------------
+  # Phase 3 — Bimodal fusion parameters
+  # --------------------------------------------------------------------------
+  phase_3:
+    fusion_mode: "fixed"    # "fixed" = use weights below; "optimise" = PSO on training windows
+    w_phase: 0.7            # weight for phase-branch TE
+    w_amplitude: 0.3        # weight for amplitude-branch TE
+
+  # --------------------------------------------------------------------------
+  # Output subdirectories (relative to output_root/expert-novice/)
+  # --------------------------------------------------------------------------
+  output_subdirs:
+    roi_signals:          "expert-novice/roi_signals"
+    phase_1_raw:          "expert-novice/phase_1_dspte/te_raw"
+    phase_1_connectivity: "expert-novice/phase_1_dspte/te_connectivity"
+    phase_1_codebook:     "expert-novice/phase_1_dspte/codebook"
+    phase_1_group:        "expert-novice/phase_1_dspte/group"
+    phase_1_statistics:   "expert-novice/phase_1_dspte/statistics"
+    phase_1_viz:          "expert-novice/phase_1_dspte/visualizations"
+    phase_2_connectivity: "expert-novice/phase_2_hybrid_dspte/te_connectivity"
+    phase_2_group:        "expert-novice/phase_2_hybrid_dspte/group"
+    phase_2_statistics:   "expert-novice/phase_2_hybrid_dspte/statistics"
+    phase_2_viz:          "expert-novice/phase_2_hybrid_dspte/visualizations"
+    phase_3_connectivity: "expert-novice/phase_3_bimodal_dspte/te_connectivity"
+    phase_3_group:        "expert-novice/phase_3_bimodal_dspte/group"
+    phase_3_statistics:   "expert-novice/phase_3_bimodal_dspte/statistics"
+    phase_3_viz:          "expert-novice/phase_3_bimodal_dspte/visualizations"
+    cross_phase:          "expert-novice/cross_phase_comparison"
+
+# ==============================================================================
 # END OF CONFIGURATION
 # ==============================================================================
