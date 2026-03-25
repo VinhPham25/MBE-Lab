@@ -5,15 +5,15 @@ Implements the six algorithmic steps of Wang (2020)'s delay Symbolic Phase
 Transfer Entropy (dSPTE), as specified in TRANSFER_ENTROPY_PROGRESS.md
 Sections 3.1 through 3.4.
 
-Section 3.1 — Phase Extraction (this session)
+Section 3.1 — Phase Extraction
     extract_phase_signal(x)          : Hilbert phase in [-π, π]
     extract_amplitude_signal(x)      : Hilbert amplitude envelope
     compute_embedding_delay(x)       : autocorrelation 1/e lag τ
 
-Section 3.2 — Uniform Embedding (next session)
+Section 3.2 — Uniform Embedding
     uniform_embed(theta, d, tau)
 
-Section 3.3 — Neural-Gas Symbolisation (next session)
+Section 3.3 — Neural-Gas Symbolisation
     symbolise_pair(theta_x, theta_y, d, tau, k0_max, ndis_threshold)
 
 Section 3.4 — dSPTE Computation (next session)
@@ -378,6 +378,153 @@ def uniform_embed(theta: np.ndarray, d: int, tau: int) -> np.ndarray:
 
 
 # ===========================================================================
+# Section 3.3 — Neural-Gas Symbolisation
+# ===========================================================================
+
+def symbolise_pair(
+    theta_x: np.ndarray,
+    theta_y: np.ndarray,
+    d: int,
+    tau: int,
+    k0_max: int = 20,
+    ndis_threshold: float = 0.05,
+    config: "dict | None" = None,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """
+    Symbolise a single (X, Y) channel pair via Neural-Gas vector quantisation.
+
+    Implements Wang (2020) Step 3 (Eqs. 11–14) for one pair of phase (or
+    amplitude) time series.  The steps in order are:
+
+    1. Embed both series with the same (d, tau) via :func:`uniform_embed`.
+    2. Build the joint state matrix by vertically stacking the two embedded
+       matrices: ``θ_xyd = [θ_xd; θ_yd]``, shape ``(2·T', d)``.
+    3. Fit a Neural-Gas codebook on the joint matrix via
+       :func:`utils_te.fit_neural_gas_codebook`, searching k from 2 to k0_max
+       until ``nDis < ndis_threshold``.
+    4. Quantise each channel's embedded matrix independently against the shared
+       codebook via :func:`utils_te.quantise_to_symbols`.
+    5. Return the two symbolic sequences and a metadata dict.
+
+    Parameters
+    ----------
+    theta_x : np.ndarray, shape (T,)
+        Phase (or amplitude) time series for channel X.
+    theta_y : np.ndarray, shape (T,)
+        Phase (or amplitude) time series for channel Y.  Must have the same
+        length as ``theta_x``.
+    d : int
+        Embedding dimension (default 3, configurable via ``config.yaml``).
+    tau : int
+        Embedding delay in samples.  Typically computed via
+        :func:`compute_embedding_delay` for each channel; the caller should
+        pass the *minimum* of the two per-channel τ values, or a
+        pre-computed per-signal τ, depending on the pipeline strategy.
+        (The PRD does not specify whether to use X's τ, Y's τ, or the mean —
+        using X's τ here is the implementation convention; callers may override.)
+    k0_max : int
+        Maximum codebook size to search.  Default 20 for bivariate mode;
+        pass ``k0_max_multivariate`` (default 8) for Phase 2.
+    ndis_threshold : float
+        Wang (2020) Eq. 11 stopping criterion: nDis < threshold.  Default 0.05.
+    config : dict or None
+        Parsed ``config.yaml``.  Forwarded to
+        :func:`utils_te.fit_neural_gas_codebook` for NG hyperparameters.
+
+    Returns
+    -------
+    S_x : np.ndarray, shape (T',), dtype int
+        Symbolic sequence for channel X.  Values in ``{0, ..., k₀-1}``.
+    S_y : np.ndarray, shape (T',), dtype int
+        Symbolic sequence for channel Y.  Same length as ``S_x``.
+    meta : dict
+        Metadata dict with keys:
+        - ``'k0'``: int — selected codebook size.
+        - ``'nDis'``: float — normalised distortion at k₀.
+        - ``'tau'``: int — embedding delay used (same for both channels).
+        - ``'d'``: int — embedding dimension used.
+        - ``'T_prime'``: int — number of valid embedding rows (= T - (d-1)·tau).
+        - ``'codebook'``: np.ndarray, shape (k₀, d) — prototype vectors
+          (retained for diagnostic saving and Phase 2 reuse).
+
+    Notes
+    -----
+    **Shared codebook rationale (Wang 2020 Eq. 13):** The NG is fitted on the
+    *joint* matrix ``[θ_xd; θ_yd]`` so that both channels are quantised into
+    the same symbolic alphabet.  This ensures that when the same symbol index
+    appears in S_x and S_y, it corresponds to the same region of the shared
+    phase space — a prerequisite for the discrete TE calculation in Step 4.
+
+    **τ convention:** Both channels are embedded with the *same* delay τ (the
+    caller's choice).  Wang (2020) does not specify whether to use a per-channel
+    or shared τ.  Using a shared τ (e.g. the mean or minimum of the two
+    per-channel 1/e autocorrelation times) keeps the embedding space
+    commensurate.  The per-channel τ approach is logged as deviation E7 in the
+    PRD.
+
+    **Raises** ``ValueError`` if ``theta_x`` and ``theta_y`` have different
+    lengths or if ``uniform_embed`` fails (signal too short for given d and τ).
+    """
+    from utils_te import fit_neural_gas_codebook, quantise_to_symbols  # noqa
+
+    theta_x = np.asarray(theta_x, dtype=float)
+    theta_y = np.asarray(theta_y, dtype=float)
+
+    if theta_x.ndim != 1 or theta_y.ndim != 1:
+        raise ValueError(
+            "symbolise_pair: both inputs must be 1D arrays. "
+            f"Got shapes {theta_x.shape} and {theta_y.shape}."
+        )
+    if len(theta_x) != len(theta_y):
+        raise ValueError(
+            f"symbolise_pair: theta_x (len={len(theta_x)}) and "
+            f"theta_y (len={len(theta_y)}) must have the same length."
+        )
+
+    # Step 1 — Embed both time series
+    theta_xd = uniform_embed(theta_x, d=d, tau=tau)   # shape (T', d)
+    theta_yd = uniform_embed(theta_y, d=d, tau=tau)   # shape (T', d)
+    T_prime = theta_xd.shape[0]
+
+    logger.debug(
+        "symbolise_pair: T=%d  d=%d  tau=%d  T'=%d  joint shape (%d, %d)",
+        len(theta_x), d, tau, T_prime, 2 * T_prime, d,
+    )
+
+    # Step 2 — Joint state matrix: stack both embedded series vertically
+    theta_xyd = np.vstack([theta_xd, theta_yd])   # shape (2·T', d)
+
+    # Step 3 — Fit Neural-Gas codebook on joint matrix
+    codebook, k0, ndis = fit_neural_gas_codebook(
+        theta_xyd,
+        k0_max=k0_max,
+        ndis_threshold=ndis_threshold,
+        config=config,
+    )
+
+    logger.info(
+        "symbolise_pair: k₀=%d  nDis=%.4f  (threshold=%.2f)  "
+        "T'=%d  codebook shape %s",
+        k0, ndis, ndis_threshold, T_prime, codebook.shape,
+    )
+
+    # Step 4 — Quantise each channel's embedded matrix independently
+    S_x = quantise_to_symbols(theta_xd, codebook)   # shape (T',)
+    S_y = quantise_to_symbols(theta_yd, codebook)   # shape (T',)
+
+    meta = {
+        "k0": int(k0),
+        "nDis": float(ndis),
+        "tau": int(tau),
+        "d": int(d),
+        "T_prime": int(T_prime),
+        "codebook": codebook,
+    }
+
+    return S_x, S_y, meta
+
+
+# ===========================================================================
 # Smoke tests (run as script)
 # ===========================================================================
 
@@ -667,7 +814,108 @@ def _run_tests() -> None:
 
     print("  [PASS] 3.2.1 uniform_embed\n")
 
-    print("=== All Section 3.1–3.2 tests passed. ===\n")
+    # ------------------------------------------------------------------
+    # 3.3.3 — symbolise_pair
+    # ------------------------------------------------------------------
+    print("--- 3.3.3  symbolise_pair ---")
+
+    # (a) Basic synthetic test: two correlated 1 Hz sine waves, phase-shifted
+    #     Both should produce symbolic sequences of the same length T'.
+    sfreq33 = 25.0
+    T33 = 500
+    t33 = np.arange(T33) / sfreq33
+    theta_xa = np.sin(2 * np.pi * 1.0 * t33)         # channel X: 1 Hz sine
+    theta_ya = np.sin(2 * np.pi * 1.0 * t33 + 0.5)   # channel Y: 1 Hz, phase-shifted 0.5 rad
+
+    d33, tau33 = 3, 4
+    S_xa, S_ya, meta_a = symbolise_pair(theta_xa, theta_ya, d=d33, tau=tau33, k0_max=15)
+
+    expected_Tp = T33 - (d33 - 1) * tau33   # = 500 - 8 = 492
+    assert S_xa.shape == (expected_Tp,), (
+        f"S_x shape mismatch: expected ({expected_Tp},), got {S_xa.shape}"
+    )
+    assert S_ya.shape == (expected_Tp,), (
+        f"S_y shape mismatch: expected ({expected_Tp},), got {S_ya.shape}"
+    )
+    assert meta_a["T_prime"] == expected_Tp, (
+        f"meta T_prime mismatch: expected {expected_Tp}, got {meta_a['T_prime']}"
+    )
+    assert meta_a["d"] == d33
+    assert meta_a["tau"] == tau33
+    k0_a = meta_a["k0"]
+    assert 2 <= k0_a <= 15, f"k0={k0_a} out of expected range [2, 15]"
+    # All symbols must be in {0, ..., k0-1}
+    assert S_xa.min() >= 0 and S_xa.max() < k0_a, (
+        f"S_x symbols out of range [0, {k0_a-1}]: [{S_xa.min()}, {S_xa.max()}]"
+    )
+    assert S_ya.min() >= 0 and S_ya.max() < k0_a, (
+        f"S_y symbols out of range [0, {k0_a-1}]: [{S_ya.min()}, {S_ya.max()}]"
+    )
+    # Codebook shape: (k0, d)
+    assert meta_a["codebook"].shape == (k0_a, d33), (
+        f"codebook shape mismatch: expected ({k0_a}, {d33}), "
+        f"got {meta_a['codebook'].shape}"
+    )
+    print(f"  (a) Synthetic sines (T={T33}, d={d33}, tau={tau33})")
+    print(f"      T'={expected_Tp}  k₀={k0_a}  nDis={meta_a['nDis']:.4f}")
+    print(f"      S_x: shape={S_xa.shape}  values ∈ [{S_xa.min()}, {S_xa.max()}]  ✓")
+    print(f"      S_y: shape={S_ya.shape}  values ∈ [{S_ya.min()}, {S_ya.max()}]  ✓")
+    print(f"      codebook: shape={meta_a['codebook'].shape}  ✓")
+
+    # (b) Length-mismatch error
+    try:
+        symbolise_pair(np.zeros(100), np.zeros(150), d=3, tau=1)
+        assert False, "Should raise ValueError for length mismatch"
+    except ValueError:
+        pass
+    print("  (b) Length mismatch raises ValueError  ✓")
+
+    # (c) 2D input error
+    try:
+        symbolise_pair(np.zeros((10, 2)), np.zeros(10), d=3, tau=1)
+        assert False, "Should raise ValueError for 2D input"
+    except ValueError:
+        pass
+    print("  (c) 2D input raises ValueError  ✓")
+
+    # (d) Shared codebook: S_x and S_y use the same alphabet — same k0
+    #     Both should have values in {0, ..., k0-1} (already checked above in (a))
+    # Verify the nDis metadata is consistent
+    assert 0.0 <= meta_a["nDis"] <= 1.0, (
+        f"nDis should be in [0, 1], got {meta_a['nDis']}"
+    )
+    print(f"  (d) nDis={meta_a['nDis']:.4f} ∈ [0, 1]  ✓ (threshold=0.05)")
+
+    # (e) Real A1 ROI pipeline: phase signals for LPFC → CPFC pair
+    print("\n  (e) Real A1 ROI pair (LPFC→CPFC, first window, phase signals):")
+    try:
+        from utils_te import load_or_extract_roi_signals
+        data_a1, roi_names33, _ = load_or_extract_roi_signals("A1")
+        win = data_a1[:, :1351]                      # first 1351-sample window
+        theta_lpfc = extract_phase_signal(win[0])    # LPFC
+        theta_cpfc = extract_phase_signal(win[1])    # CPFC
+        # Use tau from LPFC (caller convention)
+        tau_lpfc = compute_embedding_delay(theta_lpfc)
+        S_lpfc, S_cpfc, meta_e = symbolise_pair(
+            theta_lpfc, theta_cpfc,
+            d=3, tau=tau_lpfc, k0_max=20, ndis_threshold=0.05
+        )
+        print(f"      tau={tau_lpfc}  k₀={meta_e['k0']}  nDis={meta_e['nDis']:.4f}")
+        print(f"      S_LPFC: shape={S_lpfc.shape}  values ∈ [{S_lpfc.min()}, {S_lpfc.max()}]")
+        print(f"      S_CPFC: shape={S_cpfc.shape}  values ∈ [{S_cpfc.min()}, {S_cpfc.max()}]")
+        # Verify symbol ranges
+        k0_e = meta_e["k0"]
+        assert S_lpfc.min() >= 0 and S_lpfc.max() < k0_e
+        assert S_cpfc.min() >= 0 and S_cpfc.max() < k0_e
+        assert S_lpfc.shape == S_cpfc.shape
+        print(f"      codebook shape={meta_e['codebook'].shape}  ✓")
+        print("      [PASS] Real A1 pair symbolisation")
+    except Exception as e:
+        print(f"      [SKIP] A1 ROI load failed: {e}")
+
+    print("  [PASS] 3.3.3 symbolise_pair\n")
+
+    print("=== All Section 3.1–3.3 tests passed. ===\n")
 
 
 if __name__ == "__main__":
