@@ -8,7 +8,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_e_transfer_entropy/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–2 complete; Section 3.1–3.4.3 complete (2026-03-24)
+**Status:** Sections 1–2 complete; Section 3.1–3.4.3 complete; Section 4.1 complete (2026-03-24)
 
 ---
 
@@ -409,9 +409,11 @@ All functions live in `code/stage_e_transfer_entropy/01_dspte_core.py`.
 Functions in `code/stage_e_transfer_entropy/02_dspte_pipeline.py`. Mirrors `03_linear_gc.py` / `04_subject_gc_pipeline.py` in Stage D.
 
 #### 4.1 Windowed dSPTE
-- [ ] **4.1.1** Implement `compute_windowed_dspte(Y_trial: np.ndarray, window_size: int = 1350, stride: int = 1350, config: dict = None) -> dict`. Same window loop as Stage D: `for w in range(window_size, T, stride)` → `Y_win = Y_trial[:, w-window_size:w+1]` (1351 samples). Calls `compute_dspte_matrix(Y_win, config)`. Returns `{'Win_1': (EC_matrix, delay_matrix, meta), 'Win_2': ...}` with 1-indexed keys. Skip guard: skip all-NaN windows with WARNING log. **Performance note:** dSPTE is significantly more expensive than GC per window due to the NG fitting loop. Log wall-clock time per window; alert if > 60 seconds per window (suggesting codebook search is too broad).
+- [x] **4.1.1** Implement `compute_windowed_dspte(Y_trial: np.ndarray, window_size: int = 1350, stride: int = 1350, config: dict = None) -> dict`. Same window loop as Stage D: `for w in range(window_size, T, stride)` → `Y_win = Y_trial[:, w-window_size:w+1]` (1351 samples). Calls `compute_dspte_matrix(Y_win, config)`. Returns `{'Win_1': (EC_matrix, delay_matrix, meta), 'Win_2': ...}` with 1-indexed keys. Skip guard: skip all-NaN windows with WARNING log. **Performance note:** dSPTE is significantly more expensive than GC per window due to the NG fitting loop. Log wall-clock time per window; alert if > 60 seconds per window (suggesting codebook search is too broad).
+  > **Result (2026-03-24):** Implemented in `02_dspte_pipeline.py`. Identical window indexing to Stage D (`range(window_size, T, stride)`, inclusive slice `w-window_size:w+1`). Returns `{'Win_N': (EC_matrix, delay_matrix, metadata)}` with 1-indexed keys. Logs elapsed time per window (INFO) and emits WARNING if > 60 s. All-NaN window guard with WARNING log. NG module imported lazily via importlib to avoid circular imports. Unit tests: (a) 2-ROI synthetic trial T=4053 → 3 windows, correct shapes, diagonal=0, EC≥0 ✓; (b) T=500 < window → 0 windows ✓; (c) all-NaN first window skipped → 2 valid windows, keys Win_1/Win_2 ✓. Elapsed: 1.6 s for 3×2-ROI windows (fast because u_max=5 in test config). All PASS.
 
-- [ ] **4.1.2** Implement `extract_connectivity_vector(EC_matrix: np.ndarray, roi_names: list) -> np.ndarray`. Expands to canonical 5×5 layout (identical to Stage D `_canonicalize_ec_matrix()`), removes diagonal at indices `[0,6,12,18,24]`, returns 20-element vector. Ensures shape compatibility with Stage D outputs.
+- [x] **4.1.2** Implement `extract_connectivity_vector(EC_matrix: np.ndarray, roi_names: list) -> np.ndarray`. Expands to canonical 5×5 layout (identical to Stage D `_canonicalize_ec_matrix()`), removes diagonal at indices `[0,6,12,18,24]`, returns 20-element vector. Ensures shape compatibility with Stage D outputs.
+  > **Result (2026-03-24):** Implemented in `02_dspte_pipeline.py`. Canonical ROI order: `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`. Expands (n_valid × n_valid) EC matrix to (5×5) by placing values at canonical row/column positions; missing ROI pairs left as 0. `np.delete(flat, [0,6,12,18,24])` → 20-element vector. Raises ValueError for unknown ROI names and shape mismatches. Unit tests: (a) full 5×5 → 20 elements, ordering verified (LPFC→CPFC=vec[0], CPFC→LPFC=vec[4]) ✓; (b) 3-ROI (LPFC,CPFC,LM1) → 20 elements, RPFC and SMA rows correctly zero ✓; (c) unknown ROI raises ValueError ✓; (d) shape mismatch raises ValueError ✓. All PASS.
 
 #### 4.2 Per-Subject dSPTE Pipeline
 - [ ] **4.2.1** Implement `process_subject_dspte(subject_id: str, study: str = 'expert_novice', overwrite: bool = False) -> dict` in `03_subject_dspte_pipeline.py`. Orchestrates: load ROI signals → `get_trial_segments` (reused from Stage D) → `compute_windowed_dspte` per trial → `extract_connectivity_vector` per window → save `.npz`. Return structure: `{'Tr_1': {'Win_1': conn_vec_20, ...}, ...}`. Stores both connectivity vectors AND delay matrices per window. Supports `overwrite=False` caching.
@@ -588,15 +590,15 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 49
-- **Completed:** 16
+- **Completed:** 18
 - **In Progress:** 0
-- **Remaining:** 33
+- **Remaining:** 31
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
 - **Section 2 (ROI Signals):** 2/2 ✅ Complete (2026-03-23)
 - **Section 3 (Phase 1 Core):** 10/12 (3.1–3.4.3 complete 2026-03-24; 3.4.4–3.4.5 pending simulation data upload)
-- **Section 4 (Phase 1 Pipeline):** 0/5
+- **Section 4 (Phase 1 Pipeline):** 2/5 (4.1 complete 2026-03-24)
 - **Section 5 (Phase 1 Stats):** 0/4
 - **Section 6 (Phase 1 Viz):** 0/5
 - **Section 7 (Phase 2 Hybrid):** 0/6

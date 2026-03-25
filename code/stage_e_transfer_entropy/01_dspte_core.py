@@ -605,7 +605,7 @@ def compute_dspte_at_lag(
     s_txu  = S_x[t_start - u: T_prime - u]  # S_x[t-u]
 
     # Vectorised accumulation via np.add.at
-    np.add.at(counts, (s_ty, s_ty1, s_txu), 1.0)
+    np.add.at(counts, (s_ty, s_ty1, s_txu), 1.0) # generates the contingency table
 
     # ------------------------------------------------------------------
     # Normalise to joint probability p(s_ty, s_ty1, s_txu)
@@ -616,6 +616,7 @@ def compute_dspte_at_lag(
     p_joint = counts / total                          # shape (k₀, k₀, k₀)
 
     # Marginal p(s_ty1, s_txu) = Σ_{s_ty} p_joint
+    # Represents the probability of the target and source symbols occurring together, given the target symbol at time t-1 and the source symbol at time t-u
     p_ty1_txu = p_joint.sum(axis=0)                  # shape (k₀, k₀)
 
     # Conditional p(s_ty | s_ty1, s_txu) = p_joint / p(s_ty1, s_txu)
@@ -628,6 +629,7 @@ def compute_dspte_at_lag(
     )                                                  # p(s_ty | s_ty1, s_txu)
 
     # Marginal p(s_ty1) = Σ_{s_txu} p(s_ty1, s_txu)
+    # Represents the probability of the target and source symbols occurring together, given the target symbol at time t-1 (doesn't include ROI X)
     p_ty1 = p_ty1_txu.sum(axis=1)                    # shape (k₀,)
 
     # Conditional p(s_ty | s_ty1) = Σ_{s_txu} p_joint / p(s_ty1)
