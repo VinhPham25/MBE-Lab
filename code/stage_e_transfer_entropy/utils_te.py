@@ -384,13 +384,15 @@ class NeuralGas:
         self
         """
         rng = np.random.default_rng(self.random_state)
-        N, d = X.shape
+        # X is the Joint state matrix. For bivariate (X, Y): stack both embedded series
+        # vertically → shape (2T', d). For multivariate: all channels → (n_ch * T', d).
+        N, d = X.shape 
         k = self.n_prototypes
         T = self.max_iterations
 
         # Initialise prototypes by sampling k rows without replacement
-        init_idx = rng.choice(N, size=k, replace=False)
-        W = X[init_idx].astype(float, copy=True)   # shape (k, d)
+        init_idx = rng.choice(N, size=k, replace=False) # init_idx is a list of k unique random integers corresponding to random row numbers in the dataset X
+        W = X[init_idx].astype(float, copy=True)   # shape (k, d); grabs the rows of X corresponding to the random integers in init_idx
 
         # Precompute rank array for sorting (reused each step)
         for t in range(T):
@@ -404,18 +406,19 @@ class NeuralGas:
             x = X[rng.integers(N)]                # shape (d,)
 
             # Squared distances from x to all prototypes
-            diffs = W - x                          # shape (k, d)
-            sq_dists = np.einsum("kd,kd->k", diffs, diffs)   # shape (k,)
+            diffs = W - x # Computes W_i - x for each codebook W; shape (k, d)
+            sq_dists = np.einsum("kd,kd->k", diffs, diffs)  # computes the squared Euclidean distance between each codebook W and the random sample x; shape (k,)
 
             # Rank prototypes by distance (argsort of argsort gives ranks)
             order = np.argsort(sq_dists)           # sorted prototype indices
             ranks = np.empty(k, dtype=float)
             ranks[order] = np.arange(k)            # rank_i: 0 = nearest
+            # Ex: ranks[6] = 0 means the 6th codebook W is the nearest to the random sample x (rank 0)
 
             # Soft-neighbourhood weights: h(rank_i, sigma) = exp(-rank_i / sigma)
             h = np.exp(-ranks / sigma)             # shape (k,)
 
-            # Update prototypes
+            # Update prototypes / move the codebook W closer to the random sample x
             W += (eps * h[:, np.newaxis]) * (x - W)
 
         self.prototypes_ = W
@@ -425,6 +428,9 @@ class NeuralGas:
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
         Assign each row of X to the nearest prototype.
+
+        This function is very similar to quantise_to_symbols. It has the same math, but it doesn't permanently change the embedded matrix X to the symbolic sequence.
+        This is only used for computing the nDis value and doesn't actually permanently assign the symbolic sequence to the embedded matrix X.
 
         Parameters
         ----------
@@ -445,6 +451,12 @@ class NeuralGas:
         Compute normalised distortion nDis (Wang 2020 Eq. 11).
 
         nDis = Σ‖x_t − W_nearest(t)‖² / Σ‖x_t − mean(X)‖²
+
+        x_t = each row of X
+        W_nearest(t) = the nearest codebook W to the random sample x
+        mean(X) = the mean of all the rows of X
+        Σ‖x_t − W_nearest(t)‖² = the sum of the squared distances between each row of X and the nearest codebook W
+        Σ‖x_t − mean(X)‖² = the sum of the squared distances between each row of X and the mean of all the rows of X
 
         A value < 0.05 (5%) satisfies Wang (2020)'s codebook quality criterion.
 
@@ -583,6 +595,9 @@ def quantise_to_symbols(
 
     Uses Euclidean distance via scipy.spatial.distance.cdist for efficiency.
     Returns 0-indexed integer labels in {0, ..., k₀-1}.
+
+    Performs similar operation to predict. It has the same math, but it permanently
+    changes the embedded matrix X to the symbolic sequence.
 
     Parameters
     ----------
