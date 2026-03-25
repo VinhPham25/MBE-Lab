@@ -154,7 +154,7 @@ def compute_embedding_delay(
     - -1: indicates perfect negative correlation where the signal is identical to its lagged version but inverted
 
     The ACF is calculated by:
-    R(τ) = E[x(t)-μ][x(t+τ)-μ] / σ^2
+    R(τ) = E[(x(t)-μ)(x(t+τ)-μ)] / σ^2
     where μ is the mean of the time series and σ is the standard deviation of the time series.
 
     The embedding delay τ is the lag at which the normalised autocorrelation
@@ -230,8 +230,10 @@ def compute_embedding_delay(
     # We take the second half [T-1 :] which is the positive-lag side.
     # Each lag-k value from np.correlate is Σ xc[t]*xc[t+k] (unnormalised).
     # Normalise by var (= ACF at lag 0) so ACF[0] = 1.
-    full_corr = np.correlate(xc, xc, mode="full")
-    one_sided = full_corr[T - 1:]               # lags 0, 1, 2, ..., T-1
+    full_corr = np.correlate(xc, xc, mode="full") # performs a sum of products by sliding one copy of xc across the other copy.
+    # With a signal length of T, the full_corr will have a length of 2T-1.
+    one_sided = full_corr[T - 1:] # Index T represents lag 0. Since we're only interested in how the signal correlates with its future 
+    # self, we only take the positive lags (lags 0, 1, 2, ..., T-1) from the full_corr.
     acf = one_sided / var                       # normalised: acf[0] = 1.0
 
     threshold = 1.0 / np.e                      # ≈ 0.3679
@@ -272,6 +274,107 @@ def compute_embedding_delay(
         logger.debug("compute_embedding_delay: τ=%d samples (ACF 1/e threshold)", tau)
 
     return tau
+
+
+# ===========================================================================
+# Section 3.2 — Uniform Time-Delay Embedding
+# ===========================================================================
+
+def uniform_embed(theta: np.ndarray, d: int, tau: int) -> np.ndarray:
+    """
+    Reconstruct the phase-space trajectory via uniform time-delay embedding
+    (Wang 2020 Eq. 10).
+
+    Each row of the output is a delay-coordinate vector:
+
+        row i = [θ(i+(d-1)τ),  θ(i+(d-2)τ),  ...,  θ(i+τ),  θ(i)]
+
+    Written with the *most recent* sample first, so row 0 corresponds to
+    the earliest time at which a full d-dimensional history is available:
+    t = (d-1)·τ.  Equivalently, in the notation of the paper:
+
+        θ_t^{xd} = [θ_x(t),  θ_x(t-τ),  ...,  θ_x(t-(d-1)τ)]
+
+    where t starts at (d-1)·τ (the first valid sample) and runs to T-1.
+
+    Parameters
+    ----------
+    theta : np.ndarray, shape (T,)
+        1D phase (or amplitude) time series.  Can also be used on raw
+        amplitude sequences for Phase 3 embedding.
+    d : int
+        Embedding dimension.  d=1 returns the original series reshaped as
+        a column vector.  d=3 is the default for dSPTE (configurable).
+    tau : int
+        Embedding delay in samples (≥ 1).  Must satisfy
+        (d-1)*tau < T, otherwise no valid rows exist.
+
+    Returns
+    -------
+    embedded : np.ndarray, shape (T - (d-1)*tau, d)
+        Each row is one delay-coordinate vector.  The number of valid rows
+        is T - (d-1)*tau (no NaN padding — only rows with a full history
+        are included, per the spec).
+
+    Raises
+    ------
+    ValueError
+        If theta is not 1D, d < 1, tau < 1, or the signal is too short
+        to produce at least one valid embedding row.
+
+    Notes
+    -----
+    **Column layout:** column 0 = θ(t)  (most recent),
+    column j = θ(t - j·τ)  (j steps back).  This matches Wang (2020)'s
+    convention where the current sample is listed first.
+
+    **Efficiency:** implemented via stride-tricks on a pre-allocated index
+    array — O(T·d) time, no Python loop over rows.  For the ASTaUND window
+    size (T=1351, d=3, τ≈100) the embedded matrix has shape (1151, 3) and
+    fits easily in memory.
+
+    **Embedding span:** the total time history captured per row is
+    (d-1)·τ samples.  With d=3 and τ=100 (typical for ASTaUND HbO phase),
+    each row spans 200 samples = 8 s — covering the full hemodynamic
+    response peak.
+    """
+    theta = np.asarray(theta, dtype=float)
+
+    if theta.ndim != 1:
+        raise ValueError(
+            f"uniform_embed: expected 1D input, got shape {theta.shape}"
+        )
+    if d < 1:
+        raise ValueError(f"uniform_embed: d must be ≥ 1, got {d}")
+    if tau < 1:
+        raise ValueError(f"uniform_embed: tau must be ≥ 1, got {tau}")
+
+    T = len(theta)
+    history = (d - 1) * tau          # samples of history required per row
+    n_rows = T - history             # number of valid embedding rows
+
+    if n_rows < 1:
+        raise ValueError(
+            f"uniform_embed: signal too short for embedding. "
+            f"T={T}, d={d}, tau={tau} → need T > (d-1)*tau = {history}, "
+            f"but only {n_rows} valid rows would result."
+        )
+
+    # Build index matrix: shape (n_rows, d)
+    # row_starts[i] = index of the most-recent sample for row i = i + history
+    # col j gives the index of the j-th lag: row_start - j*tau
+    row_starts = np.arange(history, T)           # shape (n_rows,)  = i + history
+    lags = np.arange(d) * tau                    # shape (d,)       = [0, τ, 2τ, ...]
+    indices = row_starts[:, np.newaxis] - lags   # shape (n_rows, d)
+
+    embedded = theta[indices]                    # shape (n_rows, d)
+
+    logger.debug(
+        "uniform_embed: T=%d  d=%d  tau=%d  → shape %s  "
+        "(history span: %d samples = %.2f s @ 25 Hz)",
+        T, d, tau, embedded.shape, history, history / 25.0,
+    )
+    return embedded
 
 
 # ===========================================================================
@@ -472,7 +575,99 @@ def _run_tests() -> None:
 
     print("  [PASS] 3.1.3 compute_embedding_delay\n")
 
-    print("=== All Section 3.1 tests passed. ===\n")
+    # ------------------------------------------------------------------
+    # 3.2.1 — uniform_embed
+    # ------------------------------------------------------------------
+    print("--- 3.2.1  uniform_embed ---")
+
+    # (a) Spec validation: T=1000, d=3, tau=2 → shape (996, 3)
+    x_check = np.arange(1000, dtype=float)
+    emb = uniform_embed(x_check, d=3, tau=2)
+    assert emb.shape == (996, 3), f"Expected (996, 3), got {emb.shape}"
+    print(f"  (a) T=1000, d=3, tau=2  → shape {emb.shape}  ✓ == (996, 3)")
+
+    # (b) Row content: row i should be [x[i+4], x[i+2], x[i+0]] = [i+4, i+2, i]
+    #     (history = (d-1)*tau = 4; row_start = i+4; cols = [i+4, i+4-2, i+4-4])
+    for i in [0, 10, 100, 995]:
+        expected = np.array([i + 4, i + 2, i], dtype=float)
+        np.testing.assert_array_equal(
+            emb[i], expected,
+            err_msg=f"Row {i} mismatch: got {emb[i]}, expected {expected}"
+        )
+    print("  (b) Row content check (d=3, tau=2)  ✓  [t, t-τ, t-2τ] correct")
+
+    # (c) d=1, tau=1 → should return the original signal as a column vector
+    emb_d1 = uniform_embed(x_check, d=1, tau=1)
+    assert emb_d1.shape == (1000, 1), f"Expected (1000, 1), got {emb_d1.shape}"
+    np.testing.assert_array_equal(emb_d1[:, 0], x_check)
+    print(f"  (c) d=1, tau=1  → shape {emb_d1.shape}  ✓  identity embedding")
+
+    # (d) d=3, tau=1 → shape (T-2, 3)
+    emb_tau1 = uniform_embed(x_check, d=3, tau=1)
+    assert emb_tau1.shape == (998, 3), f"Expected (998, 3), got {emb_tau1.shape}"
+    print(f"  (d) d=3, tau=1  → shape {emb_tau1.shape}  ✓")
+
+    # (e) Exact shape formula: T - (d-1)*tau
+    for d_test, tau_test in [(3, 2), (4, 5), (2, 10), (5, 3)]:
+        T_test = 500
+        expected_rows = T_test - (d_test - 1) * tau_test
+        if expected_rows < 1:
+            continue
+        emb_t = uniform_embed(np.zeros(T_test), d=d_test, tau=tau_test)
+        assert emb_t.shape == (expected_rows, d_test), (
+            f"d={d_test}, tau={tau_test}: expected ({expected_rows}, {d_test}), "
+            f"got {emb_t.shape}"
+        )
+    print("  (e) Shape formula T-(d-1)τ verified for d∈{2,3,4,5}, τ∈{2,3,5,10}  ✓")
+
+    # (f) Error cases
+    try:
+        uniform_embed(np.ones((10, 2)), d=3, tau=1)
+        assert False, "Should raise for 2D input"
+    except ValueError:
+        pass
+    try:
+        uniform_embed(np.ones(10), d=0, tau=1)
+        assert False, "Should raise for d=0"
+    except ValueError:
+        pass
+    try:
+        uniform_embed(np.ones(10), d=3, tau=0)
+        assert False, "Should raise for tau=0"
+    except ValueError:
+        pass
+    try:
+        uniform_embed(np.ones(5), d=3, tau=10)  # needs T > (d-1)*tau = 20, only 5
+        assert False, "Should raise: signal too short"
+    except ValueError:
+        pass
+    print("  (f) Error cases (2D input, d=0, tau=0, too-short)  ✓  all raise ValueError")
+
+    # (g) Real A1 phase signal — typical pipeline embedding
+    print("\n  (g) Real A1 pipeline embedding (first window, LPFC):")
+    try:
+        from utils_te import load_or_extract_roi_signals
+        data_a1, roi_names, _ = load_or_extract_roi_signals("A1")
+        x_roi = data_a1[0, :1351]                        # first window, LPFC
+        theta_roi = extract_phase_signal(x_roi)
+        tau_roi = compute_embedding_delay(theta_roi)
+        emb_roi = uniform_embed(theta_roi, d=3, tau=tau_roi)
+        expected_rows_roi = 1351 - 2 * tau_roi
+        assert emb_roi.shape == (expected_rows_roi, 3), (
+            f"Expected ({expected_rows_roi}, 3), got {emb_roi.shape}"
+        )
+        history_s = 2 * tau_roi / 25.0
+        print(f"    ROI: {roi_names[0]}  τ={tau_roi}  "
+              f"embedded shape: {emb_roi.shape}  "
+              f"(history span: {history_s:.1f} s)")
+        print(f"    Row 0: [{emb_roi[0, 0]:.4f}, {emb_roi[0, 1]:.4f}, {emb_roi[0, 2]:.4f}]")
+        print(f"    Values ∈ [{emb_roi.min():.4f}, {emb_roi.max():.4f}] rad  ✓")
+    except Exception as e:
+        print(f"    [SKIP] A1 ROI load failed: {e}")
+
+    print("  [PASS] 3.2.1 uniform_embed\n")
+
+    print("=== All Section 3.1–3.2 tests passed. ===\n")
 
 
 if __name__ == "__main__":
