@@ -1051,5 +1051,91 @@ def _run_tests() -> None:
     print("\n=== All Section 4.2 smoke tests passed. ===\n")
 
 
+def _cli_main() -> None:
+    """CLI: batch all subjects, one subject, smoke test, or group arrays only."""
+    import argparse
+
+    #To run on full expert-novice group, use the following command:
+    # python3 code/stage_e_transfer_entropy/03_subject_dspte_pipeline.py --batch --overwrite
+
+    #To run on a single subject, use the following command:
+    # python3 code/stage_e_transfer_entropy/03_subject_dspte_pipeline.py --subject A1 --overwrite
+
+    #To run the smoke test, use the following command:
+    # python3 code/stage_e_transfer_entropy/03_subject_dspte_pipeline.py --test
+    p = argparse.ArgumentParser(
+        description="Stage E Phase 1 — per-subject dSPTE and group arrays.",
+    )
+    p.add_argument(
+        "--batch",
+        action="store_true",
+        help="Run dSPTE for all Expert+Novice subjects in config (R10 excluded), "
+        "write te_batch_log.json, then build B_Exp_dspte / B_Nov_dspte.",
+    )
+    p.add_argument(
+        "--subject",
+        type=str,
+        default=None,
+        metavar="ID",
+        help="Run dSPTE for one subject (e.g. R7). Use --overwrite to recompute if .npz exists.",
+    )
+    p.add_argument(
+        "--group-only",
+        action="store_true",
+        help="Only run build_group_arrays_dspte() from existing per-subject .npz files.",
+    )
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Recompute even if sub-{id}_dspte_connectivity.npz exists.",
+    )
+    p.add_argument(
+        "--no-overwrite",
+        action="store_true",
+        help="Skip subjects that already have output (batch mode).",
+    )
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run Section 4.2 smoke test on A1 only (default if no other flag).",
+    )
+    args = p.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    config = load_config()
+
+    # Batch: respect --overwrite / --no-overwrite (matches process_subject_dspte defaults).
+    overwrite = bool(args.overwrite)
+    if args.no_overwrite:
+        overwrite = False
+
+    if args.group_only:
+        build_group_arrays_dspte(config=config)
+        return
+    if args.batch:
+        run_batch_dspte(
+            study="expert_novice",
+            subjects=None,
+            config=config,
+            overwrite=overwrite,
+        )
+        build_group_arrays_dspte(config=config)
+        return
+    if args.subject:
+        process_subject_dspte(
+            args.subject.strip(),
+            study="expert_novice",
+            config=config,
+            overwrite=overwrite,
+        )
+        return
+    if args.test or not (args.batch or args.subject or args.group_only):
+        _run_tests()
+
+
 if __name__ == "__main__":
-    _run_tests()
+    _cli_main()
