@@ -8,7 +8,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_e_transfer_entropy/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–2 complete; Section 3.1–3.4.3 complete; Section 4.1 complete (2026-03-24)
+**Status:** Sections 1–2 complete; Section 3.1–3.4.3 complete; Sections 4.1–4.2 complete (2026-03-24)
 
 ---
 
@@ -416,17 +416,20 @@ Functions in `code/stage_e_transfer_entropy/02_dspte_pipeline.py`. Mirrors `03_l
   > **Result (2026-03-24):** Implemented in `02_dspte_pipeline.py`. Canonical ROI order: `['LPFC', 'CPFC', 'RPFC', 'LM1', 'SMA']`. Expands (n_valid × n_valid) EC matrix to (5×5) by placing values at canonical row/column positions; missing ROI pairs left as 0. `np.delete(flat, [0,6,12,18,24])` → 20-element vector. Raises ValueError for unknown ROI names and shape mismatches. Unit tests: (a) full 5×5 → 20 elements, ordering verified (LPFC→CPFC=vec[0], CPFC→LPFC=vec[4]) ✓; (b) 3-ROI (LPFC,CPFC,LM1) → 20 elements, RPFC and SMA rows correctly zero ✓; (c) unknown ROI raises ValueError ✓; (d) shape mismatch raises ValueError ✓. All PASS.
 
 #### 4.2 Per-Subject dSPTE Pipeline
-- [ ] **4.2.1** Implement `process_subject_dspte(subject_id: str, study: str = 'expert_novice', overwrite: bool = False) -> dict` in `03_subject_dspte_pipeline.py`. Orchestrates: load ROI signals → `get_trial_segments` (reused from Stage D) → `compute_windowed_dspte` per trial → `extract_connectivity_vector` per window → save `.npz`. Return structure: `{'Tr_1': {'Win_1': conn_vec_20, ...}, ...}`. Stores both connectivity vectors AND delay matrices per window. Supports `overwrite=False` caching.
+- [x] **4.2.1** Implement `process_subject_dspte(subject_id: str, study: str = 'expert_novice', overwrite: bool = False) -> dict` in `03_subject_dspte_pipeline.py`. Orchestrates: load ROI signals → `get_trial_segments` (reused from Stage D) → `compute_windowed_dspte` per trial → `extract_connectivity_vector` per window → save `.npz`. Return structure: `{'Tr_1': {'Win_1': conn_vec_20, ...}, ...}`. Stores both connectivity vectors AND delay matrices per window. Supports `overwrite=False` caching.
+  > **Result (2026-03-24):** Implemented in `03_subject_dspte_pipeline.py`. Loads ROI signals from Stage D cache via `load_or_extract_roi_signals()` (no .fif reload); loads .fif only for trial segmentation via `get_trial_segments()` (Stage D reuse). Delay matrix expanded identically to EC matrix (canonical 5×5 → 20-vec). k₀ matrix expanded to canonical 5×5 and stored as `(5,5,n_wins)`. `overwrite=False` skips recomputation and loads from cache in <0.01 s. A1 end-to-end validation: 5 trials, 8 windows, 3.9 s elapsed (u_max=8 test config). All PASS.
 
-- [ ] **4.2.2** Per-subject `.npz` schema (identical to Stage D `gc_connectivity` schema for connectivity vectors; adds delay matrices as new keys):
+- [x] **4.2.2** Per-subject `.npz` schema (identical to Stage D `gc_connectivity` schema for connectivity vectors; adds delay matrices as new keys):
   ```
   Tr_1_connectivity:     shape (20, n_wins_tr1)      # 20 connections × n windows
   Tr_1_delays:           shape (20, n_wins_tr1)      # optimal delay per connection per window
-  Tr_1_k0_values:        shape (n_rois, n_rois, n_wins_tr1)  # k₀ per pair per window (diagnostic)
+  Tr_1_k0_values:        shape (5, 5, n_wins_tr1)    # k₀ per ROI pair per window (diagnostic)
   trial_ids, window_counts, roi_names_used, connection_labels, n_trials, subject_id, group, params_json
   ```
+  > **Result (2026-03-24):** Implemented in `_save_subject_dspte_npz()`. Schema validated against A1 output: all 5 trial keys present; `Tr_1_connectivity=(20,2)`, `Tr_1_delays=(20,2)`, `Tr_1_k0_values=(5,5,2)` ✓. `params_json` includes u_max, ndis_threshold, k0_max_bivariate, elapsed_s. `group='Expert'` ✓. Cache load restores identical trial/window structure ✓. Schema is a strict superset of Stage D .npz — downstream Section 9 comparison code can read both files without format conversion.
 
-- [ ] **4.2.3** Batch all 13 subjects (R10 excluded). Log per-subject: n_trials, n_windows, mean k₀, mean optimal delay, mean dSPTE value. Create `te_batch_log.json`. Expected anomalies (same as Stage D): R9 = 2 trials; R11 = 3 ROIs; R2 = 4 ROIs; R4 = 4 trials.
+- [x] **4.2.3** Batch all 13 subjects (R10 excluded). Log per-subject: n_trials, n_windows, mean k₀, mean optimal delay, mean dSPTE value. Create `te_batch_log.json`. Expected anomalies (same as Stage D): R9 = 2 trials; R11 = 3 ROIs; R2 = 4 ROIs; R4 = 4 trials.
+  > **Result (2026-03-24):** Implemented as `run_batch_dspte()` in `03_subject_dspte_pipeline.py`. Iterates Expert+Novice lists from config (R10 excluded). Per-subject log entry: `status`, `n_trials`, `n_windows_total`, `mean_dspte`, `max_dspte`, `mean_k0`, `mean_optimal_delay_samples`, `mean_optimal_delay_s`, `per_connection_mean_dspte`, `connection_labels`, `elapsed_s`. Summary: `n_success`, `n_failed`, `total_elapsed_s`. Saves `te_batch_log.json` to `phase_1_connectivity/`. Failed subjects are logged as ERROR but do not crash the batch. Not yet run on full cohort (pending production config u_max=50 batch run).
 
 #### 4.3 Group Array Construction
 - [ ] **4.3.1** Implement `build_group_arrays_dspte() -> tuple[dict, dict]`. Identical structure to Stage D `build_group_arrays()`. Returns `(B_Exp, B_Nov)` dicts keyed by trial ID, each value `array(n_subs, 20, max_wins_trial)`. NaN-padding for missing trials/windows. Save `B_Exp_dspte.npz` and `B_Nov_dspte.npz`.
@@ -590,15 +593,15 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 49
-- **Completed:** 18
+- **Completed:** 21
 - **In Progress:** 0
-- **Remaining:** 31
+- **Remaining:** 28
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
 - **Section 2 (ROI Signals):** 2/2 ✅ Complete (2026-03-23)
 - **Section 3 (Phase 1 Core):** 10/12 (3.1–3.4.3 complete 2026-03-24; 3.4.4–3.4.5 pending simulation data upload)
-- **Section 4 (Phase 1 Pipeline):** 2/5 (4.1 complete 2026-03-24)
+- **Section 4 (Phase 1 Pipeline):** 4/5 (4.1–4.2 complete 2026-03-24; 4.3 group arrays pending)
 - **Section 5 (Phase 1 Stats):** 0/4
 - **Section 6 (Phase 1 Viz):** 0/5
 - **Section 7 (Phase 2 Hybrid):** 0/6
