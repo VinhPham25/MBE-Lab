@@ -716,17 +716,86 @@ def run_batch_dspte(
 # Section 4.3 — Group Array Construction
 # ===========================================================================
 
-def build_group_arrays_dspte(
+# ---------------------------------------------------------------------------
+# Shared helpers used by all three group array builders
+# ---------------------------------------------------------------------------
+
+_N_TRIALS_CANONICAL = 5  # canonical trial count for H1/group arrays
+
+
+def _load_npz_lists(
+    expert_ids: list,
+    novice_ids: list,
+    conn_dir: Path,
+    caller: str,
+) -> tuple[list, list]:
+    """Load per-subject .npz files for both groups; None for missing files."""
+    def _load(subject_ids):
+        results = []
+        for sid in subject_ids:
+            fpath = conn_dir / f"sub-{sid}_dspte_connectivity.npz"
+            if not fpath.exists():
+                logger.warning(
+                    "%s: missing .npz for %s: %s", caller, sid, fpath.name
+                )
+                results.append(None)
+            else:
+                results.append(dict(np.load(fpath, allow_pickle=True)))
+        return results
+
+    return _load(expert_ids), _load(novice_ids)
+
+
+class _NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super().default(obj)
+
+
+def _window_summary(subject_ids, npz_list):
+    out = {}
+    for sid, d in zip(subject_ids, npz_list):
+        if d is None:
+            out[sid] = {"status": "missing", "trial_window_counts": {}}
+            continue
+        trial_ids_s = list(d["trial_ids"])
+        window_counts_s = list(d["window_counts"].astype(int))
+        out[sid] = {
+            "status": "ok",
+            "n_trials": int(d["n_trials"]),
+            "trial_window_counts": dict(zip(trial_ids_s, window_counts_s)),
+            "total_windows": int(sum(window_counts_s)),
+            "roi_names_used": list(d["roi_names_used"]),
+            "group": str(d["group"]),
+        }
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 4.3.1c — build_group_arrays_all_windows()  (renamed from build_group_arrays_dspte)
+# ---------------------------------------------------------------------------
+
+def build_group_arrays_all_windows(
     study: str = "expert_novice",
     config: Optional[dict] = None,
+    overwrite: bool = False,
 ) -> tuple[dict, dict]:
     """
     Load all per-subject dSPTE .npz files and stack into group-level arrays.
 
-    Mirrors Stage D's ``build_group_arrays()`` exactly — same NaN-padding
-    logic, same output schema, same JSON summary.  The only difference is
-    the source directory (``phase_1_connectivity/`` instead of
-    ``gc_connectivity/``) and the output filenames.
+    All windows from every subject are included.  This is the original
+    ``build_group_arrays_dspte()`` logic, renamed.  Use for H0
+    (within-trial stability) and HIV (across-trial stability) tests which
+    require window-level resolution.
+
+    .. note::
+        Uses all-windows arrays — window-level resolution required for
+        within-trial stability test (H0) and across-trial stability test (HIV).
 
     Parameters
     ----------
@@ -734,6 +803,9 @@ def build_group_arrays_dspte(
         Config dataset key.  Default 'expert_novice'.
     config : dict, optional
         Parsed config.yaml.  Loaded if None.
+    overwrite : bool
+        If False and the output .npz files already exist, load and return
+        from disk.  Default False.
 
     Returns
     -------
@@ -745,14 +817,24 @@ def build_group_arrays_dspte(
 
     Saves
     -----
-    ``phase_1_group/B_Exp_dspte.npz``     — Expert group arrays
-    ``phase_1_group/B_Nov_dspte.npz``     — Novice group arrays
-    ``phase_1_group/dspte_summary.json``  — processing metadata
+    ``phase_1_group/B_Exp_dspte_all.npz``  — Expert group arrays
+    ``phase_1_group/B_Nov_dspte_all.npz``  — Novice group arrays
+    ``phase_1_group/dspte_summary.json``   — processing metadata
     """
     if config is None:
         config = load_config()
 
     from utils_te import get_te_output_dir, get_connection_labels  # noqa
+
+    group_dir = get_te_output_dir("phase_1_group", config=config)
+    exp_path = group_dir / "B_Exp_dspte_all.npz"
+    nov_path = group_dir / "B_Nov_dspte_all.npz"
+
+    if not overwrite and exp_path.exists() and nov_path.exists():
+        logger.info(
+            "build_group_arrays_all_windows: cached files found — loading from disk."
+        )
+        return _load_group_npz_as_dict(exp_path), _load_group_npz_as_dict(nov_path)
 
     te_cfg = config.get("stage_e_transfer_entropy", {})
     subj_cfg = te_cfg.get("subjects", {})
@@ -760,49 +842,30 @@ def build_group_arrays_dspte(
     novice_ids: list = subj_cfg.get("Novice", [])
 
     logger.info(
-        "build_group_arrays_dspte: Experts n=%d %s, Novices n=%d %s",
+        "build_group_arrays_all_windows: Experts n=%d %s, Novices n=%d %s",
         len(expert_ids), expert_ids, len(novice_ids), novice_ids,
     )
 
-    # ------------------------------------------------------------------
-    # Load per-subject .npz files
-    # ------------------------------------------------------------------
     conn_dir = get_te_output_dir("phase_1_connectivity", config=config)
-
-    def _load_subject_npz_list(subject_ids):
-        results = []
-        for sid in subject_ids:
-            fpath = conn_dir / f"sub-{sid}_dspte_connectivity.npz"
-            if not fpath.exists():
-                logger.warning(
-                    "build_group_arrays_dspte: missing .npz for %s: %s",
-                    sid, fpath.name,
-                )
-                results.append(None)
-            else:
-                results.append(dict(np.load(fpath, allow_pickle=True)))
-        return results
-
-    expert_npz_list = _load_subject_npz_list(expert_ids)
-    novice_npz_list = _load_subject_npz_list(novice_ids)
+    expert_npz_list, novice_npz_list = _load_npz_lists(
+        expert_ids, novice_ids, conn_dir, "build_group_arrays_all_windows"
+    )
 
     n_exp_loaded = sum(1 for d in expert_npz_list if d is not None)
     n_nov_loaded = sum(1 for d in novice_npz_list if d is not None)
     logger.info(
-        "build_group_arrays_dspte: loaded %d/%d Expert, %d/%d Novice .npz files",
+        "build_group_arrays_all_windows: loaded %d/%d Expert, %d/%d Novice .npz files",
         n_exp_loaded, len(expert_ids), n_nov_loaded, len(novice_ids),
     )
 
     all_npz = [d for d in expert_npz_list + novice_npz_list if d is not None]
     if not all_npz:
         raise RuntimeError(
-            "build_group_arrays_dspte: no per-subject .npz files found. "
+            "build_group_arrays_all_windows: no per-subject .npz files found. "
             "Run process_subject_dspte() for each subject first."
         )
 
-    # ------------------------------------------------------------------
     # Determine max trials and max windows per trial across all subjects
-    # ------------------------------------------------------------------
     max_trials = max(int(d["n_trials"]) for d in all_npz)
 
     max_wins_per_trial: dict = {}
@@ -816,29 +879,16 @@ def build_group_arrays_dspte(
         max_wins_per_trial[trial_id] = max_w
 
     logger.info(
-        "build_group_arrays_dspte: max_trials=%d  wins_per_trial=%s",
+        "build_group_arrays_all_windows: max_trials=%d  wins_per_trial=%s",
         max_trials, max_wins_per_trial,
     )
 
-    # ------------------------------------------------------------------
-    # Stack into (n_subs, 20, max_wins) arrays with NaN-padding
-    # ------------------------------------------------------------------
     n_conn = len(get_connection_labels())   # 20
     n_exp = len(expert_ids)
     n_nov = len(novice_ids)
 
     B_Exp: dict = {}
     B_Nov: dict = {}
-
-    #B_Exp and B_Nov are dictionaries that contain 3D matrices / cubes with dimensions (n_subs, 20, max_wins) sorted by trial_id
-    # Dictionary with 5 trial keys where each key holds a 3D matrix / cube with dimensions (n_subs, 20, max_wins)
-    #n_subs is the number of subjects in the group
-    #20 is the number of connections
-    #max_wins is the maximum number of windows for a given trial
-    #the values in the matrices are the connectivity vectors for the given trial and subject
-    #the matrices are NaN-padded for subjects with fewer windows than the maximum for that trial
-    #the matrices are NaN-padded for subjects with no data for that trial
-    #the matrices are NaN-padded for subjects with no data for that trial
 
     for trial_id, max_w in max_wins_per_trial.items():
         if max_w == 0:
@@ -851,9 +901,9 @@ def build_group_arrays_dspte(
                 continue
             key = f"{trial_id}_connectivity"
             if key in npz_data:
-                arr = npz_data[key]   # Extracts the connectivity vector for the given trial and subject (20, n_wins_subj) 
+                arr = npz_data[key]   # (20, n_wins_subj)
                 if arr.ndim == 2 and arr.shape[1] > 0:
-                    B_Exp[trial_id][sub_idx, :, : arr.shape[1]] = arr # Assigns the connectivity vector for the given trial and subject to the 3D matrix / cube
+                    B_Exp[trial_id][sub_idx, :, : arr.shape[1]] = arr
 
         for sub_idx, npz_data in enumerate(novice_npz_list):
             if npz_data is None:
@@ -872,52 +922,29 @@ def build_group_arrays_dspte(
             B_Nov[trial_id].shape, nov_valid,
         )
 
-    # ------------------------------------------------------------------
-    # Save B_Exp_dspte.npz, B_Nov_dspte.npz, dspte_summary.json
-    # ------------------------------------------------------------------
-    group_dir = get_te_output_dir("phase_1_group", config=config)
-
+    # Save
     exp_save = {tid: arr for tid, arr in B_Exp.items()}
     exp_save["subject_ids"] = np.array(expert_ids)
-    np.savez(group_dir / "B_Exp_dspte.npz", **exp_save)
-    logger.info("build_group_arrays_dspte: saved B_Exp_dspte.npz  (trials=%s)", list(B_Exp.keys()))
+    exp_save["strategy"] = np.array("all_windows")
+    np.savez(exp_path, **exp_save)
+    logger.info(
+        "build_group_arrays_all_windows: saved B_Exp_dspte_all.npz  (trials=%s)",
+        list(B_Exp.keys()),
+    )
 
     nov_save = {tid: arr for tid, arr in B_Nov.items()}
     nov_save["subject_ids"] = np.array(novice_ids)
-    np.savez(group_dir / "B_Nov_dspte.npz", **nov_save)
-    logger.info("build_group_arrays_dspte: saved B_Nov_dspte.npz  (trials=%s)", list(B_Nov.keys()))
+    nov_save["strategy"] = np.array("all_windows")
+    np.savez(nov_path, **nov_save)
+    logger.info(
+        "build_group_arrays_all_windows: saved B_Nov_dspte_all.npz  (trials=%s)",
+        list(B_Nov.keys()),
+    )
 
-    # Summary JSON
-    def _window_summary(subject_ids, npz_list):
-        out = {}
-        for sid, d in zip(subject_ids, npz_list):
-            if d is None:
-                out[sid] = {"status": "missing", "trial_window_counts": {}}
-                continue
-            trial_ids_s = list(d["trial_ids"])
-            window_counts_s = list(d["window_counts"].astype(int))
-            out[sid] = {
-                "status": "ok",
-                "n_trials": int(d["n_trials"]),
-                "trial_window_counts": dict(zip(trial_ids_s, window_counts_s)),
-                "total_windows": int(sum(window_counts_s)),
-                "roi_names_used": list(d["roi_names_used"]),
-                "group": str(d["group"]),
-            }
-        return out
-
-    class _NumpyEncoder(json.JSONEncoder):
-        def default(self, obj):
-            if isinstance(obj, np.integer):
-                return int(obj)
-            if isinstance(obj, np.floating):
-                return float(obj)
-            if isinstance(obj, np.ndarray):
-                return obj.tolist()
-            return super().default(obj)
-
+    # Summary JSON (shared with all builders — written by build_all_group_arrays)
     summary = {
         "created_at": datetime.now().isoformat(),
+        "strategy": "all_windows",
         "n_experts": len(expert_ids),
         "n_novices": len(novice_ids),
         "expert_ids": expert_ids,
@@ -931,9 +958,384 @@ def build_group_arrays_dspte(
     }
     with open(group_dir / "dspte_summary.json", "w") as fh:
         json.dump(summary, fh, indent=2, cls=_NumpyEncoder)
-    logger.info("build_group_arrays_dspte: saved dspte_summary.json")
+    logger.info("build_group_arrays_all_windows: saved dspte_summary.json")
 
     return B_Exp, B_Nov
+
+
+# ---------------------------------------------------------------------------
+# 4.3.1a — build_group_arrays_subject_mean()  PRIMARY for H1
+# ---------------------------------------------------------------------------
+
+def build_group_arrays_subject_mean(
+    study: str = "expert_novice",
+    config: Optional[dict] = None,
+    overwrite: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build group arrays using the subject-mean strategy (PRIMARY for H1).
+
+    For each subject × trial, average all windows (axis=1 of the (20, n_wins)
+    connectivity array) to produce a single (20,) vector.  Stack into 3-D
+    arrays of shape ``(n_subs, 20, n_trials)`` with NaN-fill for missing
+    trials.  This gives every subject equal weight regardless of trial
+    duration, controlling for the Novice/Expert window-count confound.
+
+    Parameters
+    ----------
+    study : str
+        Config dataset key.  Default 'expert_novice'.
+    config : dict, optional
+        Parsed config.yaml.  Loaded if None.
+    overwrite : bool
+        If False and the output .npz files already exist, load and return
+        from disk.  Default False.
+
+    Returns
+    -------
+    B_Exp_mean : np.ndarray, shape (n_exp_subjects, 20, n_trials)
+    B_Nov_mean : np.ndarray, shape (n_nov_subjects, 20, n_trials)
+
+    Saves
+    -----
+    ``phase_1_group/B_Exp_dspte_mean.npz``
+    ``phase_1_group/B_Nov_dspte_mean.npz``
+
+    Each .npz stores: ``data`` (n_subs, 20, 5), ``subject_ids``,
+    ``strategy="subject_mean"``.
+    """
+    if config is None:
+        config = load_config()
+
+    from utils_te import get_te_output_dir, get_connection_labels  # noqa
+
+    group_dir = get_te_output_dir("phase_1_group", config=config)
+    exp_path = group_dir / "B_Exp_dspte_mean.npz"
+    nov_path = group_dir / "B_Nov_dspte_mean.npz"
+
+    if not overwrite and exp_path.exists() and nov_path.exists():
+        logger.info(
+            "build_group_arrays_subject_mean: cached files found — loading from disk."
+        )
+        exp_npz = np.load(exp_path, allow_pickle=True)
+        nov_npz = np.load(nov_path, allow_pickle=True)
+        return exp_npz["data"], nov_npz["data"]
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    subj_cfg = te_cfg.get("subjects", {})
+    expert_ids: list = subj_cfg.get("Expert", [])
+    novice_ids: list = subj_cfg.get("Novice", [])
+
+    logger.info(
+        "build_group_arrays_subject_mean: Experts n=%d, Novices n=%d",
+        len(expert_ids), len(novice_ids),
+    )
+
+    conn_dir = get_te_output_dir("phase_1_connectivity", config=config)
+    expert_npz_list, novice_npz_list = _load_npz_lists(
+        expert_ids, novice_ids, conn_dir, "build_group_arrays_subject_mean"
+    )
+
+    n_conn = len(get_connection_labels())   # 20
+    n_trials = _N_TRIALS_CANONICAL
+
+    def _build_mean_array(subject_ids, npz_list):
+        n_subs = len(subject_ids)
+        arr = np.full((n_subs, n_conn, n_trials), np.nan)
+        for sub_idx, npz_data in enumerate(npz_list):
+            if npz_data is None:
+                logger.warning(
+                    "build_group_arrays_subject_mean: skipping %s (missing .npz)",
+                    subject_ids[sub_idx],
+                )
+                continue
+            for trial_idx in range(n_trials):
+                trial_id = f"Tr_{trial_idx + 1}"
+                key = f"{trial_id}_connectivity"
+                if key not in npz_data:
+                    continue
+                conn = npz_data[key]   # (20, n_wins)
+                if conn.ndim != 2 or conn.shape[1] == 0:
+                    continue
+                # Mean across windows → (20,)
+                arr[sub_idx, :, trial_idx] = np.nanmean(conn, axis=1)
+        return arr
+
+    B_Exp_mean = _build_mean_array(expert_ids, expert_npz_list)
+    B_Nov_mean = _build_mean_array(novice_ids, novice_npz_list)
+
+    logger.info(
+        "build_group_arrays_subject_mean: B_Exp_mean shape=%s  B_Nov_mean shape=%s",
+        B_Exp_mean.shape, B_Nov_mean.shape,
+    )
+
+    np.savez(
+        exp_path,
+        data=B_Exp_mean,
+        subject_ids=np.array(expert_ids),
+        strategy=np.array("subject_mean"),
+    )
+    logger.info("build_group_arrays_subject_mean: saved B_Exp_dspte_mean.npz")
+
+    np.savez(
+        nov_path,
+        data=B_Nov_mean,
+        subject_ids=np.array(novice_ids),
+        strategy=np.array("subject_mean"),
+    )
+    logger.info("build_group_arrays_subject_mean: saved B_Nov_dspte_mean.npz")
+
+    return B_Exp_mean, B_Nov_mean
+
+
+# ---------------------------------------------------------------------------
+# 4.3.1b — build_group_arrays_first_window()  SENSITIVITY CHECK for H1
+# ---------------------------------------------------------------------------
+
+def build_group_arrays_first_window(
+    study: str = "expert_novice",
+    config: Optional[dict] = None,
+    overwrite: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build group arrays using the first-window strategy (SENSITIVITY CHECK for H1).
+
+    For each subject × trial, take only ``Win_1`` — the first column of the
+    (20, n_wins) connectivity array (index ``[:, 0]``).  This is the most
+    conservative de-confounding approach: every subject contributes exactly
+    one observation per trial regardless of trial duration.
+
+    If a subject has a trial recorded but that trial has zero windows (edge
+    case), the entry is left as NaN.
+
+    Parameters
+    ----------
+    study : str
+        Config dataset key.  Default 'expert_novice'.
+    config : dict, optional
+        Parsed config.yaml.  Loaded if None.
+    overwrite : bool
+        If False and the output .npz files already exist, load and return
+        from disk.  Default False.
+
+    Returns
+    -------
+    B_Exp_fw : np.ndarray, shape (n_exp_subjects, 20, n_trials)
+    B_Nov_fw : np.ndarray, shape (n_nov_subjects, 20, n_trials)
+
+    Saves
+    -----
+    ``phase_1_group/B_Exp_dspte_fw.npz``
+    ``phase_1_group/B_Nov_dspte_fw.npz``
+
+    Each .npz stores: ``data`` (n_subs, 20, 5), ``subject_ids``,
+    ``strategy="first_window"``.
+    """
+    if config is None:
+        config = load_config()
+
+    from utils_te import get_te_output_dir, get_connection_labels  # noqa
+
+    group_dir = get_te_output_dir("phase_1_group", config=config)
+    exp_path = group_dir / "B_Exp_dspte_fw.npz"
+    nov_path = group_dir / "B_Nov_dspte_fw.npz"
+
+    if not overwrite and exp_path.exists() and nov_path.exists():
+        logger.info(
+            "build_group_arrays_first_window: cached files found — loading from disk."
+        )
+        exp_npz = np.load(exp_path, allow_pickle=True)
+        nov_npz = np.load(nov_path, allow_pickle=True)
+        return exp_npz["data"], nov_npz["data"]
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    subj_cfg = te_cfg.get("subjects", {})
+    expert_ids: list = subj_cfg.get("Expert", [])
+    novice_ids: list = subj_cfg.get("Novice", [])
+
+    logger.info(
+        "build_group_arrays_first_window: Experts n=%d, Novices n=%d",
+        len(expert_ids), len(novice_ids),
+    )
+
+    conn_dir = get_te_output_dir("phase_1_connectivity", config=config)
+    expert_npz_list, novice_npz_list = _load_npz_lists(
+        expert_ids, novice_ids, conn_dir, "build_group_arrays_first_window"
+    )
+
+    n_conn = len(get_connection_labels())   # 20
+    n_trials = _N_TRIALS_CANONICAL
+
+    def _build_fw_array(subject_ids, npz_list):
+        n_subs = len(subject_ids)
+        arr = np.full((n_subs, n_conn, n_trials), np.nan)
+        for sub_idx, npz_data in enumerate(npz_list):
+            if npz_data is None:
+                logger.warning(
+                    "build_group_arrays_first_window: skipping %s (missing .npz)",
+                    subject_ids[sub_idx],
+                )
+                continue
+            for trial_idx in range(n_trials):
+                trial_id = f"Tr_{trial_idx + 1}"
+                key = f"{trial_id}_connectivity"
+                if key not in npz_data:
+                    continue
+                conn = npz_data[key]   # (20, n_wins)
+                if conn.ndim != 2 or conn.shape[1] == 0:
+                    # Trial recorded but no windows — leave as NaN
+                    logger.debug(
+                        "build_group_arrays_first_window: %s %s has 0 windows — NaN",
+                        subject_ids[sub_idx], trial_id,
+                    )
+                    continue
+                # First window only → (20,)
+                arr[sub_idx, :, trial_idx] = conn[:, 0]
+        return arr
+
+    B_Exp_fw = _build_fw_array(expert_ids, expert_npz_list)
+    B_Nov_fw = _build_fw_array(novice_ids, novice_npz_list)
+
+    logger.info(
+        "build_group_arrays_first_window: B_Exp_fw shape=%s  B_Nov_fw shape=%s",
+        B_Exp_fw.shape, B_Nov_fw.shape,
+    )
+
+    np.savez(
+        exp_path,
+        data=B_Exp_fw,
+        subject_ids=np.array(expert_ids),
+        strategy=np.array("first_window"),
+    )
+    logger.info("build_group_arrays_first_window: saved B_Exp_dspte_fw.npz")
+
+    np.savez(
+        nov_path,
+        data=B_Nov_fw,
+        subject_ids=np.array(novice_ids),
+        strategy=np.array("first_window"),
+    )
+    logger.info("build_group_arrays_first_window: saved B_Nov_dspte_fw.npz")
+
+    return B_Exp_fw, B_Nov_fw
+
+
+# ---------------------------------------------------------------------------
+# 4.3.1d — build_all_group_arrays()  Orchestrator
+# ---------------------------------------------------------------------------
+
+def build_all_group_arrays(
+    study: str = "expert_novice",
+    config: Optional[dict] = None,
+    overwrite: bool = False,
+) -> dict:
+    """
+    Build all three group array variants and update dspte_summary.json.
+
+    Calls:
+    - ``build_group_arrays_subject_mean()`` — PRIMARY for H1
+    - ``build_group_arrays_first_window()`` — SENSITIVITY CHECK for H1
+    - ``build_group_arrays_all_windows()`` — H0 / HIV only
+
+    Returns
+    -------
+    paths : dict
+        ``{'mean': (B_Exp_mean, B_Nov_mean),
+           'fw':   (B_Exp_fw,   B_Nov_fw),
+           'all':  (B_Exp_all,  B_Nov_all)}``
+    """
+    if config is None:
+        config = load_config()
+
+    from utils_te import get_te_output_dir, get_connection_labels  # noqa
+
+    logger.info("build_all_group_arrays: building subject_mean arrays ...")
+    B_Exp_mean, B_Nov_mean = build_group_arrays_subject_mean(
+        study=study, config=config, overwrite=overwrite
+    )
+
+    logger.info("build_all_group_arrays: building first_window arrays ...")
+    B_Exp_fw, B_Nov_fw = build_group_arrays_first_window(
+        study=study, config=config, overwrite=overwrite
+    )
+
+    logger.info("build_all_group_arrays: building all_windows arrays ...")
+    B_Exp_all, B_Nov_all = build_group_arrays_all_windows(
+        study=study, config=config, overwrite=overwrite
+    )
+
+    # ------------------------------------------------------------------
+    # Update dspte_summary.json with duration-confound strategy metadata
+    # ------------------------------------------------------------------
+    group_dir = get_te_output_dir("phase_1_group", config=config)
+    summary_path = group_dir / "dspte_summary.json"
+
+    existing_summary: dict = {}
+    if summary_path.exists():
+        with open(summary_path) as fh:
+            existing_summary = json.load(fh)
+
+    existing_summary["duration_confound_strategy"] = {
+        "h1_primary": "subject_mean",
+        "h1_sensitivity": "first_window",
+        "h0_hiv": "all_windows",
+        "rationale": (
+            "Novice subjects have longer trials than Experts "
+            "(avg ~16 vs ~6 windows). Subject-level averaging gives each "
+            "subject equal weight regardless of trial duration."
+        ),
+    }
+    existing_summary["group_arrays_updated_at"] = datetime.now().isoformat()
+
+    with open(summary_path, "w") as fh:
+        json.dump(existing_summary, fh, indent=2, cls=_NumpyEncoder)
+    logger.info(
+        "build_all_group_arrays: updated dspte_summary.json with "
+        "duration_confound_strategy."
+    )
+
+    logger.info(
+        "build_all_group_arrays: DONE. "
+        "mean=%s/%s  fw=%s/%s  all=%d trials",
+        B_Exp_mean.shape, B_Nov_mean.shape,
+        B_Exp_fw.shape, B_Nov_fw.shape,
+        len(B_Exp_all),
+    )
+
+    return {
+        "mean": (B_Exp_mean, B_Nov_mean),
+        "fw": (B_Exp_fw, B_Nov_fw),
+        "all": (B_Exp_all, B_Nov_all),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat alias (kept so existing call sites don't break immediately)
+# ---------------------------------------------------------------------------
+
+def build_group_arrays_dspte(
+    study: str = "expert_novice",
+    config: Optional[dict] = None,
+) -> tuple[dict, dict]:
+    """Deprecated alias — calls ``build_group_arrays_all_windows()``."""
+    logger.warning(
+        "build_group_arrays_dspte() is deprecated. "
+        "Call build_all_group_arrays() instead, or one of the three "
+        "strategy-specific builders."
+    )
+    return build_group_arrays_all_windows(study=study, config=config)
+
+
+# ---------------------------------------------------------------------------
+# Private helper — load a group .npz back as a trial-keyed dict
+# (used by all_windows cache path)
+# ---------------------------------------------------------------------------
+
+def _load_group_npz_as_dict(path: Path) -> dict:
+    """Load a B_Exp/B_Nov_dspte_all.npz and return as trial-keyed dict."""
+    raw = dict(np.load(path, allow_pickle=True))
+    out = {k: v for k, v in raw.items() if k.startswith("Tr_")}
+    return out
 
 
 # ===========================================================================
@@ -1082,7 +1484,8 @@ def _cli_main() -> None:
     p.add_argument(
         "--group-only",
         action="store_true",
-        help="Only run build_group_arrays_dspte() from existing per-subject .npz files.",
+        help="Only run build_all_group_arrays() from existing per-subject .npz files "
+             "(builds all three strategy variants: mean, fw, all_windows).",
     )
     p.add_argument(
         "--overwrite",
@@ -1114,7 +1517,7 @@ def _cli_main() -> None:
         overwrite = False
 
     if args.group_only:
-        build_group_arrays_dspte(config=config)
+        build_all_group_arrays(config=config, overwrite=overwrite)
         return
     if args.batch:
         run_batch_dspte(
@@ -1123,7 +1526,7 @@ def _cli_main() -> None:
             config=config,
             overwrite=overwrite,
         )
-        build_group_arrays_dspte(config=config)
+        build_all_group_arrays(config=config, overwrite=overwrite)
         return
     if args.subject:
         process_subject_dspte(

@@ -432,8 +432,20 @@ Functions in `code/stage_e_transfer_entropy/02_dspte_pipeline.py`. Mirrors `03_l
   > **Result (2026-03-24):** Implemented as `run_batch_dspte()` in `03_subject_dspte_pipeline.py`. Iterates Expert+Novice lists from config (R10 excluded). Per-subject log entry: `status`, `n_trials`, `n_windows_total`, `mean_dspte`, `max_dspte`, `mean_k0`, `mean_optimal_delay_samples`, `mean_optimal_delay_s`, `per_connection_mean_dspte`, `connection_labels`, `elapsed_s`. Summary: `n_success`, `n_failed`, `total_elapsed_s`. Saves `te_batch_log.json` to `phase_1_connectivity/`. Failed subjects are logged as ERROR but do not crash the batch. Not yet run on full cohort (pending production config u_max=50 batch run).
 
 #### 4.3 Group Array Construction
-- [x] **4.3.1** Implement `build_group_arrays_dspte() -> tuple[dict, dict]`. Identical structure to Stage D `build_group_arrays()`. Returns `(B_Exp, B_Nov)` dicts keyed by trial ID, each value `array(n_subs, 20, max_wins_trial)`. NaN-padding for missing trials/windows. Save `B_Exp_dspte.npz` and `B_Nov_dspte.npz`.
-  > **Result (2026-03-24):** Implemented in `03_subject_dspte_pipeline.py`. Loads per-subject .npz from `phase_1_connectivity/`, determines max_trials and max_wins_per_trial across all loaded subjects, stacks into NaN-padded `(n_subs, 20, max_wins)` arrays. Saves `B_Exp_dspte.npz`, `B_Nov_dspte.npz`, `dspte_summary.json` to `phase_1_group/`. Validated on A1: Tr_1=(1,20,2), Tr_4=(1,20,1), value range [0.023, 0.237], no NaN-only subjects, all .npz schema keys present ✓. Full 13-subject group run pending batch completion.
+
+> **Amendment (2026-03-26):** The original single `build_group_arrays_dspte()` was split into three strategy-specific builders plus an orchestrator to fix a trial-duration confound. Novice subjects have longer trials (~16 windows vs ~6 for Experts), which over-weights late-trial Novice dynamics in a simple window-stack. The fix routes each statistical test to the appropriate group array variant.
+
+- [x] **4.3.1a** Implement `build_group_arrays_subject_mean() -> tuple[np.ndarray, np.ndarray]` — **PRIMARY for H1**. For each subject × trial, average across the window axis (axis=1 of the (20, n_wins) array) to produce a single (20,) vector. Stack into `(n_subs, 20, 5)` arrays with NaN-fill for missing trials. Save `B_Exp_dspte_mean.npz` and `B_Nov_dspte_mean.npz` with keys `data`, `subject_ids`, `strategy="subject_mean"`.
+  > **Result (2026-03-26):** Implemented in `03_subject_dspte_pipeline.py`. Canonical trial count = 5. Subjects with fewer trials (R9=2, R4=4) receive NaN columns for missing trials. Overwrite=False caching: skips recomputation if output .npz exists. Missing .npz per-subject logged as WARNING and skipped (no crash). Smoke test assertions specified: shape (7,20,5) Expert / (6,20,5) Novice; R9 Tr_3–5 all NaN.
+
+- [x] **4.3.1b** Implement `build_group_arrays_first_window() -> tuple[np.ndarray, np.ndarray]` — **SENSITIVITY CHECK for H1**. For each subject × trial, take only Win_1 (column index 0 of the (20, n_wins) array). Subjects with 0 windows recorded for a trial get NaN. Same NaN-fill logic. Save `B_Exp_dspte_fw.npz` and `B_Nov_dspte_fw.npz` with `strategy="first_window"`.
+  > **Result (2026-03-26):** Implemented in `03_subject_dspte_pipeline.py`. Edge case: zero-window trial → NaN (logged at DEBUG). Shape identical to mean arrays: (n_subs, 20, 5).
+
+- [x] **4.3.1c** Implement `build_group_arrays_all_windows() -> tuple[dict, dict]` — **H0 and HIV only**. Renamed from original `build_group_arrays_dspte()`. Returns `(B_Exp, B_Nov)` dicts keyed by trial ID, each value `array(n_subs, 20, max_wins_trial)`. Save `B_Exp_dspte_all.npz` and `B_Nov_dspte_all.npz`. Original backward-compat alias `build_group_arrays_dspte()` kept with deprecation warning.
+  > **Result (2026-03-26):** Renamed from original implementation (validated 2026-03-24). Output filenames updated from `_dspte.npz` → `_dspte_all.npz`. Adds `strategy="all_windows"` key to saved .npz. Overwrite=False caching added.
+
+- [x] **4.3.1d** Implement `build_all_group_arrays() -> dict` — **Orchestrator**. Calls all three builders and updates `dspte_summary.json` with `duration_confound_strategy` block. Returns `{'mean': (B_Exp_mean, B_Nov_mean), 'fw': (B_Exp_fw, B_Nov_fw), 'all': (B_Exp_all, B_Nov_all)}`. This is the entry point for batch runners and statistics scripts.
+  > **Result (2026-03-26):** Implemented in `03_subject_dspte_pipeline.py`. CLI `--batch` and `--group-only` flags updated to call `build_all_group_arrays()` instead of the deprecated alias. `dspte_summary.json` updated with `duration_confound_strategy` JSON block containing `h1_primary`, `h1_sensitivity`, `h0_hiv`, and `rationale` fields.
 
 ---
 
@@ -443,11 +455,11 @@ Functions in `code/stage_e_transfer_entropy/04_dspte_statistics.py`. Mirrors Sta
 
 - [ ] **5.1** Implement `run_normality_tests_te(B_Exp, B_Nov, conn_labels) -> pd.DataFrame`. Identical to Stage D normality test. Save to `phase_1_dspte/statistics/normality_test.csv`.
 
-- [ ] **5.2** Implement `test_expert_vs_novice_te(B_Exp, B_Nov, conn_labels) -> pd.DataFrame`. Identical to Stage D H1 test. FDR correction (Benjamini-Hochberg). Save to `H1_expert_vs_novice.csv`.
+- [ ] **5.2** Implement `test_expert_vs_novice_te(config) -> pd.DataFrame`. Loads `B_Exp_dspte_mean` and `B_Nov_dspte_mean` as primary. Runs sensitivity check with `_fw` arrays. FDR correction (Benjamini-Hochberg). Output CSV includes `p_fw`, `significant_fw`, and `strategy_agreement` columns. Primary results use subject_mean strategy to control for trial-duration confound. Save to `H1_expert_vs_novice.csv`.
 
-- [ ] **5.3** Implement `test_within_trial_stability_te(B_Exp, B_Nov, conn_labels) -> pd.DataFrame`. Identical to Stage D H0 test. Save to `H0_within_trial_stability.csv`.
+- [ ] **5.3** Implement `test_within_trial_stability_te(config) -> pd.DataFrame`. Loads `_all` arrays — all-windows resolution required for within-trial stability test. Identical to Stage D H0 test structure. Save to `H0_within_trial_stability.csv`.
 
-- [ ] **5.4** Implement `test_across_trial_stability_te(B_Exp, B_Nov, conn_labels) -> pd.DataFrame`. Identical to Stage D HIV test. Save to `HIV_across_trial_stability.csv`.
+- [ ] **5.4** Implement `test_across_trial_stability_te(config) -> pd.DataFrame`. Loads `_all` arrays — all-windows resolution required for across-trial stability test. Identical to Stage D HIV test structure. Save to `HIV_across_trial_stability.csv`.
 
 ---
 
@@ -572,6 +584,8 @@ Phase 3 is entirely original (not from Wang 2020 or Wang 2022). It is proposed i
 ### E7 — Uniform embedding throughout (not NUE from Wang 2022)
 Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per signal. Wang (2022)'s MTENUE uses non-uniform embedding (NUE), which selects embedding lags greedily via conditional mutual information — a strictly more powerful approach for non-stationary signals. Keeping uniform embedding is a simplification justified by implementation scope. This should be stated as a limitation when comparing Phase 2 results against the MTENUE method, and NUE incorporation is a natural extension if results are inconclusive.
 
+###E8 — Trial-duration confound addressed via subject-level averaging. Novice subjects have significantly longer trial durations than Experts (avg ~16 windows vs ~6 windows per trial). Using raw per-window group means would weight late-trial Novice dynamics disproportionately. Primary H1 analysis uses subject-level averaging (mean across all windows per subject per trial) so each subject contributes one value per trial regardless of duration — identical to Stage D's compute_subject_averaged_gc() approach. Win_1-only alignment is run as a sensitivity check. TE is more sensitive to this confound than GC because the dSPTE probability distributions are estimated from the full window sample, making them sensitive to the neural state throughout the window rather than just its local autoregressive structure.
+
 ---
 
 ## ✅ SUCCESS CRITERIA
@@ -593,8 +607,8 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 
 ## 📊 COMPLETION METRICS
 
-- **Total Tasks:** 49
-- **Completed:** 22
+- **Total Tasks:** 50
+- **Completed:** 23
 - **In Progress:** 0
 - **Remaining:** 27
 
@@ -602,7 +616,7 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
 - **Section 2 (ROI Signals):** 2/2 ✅ Complete (2026-03-23)
 - **Section 3 (Phase 1 Core):** 10/12 (3.1–3.4.3 complete 2026-03-24; 3.4.4–3.4.5 pending simulation data upload)
-- **Section 4 (Phase 1 Pipeline):** 5/5 ✅ Complete (2026-03-24; full-cohort batch run pending)
+- **Section 4 (Phase 1 Pipeline):** 6/6 ✅ Complete (4.3.1a–d added 2026-03-26; full-cohort batch run pending)
 - **Section 5 (Phase 1 Stats):** 0/4
 - **Section 6 (Phase 1 Viz):** 0/5
 - **Section 7 (Phase 2 Hybrid):** 0/6

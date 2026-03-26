@@ -489,6 +489,18 @@ stage_e_transfer_entropy:
     ng_neighbourhood_f: 0.1        # final neighbourhood width σ_f
 
   # --------------------------------------------------------------------------
+  # Group comparison strategy — controls trial-duration confound fix
+  # Novice subjects have longer trials (~16 windows) vs Experts (~6 windows).
+  # Subject-averaging gives each subject equal weight for H1 Expert vs Novice.
+  # --------------------------------------------------------------------------
+  comparison:
+    primary_strategy: "subject_mean"    # used for H1 Expert vs Novice
+    sensitivity_strategy: "first_window"  # sensitivity check for H1
+    # subject_mean:  average all windows per subject per trial → 1 value per sub per trial
+    # first_window:  use only Win_1 per trial per subject
+    # all_windows:   all windows NaN-padded (used for H0/HIV only)
+
+  # --------------------------------------------------------------------------
   # Phase 3 — Bimodal fusion parameters
   # --------------------------------------------------------------------------
   phase_3:
