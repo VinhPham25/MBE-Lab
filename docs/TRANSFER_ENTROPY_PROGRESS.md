@@ -8,7 +8,7 @@
 **Input:** `outputs/stage_b_processed/processed_data/expert-novice/sub-{id}_task-ExpNovPatternCutting_desc-preprocessed_nirs_raw.fif`  
 **Output Root:** `outputs/stage_e_transfer_entropy/expert-novice/`  
 **Language:** Python 3.9+  
-**Status:** Sections 1–2 complete; Section 3.1–3.4.3 complete; Sections 4.1–4.2 complete (2026-03-24)
+**Status:** Sections 1–2 complete; Section 3.1–3.4.3 complete; Section 4 complete (2026-03-24)
 
 ---
 
@@ -432,7 +432,8 @@ Functions in `code/stage_e_transfer_entropy/02_dspte_pipeline.py`. Mirrors `03_l
   > **Result (2026-03-24):** Implemented as `run_batch_dspte()` in `03_subject_dspte_pipeline.py`. Iterates Expert+Novice lists from config (R10 excluded). Per-subject log entry: `status`, `n_trials`, `n_windows_total`, `mean_dspte`, `max_dspte`, `mean_k0`, `mean_optimal_delay_samples`, `mean_optimal_delay_s`, `per_connection_mean_dspte`, `connection_labels`, `elapsed_s`. Summary: `n_success`, `n_failed`, `total_elapsed_s`. Saves `te_batch_log.json` to `phase_1_connectivity/`. Failed subjects are logged as ERROR but do not crash the batch. Not yet run on full cohort (pending production config u_max=50 batch run).
 
 #### 4.3 Group Array Construction
-- [ ] **4.3.1** Implement `build_group_arrays_dspte() -> tuple[dict, dict]`. Identical structure to Stage D `build_group_arrays()`. Returns `(B_Exp, B_Nov)` dicts keyed by trial ID, each value `array(n_subs, 20, max_wins_trial)`. NaN-padding for missing trials/windows. Save `B_Exp_dspte.npz` and `B_Nov_dspte.npz`.
+- [x] **4.3.1** Implement `build_group_arrays_dspte() -> tuple[dict, dict]`. Identical structure to Stage D `build_group_arrays()`. Returns `(B_Exp, B_Nov)` dicts keyed by trial ID, each value `array(n_subs, 20, max_wins_trial)`. NaN-padding for missing trials/windows. Save `B_Exp_dspte.npz` and `B_Nov_dspte.npz`.
+  > **Result (2026-03-24):** Implemented in `03_subject_dspte_pipeline.py`. Loads per-subject .npz from `phase_1_connectivity/`, determines max_trials and max_wins_per_trial across all loaded subjects, stacks into NaN-padded `(n_subs, 20, max_wins)` arrays. Saves `B_Exp_dspte.npz`, `B_Nov_dspte.npz`, `dspte_summary.json` to `phase_1_group/`. Validated on A1: Tr_1=(1,20,2), Tr_4=(1,20,1), value range [0.023, 0.237], no NaN-only subjects, all .npz schema keys present ✓. Full 13-subject group run pending batch completion.
 
 ---
 
@@ -593,15 +594,15 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 49
-- **Completed:** 21
+- **Completed:** 22
 - **In Progress:** 0
-- **Remaining:** 28
+- **Remaining:** 27
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
 - **Section 2 (ROI Signals):** 2/2 ✅ Complete (2026-03-23)
 - **Section 3 (Phase 1 Core):** 10/12 (3.1–3.4.3 complete 2026-03-24; 3.4.4–3.4.5 pending simulation data upload)
-- **Section 4 (Phase 1 Pipeline):** 4/5 (4.1–4.2 complete 2026-03-24; 4.3 group arrays pending)
+- **Section 4 (Phase 1 Pipeline):** 5/5 ✅ Complete (2026-03-24; full-cohort batch run pending)
 - **Section 5 (Phase 1 Stats):** 0/4
 - **Section 6 (Phase 1 Viz):** 0/5
 - **Section 7 (Phase 2 Hybrid):** 0/6

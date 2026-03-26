@@ -713,6 +713,230 @@ def run_batch_dspte(
 
 
 # ===========================================================================
+# Section 4.3 — Group Array Construction
+# ===========================================================================
+
+def build_group_arrays_dspte(
+    study: str = "expert_novice",
+    config: Optional[dict] = None,
+) -> tuple[dict, dict]:
+    """
+    Load all per-subject dSPTE .npz files and stack into group-level arrays.
+
+    Mirrors Stage D's ``build_group_arrays()`` exactly — same NaN-padding
+    logic, same output schema, same JSON summary.  The only difference is
+    the source directory (``phase_1_connectivity/`` instead of
+    ``gc_connectivity/``) and the output filenames.
+
+    Parameters
+    ----------
+    study : str
+        Config dataset key.  Default 'expert_novice'.
+    config : dict, optional
+        Parsed config.yaml.  Loaded if None.
+
+    Returns
+    -------
+    B_Exp : dict
+        ``{trial_id: np.ndarray(n_exp_subjects, 20, max_windows_for_trial)}``.
+        NaN where a subject has fewer windows or no data for that trial.
+    B_Nov : dict
+        Same structure for the Novice group.
+
+    Saves
+    -----
+    ``phase_1_group/B_Exp_dspte.npz``     — Expert group arrays
+    ``phase_1_group/B_Nov_dspte.npz``     — Novice group arrays
+    ``phase_1_group/dspte_summary.json``  — processing metadata
+    """
+    if config is None:
+        config = load_config()
+
+    from utils_te import get_te_output_dir, get_connection_labels  # noqa
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    subj_cfg = te_cfg.get("subjects", {})
+    expert_ids: list = subj_cfg.get("Expert", [])
+    novice_ids: list = subj_cfg.get("Novice", [])
+
+    logger.info(
+        "build_group_arrays_dspte: Experts n=%d %s, Novices n=%d %s",
+        len(expert_ids), expert_ids, len(novice_ids), novice_ids,
+    )
+
+    # ------------------------------------------------------------------
+    # Load per-subject .npz files
+    # ------------------------------------------------------------------
+    conn_dir = get_te_output_dir("phase_1_connectivity", config=config)
+
+    def _load_subject_npz_list(subject_ids):
+        results = []
+        for sid in subject_ids:
+            fpath = conn_dir / f"sub-{sid}_dspte_connectivity.npz"
+            if not fpath.exists():
+                logger.warning(
+                    "build_group_arrays_dspte: missing .npz for %s: %s",
+                    sid, fpath.name,
+                )
+                results.append(None)
+            else:
+                results.append(dict(np.load(fpath, allow_pickle=True)))
+        return results
+
+    expert_npz_list = _load_subject_npz_list(expert_ids)
+    novice_npz_list = _load_subject_npz_list(novice_ids)
+
+    n_exp_loaded = sum(1 for d in expert_npz_list if d is not None)
+    n_nov_loaded = sum(1 for d in novice_npz_list if d is not None)
+    logger.info(
+        "build_group_arrays_dspte: loaded %d/%d Expert, %d/%d Novice .npz files",
+        n_exp_loaded, len(expert_ids), n_nov_loaded, len(novice_ids),
+    )
+
+    all_npz = [d for d in expert_npz_list + novice_npz_list if d is not None]
+    if not all_npz:
+        raise RuntimeError(
+            "build_group_arrays_dspte: no per-subject .npz files found. "
+            "Run process_subject_dspte() for each subject first."
+        )
+
+    # ------------------------------------------------------------------
+    # Determine max trials and max windows per trial across all subjects
+    # ------------------------------------------------------------------
+    max_trials = max(int(d["n_trials"]) for d in all_npz)
+
+    max_wins_per_trial: dict = {}
+    for trial_idx in range(max_trials):
+        trial_id = f"Tr_{trial_idx + 1}"
+        max_w = 0
+        for d in all_npz:
+            key = f"{trial_id}_connectivity"
+            if key in d and d[key].ndim == 2 and d[key].shape[1] > 0:
+                max_w = max(max_w, int(d[key].shape[1]))
+        max_wins_per_trial[trial_id] = max_w
+
+    logger.info(
+        "build_group_arrays_dspte: max_trials=%d  wins_per_trial=%s",
+        max_trials, max_wins_per_trial,
+    )
+
+    # ------------------------------------------------------------------
+    # Stack into (n_subs, 20, max_wins) arrays with NaN-padding
+    # ------------------------------------------------------------------
+    n_conn = len(get_connection_labels())   # 20
+    n_exp = len(expert_ids)
+    n_nov = len(novice_ids)
+
+    B_Exp: dict = {}
+    B_Nov: dict = {}
+
+    #B_Exp and B_Nov are dictionaries that contain 3D matrices / cubes with dimensions (n_subs, 20, max_wins) sorted by trial_id
+    # Dictionary with 5 trial keys where each key holds a 3D matrix / cube with dimensions (n_subs, 20, max_wins)
+    #n_subs is the number of subjects in the group
+    #20 is the number of connections
+    #max_wins is the maximum number of windows for a given trial
+    #the values in the matrices are the connectivity vectors for the given trial and subject
+    #the matrices are NaN-padded for subjects with fewer windows than the maximum for that trial
+    #the matrices are NaN-padded for subjects with no data for that trial
+    #the matrices are NaN-padded for subjects with no data for that trial
+
+    for trial_id, max_w in max_wins_per_trial.items():
+        if max_w == 0:
+            continue
+        B_Exp[trial_id] = np.full((n_exp, n_conn, max_w), np.nan)
+        B_Nov[trial_id] = np.full((n_nov, n_conn, max_w), np.nan)
+
+        for sub_idx, npz_data in enumerate(expert_npz_list):
+            if npz_data is None:
+                continue
+            key = f"{trial_id}_connectivity"
+            if key in npz_data:
+                arr = npz_data[key]   # Extracts the connectivity vector for the given trial and subject (20, n_wins_subj) 
+                if arr.ndim == 2 and arr.shape[1] > 0:
+                    B_Exp[trial_id][sub_idx, :, : arr.shape[1]] = arr # Assigns the connectivity vector for the given trial and subject to the 3D matrix / cube
+
+        for sub_idx, npz_data in enumerate(novice_npz_list):
+            if npz_data is None:
+                continue
+            key = f"{trial_id}_connectivity"
+            if key in npz_data:
+                arr = npz_data[key]
+                if arr.ndim == 2 and arr.shape[1] > 0:
+                    B_Nov[trial_id][sub_idx, :, : arr.shape[1]] = arr
+
+        exp_valid = int(np.sum(~np.all(np.isnan(B_Exp[trial_id]), axis=(1, 2))))
+        nov_valid = int(np.sum(~np.all(np.isnan(B_Nov[trial_id]), axis=(1, 2))))
+        logger.info(
+            "  %s: B_Exp shape=%s (%d non-NaN subs)  B_Nov shape=%s (%d non-NaN subs)",
+            trial_id, B_Exp[trial_id].shape, exp_valid,
+            B_Nov[trial_id].shape, nov_valid,
+        )
+
+    # ------------------------------------------------------------------
+    # Save B_Exp_dspte.npz, B_Nov_dspte.npz, dspte_summary.json
+    # ------------------------------------------------------------------
+    group_dir = get_te_output_dir("phase_1_group", config=config)
+
+    exp_save = {tid: arr for tid, arr in B_Exp.items()}
+    exp_save["subject_ids"] = np.array(expert_ids)
+    np.savez(group_dir / "B_Exp_dspte.npz", **exp_save)
+    logger.info("build_group_arrays_dspte: saved B_Exp_dspte.npz  (trials=%s)", list(B_Exp.keys()))
+
+    nov_save = {tid: arr for tid, arr in B_Nov.items()}
+    nov_save["subject_ids"] = np.array(novice_ids)
+    np.savez(group_dir / "B_Nov_dspte.npz", **nov_save)
+    logger.info("build_group_arrays_dspte: saved B_Nov_dspte.npz  (trials=%s)", list(B_Nov.keys()))
+
+    # Summary JSON
+    def _window_summary(subject_ids, npz_list):
+        out = {}
+        for sid, d in zip(subject_ids, npz_list):
+            if d is None:
+                out[sid] = {"status": "missing", "trial_window_counts": {}}
+                continue
+            trial_ids_s = list(d["trial_ids"])
+            window_counts_s = list(d["window_counts"].astype(int))
+            out[sid] = {
+                "status": "ok",
+                "n_trials": int(d["n_trials"]),
+                "trial_window_counts": dict(zip(trial_ids_s, window_counts_s)),
+                "total_windows": int(sum(window_counts_s)),
+                "roi_names_used": list(d["roi_names_used"]),
+                "group": str(d["group"]),
+            }
+        return out
+
+    class _NumpyEncoder(json.JSONEncoder):
+        def default(self, obj):
+            if isinstance(obj, np.integer):
+                return int(obj)
+            if isinstance(obj, np.floating):
+                return float(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            return super().default(obj)
+
+    summary = {
+        "created_at": datetime.now().isoformat(),
+        "n_experts": len(expert_ids),
+        "n_novices": len(novice_ids),
+        "expert_ids": expert_ids,
+        "novice_ids": novice_ids,
+        "trials": list(max_wins_per_trial.keys()),
+        "max_windows_per_trial": {k: int(v) for k, v in max_wins_per_trial.items()},
+        "n_connections": n_conn,
+        "connection_labels": get_connection_labels(),
+        "expert_subjects": _window_summary(expert_ids, expert_npz_list),
+        "novice_subjects": _window_summary(novice_ids, novice_npz_list),
+    }
+    with open(group_dir / "dspte_summary.json", "w") as fh:
+        json.dump(summary, fh, indent=2, cls=_NumpyEncoder)
+    logger.info("build_group_arrays_dspte: saved dspte_summary.json")
+
+    return B_Exp, B_Nov
+
+
+# ===========================================================================
 # Smoke tests (run as script)
 # ===========================================================================
 
