@@ -451,15 +451,19 @@ Functions in `code/stage_e_transfer_entropy/02_dspte_pipeline.py`. Mirrors `03_l
 
 ### SECTION 5: PHASE 1 — STATISTICAL TESTING
 
-Functions in `code/stage_e_transfer_entropy/04_dspte_statistics.py`. Mirrors Stage D `05_gc_statistics.py` exactly — same four tests, same structure.
+Functions in `code/stage_e_transfer_entropy/04_dspte_statistics.py`. Mirrors Stage D `05_gc_statistics.py` exactly — same four tests, same ANOVA + FDR (Benjamini-Hochberg) structure. Statistics config added to `config.yaml` under `stage_e_transfer_entropy.statistics`.
 
-- [ ] **5.1** Implement `run_normality_tests_te(B_Exp, B_Nov, conn_labels) -> pd.DataFrame`. Identical to Stage D normality test. Save to `phase_1_dspte/statistics/normality_test.csv`.
+- [x] **5.1** Implement `run_normality_tests_te(B_Exp, B_Nov, conn_labels, config) -> pd.DataFrame`. Shapiro-Wilk per (group, trial, connection) cell using subject_mean arrays (n_subs, 20, n_trials). Cells with fewer than `min_subjects_normality` valid subjects get W=NaN, p=NaN, is_normal=True. Save to `phase_1_dspte/statistics/normality_test.csv`.
+  > **Result (2026-03-26):** Implemented in `04_dspte_statistics.py`. Input is subject_mean arrays — one scalar per subject per trial per connection, matching the shape expected for H1. Columns: group, trial, connection, W_stat, p_value, is_normal, n_subjects.
 
-- [ ] **5.2** Implement `test_expert_vs_novice_te(config) -> pd.DataFrame`. Loads `B_Exp_dspte_mean` and `B_Nov_dspte_mean` as primary. Runs sensitivity check with `_fw` arrays. FDR correction (Benjamini-Hochberg). Output CSV includes `p_fw`, `significant_fw`, and `strategy_agreement` columns. Primary results use subject_mean strategy to control for trial-duration confound. Save to `H1_expert_vs_novice.csv`.
+- [x] **5.2** Implement `test_expert_vs_novice_te(config) -> pd.DataFrame`. Loads `B_Exp_dspte_mean` and `B_Nov_dspte_mean` as primary input. Runs sensitivity ANOVA with `_fw` arrays. FDR correction (Benjamini-Hochberg) applied per trial across 20 connections for both primary and sensitivity. Primary results use subject_mean strategy to control for trial-duration confound. Save to `H1_expert_vs_novice.csv`.
+  > **Result (2026-03-26):** Implemented with `_run_h1_anova()` shared core (reused for both strategies). Sensitivity columns merged into primary DataFrame: `p_fw`, `p_fdr_fw`, `significant_fw`, `strategy_agreement`. Overwrite=False caching. The "window" axis in the (n_subs, 20, n_trials) input plays the trial role — FDR applied per trial across 20 connections, matching MATLAB's per-window mafdr call.
 
-- [ ] **5.3** Implement `test_within_trial_stability_te(config) -> pd.DataFrame`. Loads `_all` arrays — all-windows resolution required for within-trial stability test. Identical to Stage D H0 test structure. Save to `H0_within_trial_stability.csv`.
+- [x] **5.3** Implement `test_within_trial_stability_te(config) -> pd.DataFrame`. Loads `B_Exp_dspte_all` and `B_Nov_dspte_all` — all-windows resolution required for within-trial stability test. ANOVA tests equality of window-level means per (group, trial, connection). NaN filter (h0_max_nan_subjects, h0_check_connection_idx) mirrors Stage D / MATLAB zer_col > 2 logic. Save to `H0_within_trial_stability.csv`.
+  > **Result (2026-03-26):** Implemented, identical to Stage D `test_within_trial_stability()`. Dynamic per-window columns (Win_k_mean, Win_k_std, Win_k_n) appended per valid window. FDR per (group, trial).
 
-- [ ] **5.4** Implement `test_across_trial_stability_te(config) -> pd.DataFrame`. Loads `_all` arrays — all-windows resolution required for across-trial stability test. Identical to Stage D HIV test structure. Save to `HIV_across_trial_stability.csv`.
+- [x] **5.4** Implement `test_across_trial_stability_te(config) -> pd.DataFrame`. Loads `B_Exp_dspte_all` and `B_Nov_dspte_all` — all-windows resolution required for across-trial stability test. Tests first `hiv_max_windows` windows (default 3) across trials. FDR per (group, window). Save to `HIV_across_trial_stability.csv`.
+  > **Result (2026-03-26):** Implemented, identical to Stage D `test_across_trial_stability()`. `run_all_statistics_te()` orchestrator + `_print_summary_te()` added. CLI supports `--test {h1,h0,hiv,normality,all}` and `--overwrite`.
 
 ---
 
@@ -608,16 +612,16 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 50
-- **Completed:** 23
+- **Completed:** 27
 - **In Progress:** 0
-- **Remaining:** 27
+- **Remaining:** 23
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
 - **Section 2 (ROI Signals):** 2/2 ✅ Complete (2026-03-23)
 - **Section 3 (Phase 1 Core):** 10/12 (3.1–3.4.3 complete 2026-03-24; 3.4.4–3.4.5 pending simulation data upload)
 - **Section 4 (Phase 1 Pipeline):** 6/6 ✅ Complete (4.3.1a–d added 2026-03-26; full-cohort batch run pending)
-- **Section 5 (Phase 1 Stats):** 0/4
+- **Section 5 (Phase 1 Stats):** 4/4 ✅ Complete (2026-03-26)
 - **Section 6 (Phase 1 Viz):** 0/5
 - **Section 7 (Phase 2 Hybrid):** 0/6
 - **Section 8 (Phase 3 Bimodal):** 0/5

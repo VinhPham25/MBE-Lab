@@ -489,6 +489,29 @@ stage_e_transfer_entropy:
     ng_neighbourhood_f: 0.1        # final neighbourhood width σ_f
 
   # --------------------------------------------------------------------------
+  # Statistical testing parameters (Section 5)
+  # Mirrors Stage D stage_d_granger.linear_gc.statistics exactly.
+  # --------------------------------------------------------------------------
+  statistics:
+    fdr_method: "indep"           # statsmodels fdrcorrection method ('indep' = BH)
+    alpha: 0.05                   # significance threshold after FDR correction
+    n_connections: 20             # off-diagonal elements of 5×5 TE matrix
+    min_subjects_normality: 3     # minimum valid subjects to run Shapiro-Wilk
+    min_subjects_anova: 3         # minimum valid subjects per group to run f_oneway
+    min_groups_anova: 2           # minimum non-empty groups to run f_oneway (H0, HIV)
+
+    # H1: Expert vs. Novice — primary trial (matches MATLAB 'for k=1:1')
+    h1_primary_trial: "Tr_1"
+
+    # H0: Within-trial stability — NaN filter (mirrors Stage D / MATLAB zer_col > 2 logic)
+    h0_max_nan_subjects: 2        # if > 2 subjects NaN in check connection → truncate
+    h0_check_connection_idx: 0    # connection index to check for NaN
+
+    # HIV: Across-trial stability — first 3 windows only (MATLAB: j = 1:3)
+    hiv_max_windows: 3
+    hiv_min_trials: 2             # minimum trials with valid data to run ANOVA
+
+  # --------------------------------------------------------------------------
   # Group comparison strategy — controls trial-duration confound fix
   # Novice subjects have longer trials (~16 windows) vs Experts (~6 windows).
   # Subject-averaging gives each subject equal weight for H1 Expert vs Novice.
