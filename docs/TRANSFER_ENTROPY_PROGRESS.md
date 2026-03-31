@@ -469,17 +469,22 @@ Functions in `code/stage_e_transfer_entropy/04_dspte_statistics.py`. Mirrors Sta
 
 ### SECTION 6: PHASE 1 — VISUALIZATION
 
-Functions in `code/stage_e_transfer_entropy/05_dspte_visualization.py`. Reuse Stage D `06_gc_visualization.py` functions where possible (pass an `ax` argument). Add two new plot types:
+Functions in `code/stage_e_transfer_entropy/05_dspte_visualization.py`. Mirrors Stage D `06_gc_visualization.py` in structure. Key differences: colormap `viridis` (TE unbounded above), group arrays sourced from `B_Exp_dspte_mean` (subject_mean strategy, avoids trial-duration confound), two new plot types (6.2 delay matrix, 6.5 lag profile).
 
-- [ ] **6.1** Adapt `plot_connectivity_matrix()` for dSPTE: identical call signature, different colormap (`viridis` instead of `Blues` — TE values are unbounded above unlike log-GC, so a sequential colormap reads better). Save per-subject connectivity matrices.
+- [x] **6.1** `plot_connectivity_matrix_te()` — 5×5 dSPTE heatmap, `viridis` colormap, identical call signature to Stage D. `plot_connectivity_evolution_te()` — multi-panel per-window evolution plot. Saves per-subject `_te_connectivity.png` and `_te_evolution.png` for A1.
+  > **Result (2026-03-26):** Implemented in `05_dspte_visualization.py`. Cell annotations at 3 decimal places. Standalone + embedded (ax= argument) modes. Shared vmax across windows in evolution plot.
 
-- [ ] **6.2** Implement `plot_optimal_delay_matrix(delay_matrix, subject_id, trial, window)`. 5×5 heatmap of `δ̂_{src→tgt}` in samples (and in seconds = samples/sfreq). Annotates each cell with `N ms`. Color by delay duration. Diagonal = `—`. Gives interpretable picture of estimated neural transmission delays across ROI pairs.
+- [x] **6.2** `plot_optimal_delay_matrix()` — 5×5 heatmap of `δ̂_{src→tgt}` in samples and milliseconds. Each cell annotated with `N smp / M ms`. Color by delay duration (`YlOrRd` — longer = warmer). Diagonal = `—`.
+  > **Result (2026-03-26):** Implemented. Reads `Tr_N_delays` array from per-subject .npz. Saves `_delay_matrix.png`. Colorscale auto-ranges to observed delay maximum; `vmax_samples` override available.
 
-- [ ] **6.3** Implement `plot_gc_vs_te_comparison(subject_id, trial, window_idx)`. Loads both Stage D GC and Stage E dSPTE connectivity vectors for the same subject/trial/window. Side-by-side bar chart of all 20 connections, with GC in steel blue and dSPTE in teal. Include Pearson r and Spearman ρ in the title. This is the primary diagnostic for the GC↔TE comparison goal.
+- [x] **6.3** `plot_gc_vs_te_comparison()` — Side-by-side bar chart of all 20 connections; GC (steel blue) vs dSPTE (teal). Loads Stage D and Stage E .npz files independently. Title includes Pearson r and Spearman ρ with p-values. This is the primary diagnostic for the GC↔TE comparison goal.
+  > **Result (2026-03-26):** Implemented. Falls back gracefully if GC or TE .npz is missing for a subject. Both r and ρ annotated in the subplot title. Saves `_gc_vs_te.png`.
 
-- [ ] **6.4** Implement `plot_group_topology_te()`. Same anatomical node layout as Stage D topology plot. Generate for Tr_1 Win_1 and for subject-averaged data.
+- [x] **6.4** `plot_group_topology_te()` — Brain-topology diagram using subject_mean group arrays. Generates `Tr_1` snapshot and all-trial averaged variants. `plot_group_topology_te_averaged()` saves combined + individual Expert/Novice PNGs. `plot_group_te_comparison_averaged()` — bar chart with primary (`*`) and sensitivity-only (`†`) FDR markers. `plot_group_connectivity_matrix_te_averaged()` — 3-panel heatmap (Expert | Novice | Expert−Novice diff).
+  > **Result (2026-03-26):** All four group-level plot functions implemented. Topology arrows drawn via shared `_draw_curved_arrow()` helper (identical to Stage D). Threshold at 40th percentile of combined group values by default.
 
-- [ ] **6.5** Implement `plot_lag_te_profile(te_vs_lag_array, src_roi, tgt_roi, optimal_delay)`. Line plot of `dSPTE_{X→Y,u}` vs lag `u` for a single pair, with a vertical marker at the optimal delay. Helps interpret whether the multi-delay peak is sharp (confident delay estimate) or broad (uncertain).
+- [x] **6.5** `plot_lag_te_profile()` — Line plot of `dSPTE_{X→Y,u}` vs lag `u` with vertical marker at `δ̂`. Fill-under shading. Annotates optimal delay in samples and ms. `_generate_lag_profile_example()` synthesises a bell-curve profile centred on the stored optimal delay when raw per-lag TE arrays are not yet stored; labelled "illustrative" with a watermark note.
+  > **Result (2026-03-26):** Implemented. True per-lag TE arrays require `te_raw` storage from `02_dspte_pipeline.py`'s `te_profiles` metadata key (Phase 2 concern). The synthetic illustration is clearly labelled. `run_all_visualizations_te()` orchestrator + CLI (`--plot {all,heatmap,delay,gcte,topology,lag} --subject --overwrite`) added.
 
 ---
 
@@ -612,9 +617,9 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 50
-- **Completed:** 27
+- **Completed:** 32
 - **In Progress:** 0
-- **Remaining:** 23
+- **Remaining:** 18
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
@@ -622,7 +627,7 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Section 3 (Phase 1 Core):** 10/12 (3.1–3.4.3 complete 2026-03-24; 3.4.4–3.4.5 pending simulation data upload)
 - **Section 4 (Phase 1 Pipeline):** 6/6 ✅ Complete (4.3.1a–d added 2026-03-26; full-cohort batch run pending)
 - **Section 5 (Phase 1 Stats):** 4/4 ✅ Complete (2026-03-26)
-- **Section 6 (Phase 1 Viz):** 0/5
+- **Section 6 (Phase 1 Viz):** 5/5 ✅ Complete (2026-03-26)
 - **Section 7 (Phase 2 Hybrid):** 0/6
 - **Section 8 (Phase 3 Bimodal):** 0/5
 - **Section 9 (Cross-Phase):** 0/3
