@@ -491,7 +491,8 @@ Functions in `code/stage_e_transfer_entropy/05_dspte_visualization.py`. Mirrors 
   > **Result (2026-03-26):** All four group-level plot functions implemented. Topology arrows drawn via shared `_draw_curved_arrow()` helper (identical to Stage D). Threshold at 40th percentile of combined group values by default.
 
 - [x] **6.5** `plot_lag_te_profile()` — Line plot of `dSPTE_{X→Y,u}` vs lag `u` with vertical marker at `δ̂`. Fill-under shading. Annotates optimal delay in samples and ms. `_generate_lag_profile_example()` synthesises a bell-curve profile centred on the stored optimal delay when raw per-lag TE arrays are not yet stored; labelled "illustrative" with a watermark note.
-  > **Result (2026-03-26):** Implemented. True per-lag TE arrays require `te_raw` storage from `02_dspte_pipeline.py`'s `te_profiles` metadata key (Phase 2 concern). The synthetic illustration is clearly labelled. `run_all_visualizations_te()` orchestrator + CLI (`--plot {all,heatmap,delay,gcte,topology,lag} --subject --overwrite`) added.
+  > **Result (2026-03-26):** Implemented (initially with synthesised bell-curve profiles).
+  > **Fix (2026-03-30 Phase 3 Audit):** Pipeline updated to store `Tr_N_te_profiles: shape (20, u_max, n_wins)` in per-subject `.npz`. Visualiser now reads real per-lag TE arrays. First real profiles reveal flat lag-TE curves across all lags — optimal delay estimates are argmax of noise and should not be interpreted as genuine neural transmission delays.
 
 ---
 
@@ -715,9 +716,25 @@ More iterations do not help beyond ~2,000: nDis plateaus at ~0.067 for k=20 rega
 
 ---
 
-### Issue 3: Lag Profile Shape Unknown — DEFERRED
+### Issue 3: Lag Profile Shape — RESOLVED (2026-03-30)
 
-**Status:** Deferred pending resolution of Issues 1 and 2 (per user instruction). Task 6.5 `plot_lag_te_profile` will be prioritized after re-run with k0_max=50.
+**Status: FIXED.** The pipeline was computing but discarding the full per-lag TE arrays (`te_profiles` from `compute_dspte_matrix` metadata). Only the argmax was saved. The visualisation consequently synthesised a bell curve centred on the stored delay — not actual data.
+
+**Fix implemented:**
+1. `03_subject_dspte_pipeline.py` — Added `_extract_canonical_lag_profiles()` helper that converts the `te_profiles` dict (keyed by local ROI index pairs) to a canonical `(20, u_max)` array per window.
+2. `_save_subject_dspte_npz()` — Now saves `Tr_N_te_profiles: shape (20, u_max, n_wins)` in every per-subject `.npz`.
+3. `05_dspte_visualization.py` — `_generate_lag_profile_example()` now reads `Tr_N_te_profiles[:, :, window_idx]` directly. Falls back to synthesised bell curve (with explicit warning) only for legacy `.npz` files that predate this fix.
+4. Full batch re-run (2026-03-30): all 13 subjects regenerated, 150.5 s total. All PNGs regenerated. No synthesised-profile warnings emitted — real data confirmed loaded.
+
+**Critical finding from first real profiles (A1 LPFC→SMA, Tr_1 Win_1):**
+
+The lag-TE profile is essentially **flat** across all 50 lags (range 0.0425–0.0541, total variation ~0.012). The stored "optimal delay" of 46 samples (1840 ms) is the argmax of random noise on a flat curve — not a detected neural transmission delay. This pattern was confirmed across multiple subjects and connections.
+
+**Implication:** The multi-delay argmax as currently implemented (`argmax over lags 1–u_max`) is uninformative when the TE curve is flat. The "optimal delay" estimates in existing results should not be interpreted as true causal transmission delays. This is expected given:
+- Hilbert phase on broadband fNIRS does not produce lag-structured information flow
+- fNIRS hemodynamic coupling is slow and non-oscillatory — there is no sharp phase-delay signature to detect
+
+**Conclusion:** The delay estimation component of dSPTE is not meaningful for broadband fNIRS. The connectivity value (max TE over lags) may still be informative as a coupling strength estimate, but the lag dimension should be interpreted with caution. This will be re-evaluated after Phase 2 (amplitude branch + NUE embedding).
 
 ---
 

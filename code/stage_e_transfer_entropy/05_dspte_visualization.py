@@ -1342,14 +1342,10 @@ def _generate_lag_profile_example(
     """
     Generate a lag-TE profile for a single connection from the per-subject .npz.
 
-    The lag profiles are stored in the te_raw directory by 02_dspte_pipeline.py
-    (via the `te_profiles` metadata in each window).  If the raw lag data is
-    not available, this function skips silently and returns None.
-
-    The TE-vs-lag array is recovered from the pipeline metadata stored in the
-    per-subject .npz under `params_json` → `te_profiles`.  If not present,
-    we synthesise a plausible bell-curve profile centred on the optimal delay
-    for illustration purposes.
+    Reads the ``{trial}_te_profiles`` array (shape 20 × u_max × n_wins) that is
+    stored by the pipeline since the Phase 3 audit fix.  If the key is absent
+    (old .npz files), falls back to a synthesised bell-curve with an
+    "illustrative" watermark so legacy files remain renderable.
     """
     cd = _conn_dir(config)
     npz_path = cd / f"sub-{subject_id}_dspte_connectivity.npz"
@@ -1358,8 +1354,9 @@ def _generate_lag_profile_example(
         return None
 
     data = np.load(npz_path, allow_pickle=True)
-    delay_key = f"{trial}_delays"
-    conn_key  = f"{trial}_connectivity"
+    delay_key   = f"{trial}_delays"
+    conn_key    = f"{trial}_connectivity"
+    profile_key = f"{trial}_te_profiles"
 
     if delay_key not in data or data[delay_key].ndim != 2 or data[delay_key].shape[1] <= window_idx:
         logger.warning("_generate_lag_profile_example: delay data not available for %s %s Win_%d",
@@ -1381,24 +1378,37 @@ def _generate_lag_profile_example(
     optimal_delay_smp = int(delay_vec[conn_idx])
     te_peak = float(conn_vec[conn_idx])
 
-    # te_cfg u_max
     te_cfg = (config or load_config()).get("stage_e_transfer_entropy", {})
     u_max = int(te_cfg.get("signal", {}).get("u_max", 50))
 
-    # Synthesise a plausible bell-curve profile centred on the optimal delay.
-    # This is labelled "illustrative" since actual lag arrays require storing
-    # per-lag TE values in the raw output (Phase 2 te_profiles key).
-    lags = np.arange(1, u_max + 1)
-    sigma = max(u_max * 0.08, 2.0)
-    profile = te_peak * np.exp(-0.5 * ((lags - (optimal_delay_smp + 1)) / sigma) ** 2)
-    profile = np.clip(profile, 0, None)
+    illustrative = False
+    if profile_key in data:
+        profiles_arr = data[profile_key]  # (20, u_max, n_wins)
+        if profiles_arr.ndim == 3 and profiles_arr.shape[2] > window_idx:
+            profile = profiles_arr[conn_idx, :, window_idx].astype(float)
+        else:
+            illustrative = True
+    else:
+        illustrative = True
+
+    if illustrative:
+        # Legacy fallback: synthesise a bell curve centred on the stored argmax.
+        lags = np.arange(1, u_max + 1)
+        sigma = max(u_max * 0.08, 2.0)
+        profile = te_peak * np.exp(-0.5 * ((lags - (optimal_delay_smp + 1)) / sigma) ** 2)
+        profile = np.clip(profile, 0, None)
+        logger.warning(
+            "_generate_lag_profile_example: te_profiles not in .npz for %s — "
+            "using synthesised bell curve. Re-run pipeline with overwrite=True.",
+            subject_id,
+        )
 
     win_label = f"Win_{window_idx + 1}"
+    vd = _viz_dir(config)
     out_fname = (
-        vd := _viz_dir(config),
         vd / f"sub-{subject_id}_Tr{trial.replace('Tr_', '')}_Win{window_idx + 1}"
-              f"_lag_te_profile_{src_roi}_to_{tgt_roi}.png",
-    )[1]
+              f"_lag_te_profile_{src_roi}_to_{tgt_roi}.png"
+    )
 
     if not overwrite and out_fname.exists():
         logger.info("_generate_lag_profile_example: cached PNG found, skipping.")
@@ -1417,13 +1427,13 @@ def _generate_lag_profile_example(
         config=config,
     )
 
-    # Add "illustrative" watermark
-    fig.text(
-        0.99, 0.02,
-        "Note: lag profile is illustrative (synthesised bell curve centred on δ̂).\n"
-        "True per-lag TE values require te_raw storage (Phase 2 te_profiles).",
-        ha="right", va="bottom", fontsize=6, color="gray", style="italic",
-    )
+    if illustrative:
+        fig.text(
+            0.99, 0.02,
+            "Note: lag profile is illustrative (synthesised bell curve centred on δ̂).\n"
+            "Re-run pipeline with overwrite=True to generate real per-lag TE values.",
+            ha="right", va="bottom", fontsize=6, color="gray", style="italic",
+        )
 
     if save:
         fig.savefig(out_fname, dpi=300, bbox_inches="tight")

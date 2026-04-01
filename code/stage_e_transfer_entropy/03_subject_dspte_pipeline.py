@@ -16,9 +16,10 @@ Section 4.2 task coverage (TRANSFER_ENTROPY_PROGRESS.md)
            Supports overwrite=False caching.
 
 4.2.2 — Per-subject .npz schema:
-           Tr_N_connectivity   shape (20, n_wins)      connectivity vectors
-           Tr_N_delays         shape (20, n_wins)      optimal delay per connection
-           Tr_N_k0_values      shape (5, 5, n_wins)    k₀ per ROI pair per window
+           Tr_N_connectivity   shape (20, n_wins)         connectivity vectors
+           Tr_N_delays         shape (20, n_wins)         optimal delay per connection
+           Tr_N_k0_values      shape (5, 5, n_wins)       k₀ per ROI pair per window
+           Tr_N_te_profiles    shape (20, u_max, n_wins)  full lag-TE curve per connection
            + metadata keys (subject_id, group, trial_ids, window_counts,
              roi_names_used, connection_labels, n_trials, params_json)
 
@@ -250,9 +251,10 @@ def process_subject_dspte(
     compute_windowed_dspte = pipe_mod.compute_windowed_dspte
     extract_connectivity_vector = pipe_mod.extract_connectivity_vector
 
-    result: dict = {}         # {trial_id: {win_id: conn_vec_20}}
-    delays_result: dict = {}  # {trial_id: {win_id: delay_vec_20}}
-    k0_result: dict = {}      # {trial_id: {win_id: k0_matrix_5x5}}
+    result: dict = {}          # {trial_id: {win_id: conn_vec_20}}
+    delays_result: dict = {}   # {trial_id: {win_id: delay_vec_20}}
+    k0_result: dict = {}       # {trial_id: {win_id: k0_matrix_5x5}}
+    profiles_result: dict = {} # {trial_id: {win_id: lag_profiles_20 x u_max}}
 
     for trial_idx, (onset, offset) in enumerate(segments):
         trial_id = f"Tr_{trial_idx + 1}"
@@ -273,6 +275,11 @@ def process_subject_dspte(
         trial_result: dict = {}
         trial_delays: dict = {}
         trial_k0: dict = {}
+        trial_profiles: dict = {}
+
+        from utils_te import get_connection_labels  # noqa: E402
+        conn_labels = get_connection_labels()
+        u_max = int(sig_cfg.get("u_max", 50))
 
         for win_id, (EC_matrix, delay_matrix, metadata) in windows_dspte.items():
             # Connectivity vector: (n_valid × n_valid) → canonical 5×5 → 20
@@ -287,13 +294,26 @@ def process_subject_dspte(
                 metadata["k0_matrix"].astype(float), valid_roi_names
             )
 
+            # Lag-TE profiles: (20, u_max) array in canonical connection order.
+            # metadata["te_profiles"] is a dict keyed by (src_roi_idx, tgt_roi_idx)
+            # mapping to a 1D array of shape (u_max,).
+            # We expand to canonical 20-connection order, zeroing missing pairs.
+            profiles_20 = _extract_canonical_lag_profiles(
+                metadata.get("te_profiles", {}),
+                valid_roi_names,
+                conn_labels,
+                u_max,
+            )
+
             trial_result[win_id] = conn_vec_20
             trial_delays[win_id] = delay_vec_20
             trial_k0[win_id] = k0_full
+            trial_profiles[win_id] = profiles_20
 
         result[trial_id] = trial_result
         delays_result[trial_id] = trial_delays
         k0_result[trial_id] = trial_k0
+        profiles_result[trial_id] = trial_profiles
 
         total_wins = sum(len(v) for v in result.values())
         logger.info(
@@ -324,6 +344,7 @@ def process_subject_dspte(
         result=result,
         delays_result=delays_result,
         k0_result=k0_result,
+        profiles_result=profiles_result,
         valid_roi_names=valid_roi_names,
         params=params,
         config=config,
@@ -369,6 +390,65 @@ def _expand_to_canonical_5x5(
 
 
 # ---------------------------------------------------------------------------
+# Private helper — expand te_profiles dict to canonical 20×u_max array
+# ---------------------------------------------------------------------------
+
+def _extract_canonical_lag_profiles(
+    te_profiles: dict,
+    roi_names: list[str],
+    conn_labels: list[str],
+    u_max: int,
+) -> np.ndarray:
+    """
+    Convert a ``te_profiles`` dict keyed by ``(src_roi_idx, tgt_roi_idx)``
+    (local valid-ROI indices) into a canonical (20, u_max) array.
+
+    The 20 rows correspond to the same off-diagonal canonical 5×5 ordering
+    used by ``extract_connectivity_vector``.  Pairs that were skipped or
+    missing produce a row of zeros.
+
+    Parameters
+    ----------
+    te_profiles : dict
+        ``{(src, tgt): np.ndarray(u_max,)}`` from ``compute_dspte_matrix``
+        metadata.  Keys use *local* valid-ROI indices.
+    roi_names : list[str]
+        Valid ROI names for this window (e.g. ``['LPFC','CPFC','RPFC','LM1','SMA']``).
+    conn_labels : list[str]
+        Canonical 20 connection labels (``get_connection_labels()``).
+    u_max : int
+        Maximum lag searched.
+
+    Returns
+    -------
+    profiles : np.ndarray, shape (20, u_max), dtype float64
+    """
+    profiles = np.zeros((20, u_max), dtype=np.float64)
+
+    # Build a lookup: (canonical_src_idx, canonical_tgt_idx) → row in profiles
+    # conn_labels has the form "LPFC→CPFC", "LPFC→RPFC", ...
+    conn_index: dict = {}
+    for row_idx, label in enumerate(conn_labels):
+        parts = label.split("→")
+        if len(parts) == 2:
+            conn_index[(parts[0], parts[1])] = row_idx
+
+    for (src_v, tgt_v), profile in te_profiles.items():
+        if src_v >= len(roi_names) or tgt_v >= len(roi_names):
+            continue
+        src_name = roi_names[src_v]
+        tgt_name = roi_names[tgt_v]
+        row_idx = conn_index.get((src_name, tgt_name))
+        if row_idx is None:
+            continue
+        arr = np.asarray(profile, dtype=np.float64)
+        length = min(len(arr), u_max)
+        profiles[row_idx, :length] = arr[:length]
+
+    return profiles
+
+
+# ---------------------------------------------------------------------------
 # Private helper — save per-subject .npz
 # ---------------------------------------------------------------------------
 
@@ -377,6 +457,7 @@ def _save_subject_dspte_npz(
     result: dict,
     delays_result: dict,
     k0_result: dict,
+    profiles_result: dict,
     valid_roi_names: list,
     params: dict,
     config: Optional[dict] = None,
@@ -387,23 +468,25 @@ def _save_subject_dspte_npz(
 
     Schema
     ------
-    Tr_N_connectivity : (20, n_wins)     — directed TE connectivity vectors
-    Tr_N_delays       : (20, n_wins)     — optimal delay (samples) per connection
-    Tr_N_k0_values    : (5, 5, n_wins)   — k₀ per ROI pair per window (diagnostic)
-    subject_id        : str
-    group             : 'Expert' or 'Novice'
-    trial_ids         : str array
-    window_counts     : int array
-    roi_names_used    : str array
-    connection_labels : str array (20 labels)
-    n_trials          : int
-    params_json       : JSON string of processing parameters
+    Tr_N_connectivity  : (20, n_wins)         — directed TE connectivity vectors
+    Tr_N_delays        : (20, n_wins)         — optimal delay (samples) per connection
+    Tr_N_k0_values     : (5, 5, n_wins)       — k₀ per ROI pair per window (diagnostic)
+    Tr_N_te_profiles   : (20, u_max, n_wins)  — full lag-TE curve per connection per window
+    subject_id         : str
+    group              : 'Expert' or 'Novice'
+    trial_ids          : str array
+    window_counts      : int array
+    roi_names_used     : str array
+    connection_labels  : str array (20 labels)
+    n_trials           : int
+    params_json        : JSON string of processing parameters
 
     Returns the absolute path to the saved file.
     """
     from utils_te import get_te_output_dir, get_subject_group, get_connection_labels  # noqa
 
     out_dir = get_te_output_dir("phase_1_connectivity", config=config)
+    conn_labels = get_connection_labels()
 
     trial_ids = sorted(result.keys(), key=lambda k: int(k.split("_")[1]))
     window_counts = []
@@ -411,11 +494,13 @@ def _save_subject_dspte_npz(
 
     n_conn = 20
     n_rois_full = _N_CANONICAL
+    u_max = int(params.get("u_max", 50))
 
     for trial_id in trial_ids:
         trial_data = result[trial_id]
         trial_delays = delays_result.get(trial_id, {})
         trial_k0 = k0_result.get(trial_id, {})
+        trial_profiles = profiles_result.get(trial_id, {})
         n_wins = len(trial_data)
         window_counts.append(n_wins)
 
@@ -440,14 +525,23 @@ def _save_subject_dspte_npz(
             ]
             k0_array = np.stack(k0_list, axis=2).astype(np.float64)  # (5,5,n_wins)
 
+            # (20, u_max, n_wins) lag-TE profiles array
+            profiles_list = [
+                trial_profiles.get(wk, np.zeros((n_conn, u_max)))
+                for wk in wins_sorted
+            ]
+            profiles_array = np.stack(profiles_list, axis=2).astype(np.float64)
+
         else:
             conn_array = np.empty((n_conn, 0), dtype=np.float64)
             delay_array = np.empty((n_conn, 0), dtype=np.float64)
             k0_array = np.empty((n_rois_full, n_rois_full, 0), dtype=np.float64)
+            profiles_array = np.empty((n_conn, u_max, 0), dtype=np.float64)
 
         save_dict[f"{trial_id}_connectivity"] = conn_array
         save_dict[f"{trial_id}_delays"] = delay_array
         save_dict[f"{trial_id}_k0_values"] = k0_array
+        save_dict[f"{trial_id}_te_profiles"] = profiles_array
 
     # Metadata
     save_dict["subject_id"] = np.array(subject_id)
