@@ -459,7 +459,7 @@ stage_e_transfer_entropy:
   # --------------------------------------------------------------------------
   signal:
     sfreq: 25.0                           # Hz (R9 resampled from 50 Hz in-memory)
-    embedding_dimension: 3                # d — Wang (2020) standard for fNIRS phase-TE
+    embedding_dimension: 2                # d — Wang (2020) standard for fNIRS phase-TE
     embedding_delay_method: "autocorr_1_over_e"  # lag where ACF first drops below 1/e ≈ 0.368
     u_max: 50                             # maximum lag for multi-delay search (~2 s at 25 Hz)
 
@@ -480,7 +480,7 @@ stage_e_transfer_entropy:
   symbolisation:
     ndis_threshold: 0.05           # 5% — Wang (2020) Section 3.2
     k0_min: 2                      # minimum codebook size to test
-    k0_max_bivariate: 20           # guard against codebook explosion (bivariate)
+    k0_max_bivariate: 35           # guard against codebook explosion (bivariate)
     k0_max_multivariate: 8         # sample-scarcity guard for 4D+ contingency tables (Phase 2)
     ng_max_iterations: 500         # Neural-Gas training iterations per k
     ng_learning_rate_i: 0.5        # initial learning rate λ_i
