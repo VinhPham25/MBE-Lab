@@ -1109,7 +1109,7 @@ def plot_lag_te_profile(
     te_vs_lag     : np.ndarray  shape (u_max,)  — TE value at each lag u=1..u_max
     src_roi       : str   source ROI name (e.g. 'LPFC')
     tgt_roi       : str   target ROI name (e.g. 'SMA')
-    optimal_delay : int   optimal lag index (0-based into te_vs_lag)
+    optimal_delay : int   optimal lag in samples, 1-indexed (e.g. 10 = lag 10)
     subject_id    : str   for title
     trial         : str   for title
     window        : str   for title
@@ -1124,7 +1124,10 @@ def plot_lag_te_profile(
     """
     u_max = len(te_vs_lag)
     lags = np.arange(1, u_max + 1)
-    delay_ms = (optimal_delay + 1) * (1000.0 / sfreq)   # 0-based → 1-based lag → ms
+    # optimal_delay is 1-indexed (lag value, not array index)
+    delay_ms = optimal_delay * (1000.0 / sfreq)
+    # 0-based index into te_vs_lag
+    delay_idx = optimal_delay - 1
 
     standalone = ax is None
     if standalone:
@@ -1135,14 +1138,14 @@ def plot_lag_te_profile(
     ax.plot(lags, te_vs_lag, color="#1ABC9C", lw=2.0, alpha=0.9, label=f"{src_roi}→{tgt_roi}")
     ax.fill_between(lags, 0, te_vs_lag, alpha=0.12, color="#1ABC9C")
 
-    if 0 <= optimal_delay < u_max:
-        ax.axvline(x=optimal_delay + 1, color="#E74C3C", lw=1.8, linestyle="--",
-                   label=f"δ̂ = {optimal_delay + 1} smp  ({delay_ms:.0f} ms)")
-        peak_val = te_vs_lag[optimal_delay]
+    if 1 <= optimal_delay <= u_max:
+        ax.axvline(x=optimal_delay, color="#E74C3C", lw=1.8, linestyle="--",
+                   label=f"δ̂ = {optimal_delay} smp  ({delay_ms:.0f} ms)")
+        peak_val = te_vs_lag[delay_idx]
         ax.annotate(
-            f"δ̂={optimal_delay + 1}\n({delay_ms:.0f} ms)",
-            xy=(optimal_delay + 1, peak_val),
-            xytext=(optimal_delay + 1 + max(1, u_max * 0.04), peak_val * 1.05),
+            f"δ̂={optimal_delay}\n({delay_ms:.0f} ms)",
+            xy=(optimal_delay, peak_val),
+            xytext=(optimal_delay + max(1, u_max * 0.04), peak_val * 1.05),
             fontsize=8, color="#E74C3C",
             arrowprops=dict(arrowstyle="->", color="#E74C3C", lw=1.2),
         )
@@ -1395,7 +1398,7 @@ def _generate_lag_profile_example(
         # Legacy fallback: synthesise a bell curve centred on the stored argmax.
         lags = np.arange(1, u_max + 1)
         sigma = max(u_max * 0.08, 2.0)
-        profile = te_peak * np.exp(-0.5 * ((lags - (optimal_delay_smp + 1)) / sigma) ** 2)
+        profile = te_peak * np.exp(-0.5 * ((lags - optimal_delay_smp) / sigma) ** 2)
         profile = np.clip(profile, 0, None)
         logger.warning(
             "_generate_lag_profile_example: te_profiles not in .npz for %s — "
