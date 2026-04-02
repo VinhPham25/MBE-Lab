@@ -461,7 +461,28 @@ stage_e_transfer_entropy:
     sfreq: 25.0                           # Hz (R9 resampled from 50 Hz in-memory)
     embedding_dimension: 2                # d — Wang (2020) standard for fNIRS phase-TE
     embedding_delay_method: "autocorr_1_over_e"  # lag where ACF first drops below 1/e ≈ 0.368
-    u_max: 50                             # maximum lag for multi-delay search (~2 s at 25 Hz)
+    u_max: 50                             # maximum lag for multi-delay search (50 samples = 2 s at 25 Hz)
+
+  # --------------------------------------------------------------------------
+  # Narrowband pre-filter (Option A: full-trial filter → Hilbert → window)
+  # Applied to the entire trial signal BEFORE phase extraction and windowing.
+  # Converts the broadband HbO signal into a quasi-monocomponent oscillation
+  # so that instantaneous Hilbert phase is physically meaningful.
+  #
+  # Two validated bands:
+  #   Wang  (2020): f_lo=0.01, f_hi=0.10  — slow hemodynamic oscillations
+  #     ⚠ Requires ≥270 s trial (≥2.7 cycles at 0.01 Hz). Expert trials (~270 s)
+  #       give ~2.7 cycles; Novice trials (~480 s) give ~4.8 cycles.
+  #   Lobier(2014): f_lo=0.04, f_hi=0.15  — faster hemodynamic fluctuations
+  #     ✓ Safer for shorter recordings; 25 s period → ~11 cycles in 270 s.
+  #
+  # Set enabled: false to disable filtering and revert to broadband (legacy) mode.
+  # --------------------------------------------------------------------------
+  narrowband_filter:
+    enabled: true
+    f_lo: 0.04      # Hz — high-pass cutoff (Lobier 2014 default; change to 0.01 for Wang 2020)
+    f_hi: 0.15      # Hz — low-pass  cutoff (Lobier 2014 default; change to 0.10 for Wang 2020)
+    order: 3        # Butterworth order (effective order = 2×order after zero-phase filtfilt)
 
   # --------------------------------------------------------------------------
   # Sliding window parameters (identical to Stage D)

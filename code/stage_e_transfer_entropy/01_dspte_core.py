@@ -6,6 +6,7 @@ Transfer Entropy (dSPTE), as specified in TRANSFER_ENTROPY_PROGRESS.md
 Sections 3.1 through 3.4.
 
 Section 3.1 — Phase Extraction
+    narrowband_filter(x, f_lo, f_hi) : zero-phase Butterworth bandpass (full-trial)
     extract_phase_signal(x)          : Hilbert phase in [-π, π]
     extract_amplitude_signal(x)      : Hilbert amplitude envelope
     compute_embedding_delay(x)       : autocorrelation 1/e lag τ
@@ -36,7 +37,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from scipy.signal import hilbert
+from scipy.signal import hilbert, butter, sosfiltfilt
 
 _CODE_ROOT = Path(__file__).parent.parent
 if str(_CODE_ROOT) not in sys.path:
@@ -100,6 +101,81 @@ def extract_phase_signal(x: np.ndarray) -> np.ndarray:
         len(theta), float(theta.min()), float(theta.max()),
     )
     return theta
+
+
+def narrowband_filter(
+    x: np.ndarray,
+    f_lo: float,
+    f_hi: float,
+    sfreq: float = 25.0,
+    order: int = 3,
+) -> np.ndarray:
+    """
+    Zero-phase Butterworth bandpass filter for narrowband phase-TE preprocessing.
+
+    Applied to the **full trial signal** before phase extraction and windowing,
+    so that:
+    (a) The Hilbert transform operates on a quasi-monocomponent oscillation
+        rather than broadband noise — making instantaneous phase physically
+        meaningful (Boashash 1992).
+    (b) Edge artefacts (Gibbs-like ringing at window boundaries) are confined
+        to trial start/end rather than appearing at every 54-second window edge.
+
+    Supported bands (both validated on fNIRS task data):
+    - Wang (2020):   f_lo=0.01, f_hi=0.10 Hz  — slow hemodynamic oscillations
+    - Lobier (2014): f_lo=0.04, f_hi=0.15 Hz  — faster hemodynamic fluctuations
+
+    The Wang band's lowest frequency (100 s period) requires a full trial of
+    ≥270 s (≥2.7 cycles) for stable phase estimation; it is NOT safe to apply
+    per-window (54 s = 0.54 cycle). The Lobier band (25 s period) fits ~2.2
+    cycles per 54-second window and is more permissive.
+
+    Parameters
+    ----------
+    x : np.ndarray, shape (T,)
+        1D real-valued time series.
+    f_lo : float
+        High-pass cutoff in Hz (e.g. 0.01 or 0.04).
+    f_hi : float
+        Low-pass cutoff in Hz (e.g. 0.10 or 0.15).
+    sfreq : float
+        Sampling frequency in Hz. Default 25.0.
+    order : int
+        Butterworth filter order. Default 3 (6th-order effective after
+        zero-phase filtfilt doubling). Higher orders give sharper roll-off
+        but more phase distortion before filtfilt compensation.
+
+    Returns
+    -------
+    x_filtered : np.ndarray, shape (T,)
+        Bandpass-filtered signal.
+
+    Raises
+    ------
+    ValueError
+        If f_lo >= f_hi, or if either cutoff is outside (0, Nyquist).
+    """
+    x = np.asarray(x, dtype=float)
+    if x.ndim != 1:
+        raise ValueError(
+            f"narrowband_filter: expected 1D input, got shape {x.shape}"
+        )
+    nyq = sfreq / 2.0
+    if not (0 < f_lo < f_hi < nyq):
+        raise ValueError(
+            f"narrowband_filter: invalid band [{f_lo}, {f_hi}] Hz for "
+            f"sfreq={sfreq} Hz (Nyquist={nyq} Hz). Need 0 < f_lo < f_hi < {nyq}."
+        )
+    sos = butter(order, [f_lo / nyq, f_hi / nyq], btype="bandpass", output="sos")
+    x_filt = sosfiltfilt(sos, x)
+    logger.debug(
+        "narrowband_filter: T=%d  band=[%.3f, %.3f] Hz  order=%d  "
+        "rms_in=%.4f  rms_out=%.4f",
+        len(x), f_lo, f_hi, order,
+        float(np.sqrt(np.mean(x**2))),
+        float(np.sqrt(np.mean(x_filt**2))),
+    )
+    return x_filt
 
 
 def extract_amplitude_signal(x: np.ndarray) -> np.ndarray:
@@ -727,6 +803,8 @@ def compute_dspte_multidelay(
 def compute_dspte_matrix(
     Y_window: np.ndarray,
     config: "dict | None" = None,
+    phases: "list[np.ndarray | None] | None" = None,
+    taus: "list[int] | None" = None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """
     Compute the dSPTE directed connectivity matrix for one sliding window.
@@ -737,7 +815,8 @@ def compute_dspte_matrix(
 
     For each ordered pair (src, tgt) with src ≠ tgt:
 
-    1. Extract instantaneous phase via Hilbert transform.
+    1. Extract instantaneous phase via Hilbert transform (or use pre-computed
+       phases if the ``phases`` argument is provided — see Option A below).
     2. Compute embedding delay τ per signal (autocorrelation 1/e method).
        The shared τ for the pair is ``min(τ_src, τ_tgt)`` — the smaller of
        the two ensures both embedded matrices have the same T' and that the
@@ -754,13 +833,26 @@ def compute_dspte_matrix(
     Y_window : np.ndarray, shape (n_rois, T)
         ROI signal matrix for one window (typically 1351 samples at 25 Hz).
         Rows correspond to ROIs in the order defined by the upstream
-        ``load_or_extract_roi_signals`` call.
+        ``load_or_extract_roi_signals`` call.  When ``phases`` is provided,
+        ``Y_window`` is still required for NaN-row detection but its values
+        are not used for phase extraction.
     config : dict or None
         Parsed ``config.yaml``.  Used to read:
         - ``stage_e_transfer_entropy.signal.embedding_dimension`` (default 3)
         - ``stage_e_transfer_entropy.signal.u_max`` (default 50)
         - ``stage_e_transfer_entropy.symbolisation.ndis_threshold`` (default 0.05)
         - ``stage_e_transfer_entropy.symbolisation.k0_max_bivariate`` (default 20)
+    phases : list of (np.ndarray or None), length n_rois, optional
+        Pre-computed instantaneous phase arrays, one per ROI, each shape (T,)
+        matching the window length.  When provided, ``extract_phase_signal``
+        is **not** called — enabling Option A (full-trial narrowband filtering
+        before phase extraction).  Pass ``None`` for ROIs whose signal is
+        all-NaN (they will be skipped as usual).  If omitted or ``None``,
+        phases are computed fresh from ``Y_window`` (legacy broadband path).
+    taus : list of int, length n_rois, optional
+        Pre-computed embedding delays, one per ROI.  Must be provided together
+        with ``phases``.  When omitted, τ is computed from the provided/computed
+        phase arrays.
 
     Returns
     -------
@@ -822,23 +914,53 @@ def compute_dspte_matrix(
     te_profiles: dict = {}
     skipped_pairs: list = []
 
-    # Pre-compute phase and τ for every ROI (avoid recomputing per pair)
-    phases: list[np.ndarray | None] = []
-    taus: list[int] = []
-    for roi_idx in range(n_rois):
-        row = Y_window[roi_idx]
-        if np.all(np.isnan(row)):
-            phases.append(None)
-            taus.append(1)
-            logger.warning(
-                "compute_dspte_matrix: ROI %d is all-NaN — will skip all pairs involving it.",
-                roi_idx,
+    # Phase and τ for every ROI.
+    # If pre-computed phases are supplied (Option A: full-trial narrowband filter
+    # → Hilbert → slice to window), use them directly.  Otherwise compute fresh
+    # from Y_window (legacy broadband path).
+    if phases is not None:
+        # Validate supplied arrays and fill taus if not given.
+        if len(phases) != n_rois:
+            raise ValueError(
+                f"compute_dspte_matrix: len(phases)={len(phases)} != n_rois={n_rois}"
             )
-        else:
-            ph = extract_phase_signal(row)
-            tau_i = compute_embedding_delay(ph)
-            phases.append(ph)
-            taus.append(tau_i)
+        if taus is None:
+            taus = []
+            for roi_idx, ph in enumerate(phases):
+                if ph is None:
+                    taus.append(1)
+                else:
+                    taus.append(compute_embedding_delay(ph))
+        # Convert to mutable lists so we can shadow the parameter names below
+        _phases: list = list(phases)
+        _taus: list = list(taus)
+        # NaN guard: if Y_window row is all-NaN but no None was passed, set to None
+        for roi_idx in range(n_rois):
+            if _phases[roi_idx] is not None and np.all(np.isnan(Y_window[roi_idx])):
+                _phases[roi_idx] = None
+                _taus[roi_idx] = 1
+                logger.warning(
+                    "compute_dspte_matrix: ROI %d Y_window row all-NaN — "
+                    "overriding supplied phase to None.", roi_idx,
+                )
+    else:
+        # Legacy path: compute phase and τ per ROI from the window signal.
+        _phases = []
+        _taus = []
+        for roi_idx in range(n_rois):
+            row = Y_window[roi_idx]
+            if np.all(np.isnan(row)):
+                _phases.append(None)
+                _taus.append(1)
+                logger.warning(
+                    "compute_dspte_matrix: ROI %d is all-NaN — will skip all pairs involving it.",
+                    roi_idx,
+                )
+            else:
+                ph = extract_phase_signal(row)
+                tau_i = compute_embedding_delay(ph)
+                _phases.append(ph)
+                _taus.append(tau_i)
 
     # Iterate over all ordered pairs (src, tgt), src ≠ tgt
     for src in range(n_rois):
@@ -847,7 +969,7 @@ def compute_dspte_matrix(
                 continue
 
             # NaN guard
-            if phases[src] is None or phases[tgt] is None:
+            if _phases[src] is None or _phases[tgt] is None:
                 skipped_pairs.append((src, tgt))
                 logger.debug(
                     "compute_dspte_matrix: skipping pair (%d→%d) — NaN ROI.", src, tgt
@@ -855,12 +977,12 @@ def compute_dspte_matrix(
                 continue
 
             # Shared τ = min of the two per-channel delays
-            tau_shared = min(taus[src], taus[tgt])
+            tau_shared = min(_taus[src], _taus[tgt])
 
             # Symbolise the pair
             S_src, S_tgt, sym_meta = symbolise_pair(
-                phases[src],
-                phases[tgt],
+                _phases[src],
+                _phases[tgt],
                 d=d,
                 tau=tau_shared,
                 k0_max=k0_max,

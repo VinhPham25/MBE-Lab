@@ -85,6 +85,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _SEG_MODULE = None
 _PIPELINE_MODULE = None
+_CORE_MODULE = None
 
 
 def _get_seg_module():
@@ -111,6 +112,100 @@ def _get_pipeline_module():
         spec.loader.exec_module(mod)
         _PIPELINE_MODULE = mod
     return _PIPELINE_MODULE
+
+
+def _get_core_module_for_filter():
+    global _CORE_MODULE
+    if _CORE_MODULE is None:
+        spec = importlib.util.spec_from_file_location(
+            "dspte_core",
+            Path(__file__).parent / "01_dspte_core.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CORE_MODULE = mod
+    return _CORE_MODULE
+
+
+def _filter_and_extract_phase_trial(
+    Y_trial: np.ndarray,
+    sfreq: float,
+    f_lo: float,
+    f_hi: float,
+    order: int,
+    core_mod,
+    subject_id: str = "",
+    trial_id: str = "",
+) -> tuple[np.ndarray, list]:
+    """
+    Apply narrowband bandpass filter to the full trial then extract Hilbert phase.
+
+    This is Option A of the narrowband phase-TE approach:
+    1. Filter each ROI's full trial signal with a zero-phase Butterworth bandpass.
+    2. Extract instantaneous phase via the Hilbert transform on the filtered signal.
+    3. Compute embedding delay τ from the filtered phase signal.
+
+    By operating on the full trial (not per-window), edge artefacts from the
+    Hilbert transform are confined to the trial boundaries, which lie outside
+    the analysis windows.
+
+    Parameters
+    ----------
+    Y_trial : np.ndarray, shape (n_rois, T_trial)
+        Raw ROI signal matrix for one trial.
+    sfreq : float
+        Sampling frequency in Hz.
+    f_lo, f_hi : float
+        Bandpass cutoff frequencies in Hz.
+    order : int
+        Butterworth filter order.
+    core_mod : module
+        Loaded ``01_dspte_core`` module (provides narrowband_filter,
+        extract_phase_signal, compute_embedding_delay).
+    subject_id, trial_id : str
+        For logging only.
+
+    Returns
+    -------
+    Phi_trial : np.ndarray, shape (n_rois, T_trial)
+        Instantaneous phase array for the full trial.  All-NaN rows remain
+        all-NaN (bad channels preserved for downstream NaN guard).
+    taus_trial : list of int, length n_rois
+        Embedding delays computed from the filtered phase signals.
+    """
+    n_rois, T_trial = Y_trial.shape
+    Phi_trial = np.full_like(Y_trial, np.nan)
+    taus_trial: list = []
+
+    for roi_idx in range(n_rois):
+        row = Y_trial[roi_idx]
+        if np.all(np.isnan(row)):
+            taus_trial.append(1)
+            logger.warning(
+                "_filter_and_extract_phase_trial [%s %s]: ROI %d all-NaN — skipping.",
+                subject_id, trial_id, roi_idx,
+            )
+            continue
+
+        # Bandpass filter on the full trial signal
+        x_filt = core_mod.narrowband_filter(
+            row, f_lo=f_lo, f_hi=f_hi, sfreq=sfreq, order=order
+        )
+
+        # Hilbert phase on the filtered full-trial signal
+        ph = core_mod.extract_phase_signal(x_filt)
+        Phi_trial[roi_idx] = ph
+
+        # Embedding delay from the full-trial filtered phase
+        tau_i = core_mod.compute_embedding_delay(ph)
+        taus_trial.append(tau_i)
+
+    logger.info(
+        "_filter_and_extract_phase_trial [%s %s]: filtered [%.3f–%.3f Hz]  "
+        "n_rois=%d  taus=%s",
+        subject_id, trial_id, f_lo, f_hi, n_rois, taus_trial,
+    )
+    return Phi_trial, taus_trial
 
 
 # ===========================================================================
@@ -186,6 +281,7 @@ def process_subject_dspte(
     sig_cfg = te_cfg.get("signal", {})
     sym_cfg = te_cfg.get("symbolisation", {})
     win_cfg = te_cfg.get("window", {})
+    filt_cfg = te_cfg.get("narrowband_filter", {})
 
     window_size = int(win_cfg.get("size_samples", 1350))
     stride = int(win_cfg.get("stride_samples", 1350))
@@ -256,6 +352,15 @@ def process_subject_dspte(
     k0_result: dict = {}       # {trial_id: {win_id: k0_matrix_5x5}}
     profiles_result: dict = {} # {trial_id: {win_id: lag_profiles_20 x u_max}}
 
+    # Read narrowband filter settings once (used inside loop)
+    filter_enabled = bool(filt_cfg.get("enabled", False))
+    filt_f_lo = float(filt_cfg.get("f_lo", 0.04))
+    filt_f_hi = float(filt_cfg.get("f_hi", 0.15))
+    filt_order = int(filt_cfg.get("order", 3))
+
+    # Import core module for narrowband_filter and extract_phase_signal
+    core_mod = _get_core_module_for_filter()
+
     for trial_idx, (onset, offset) in enumerate(segments):
         trial_id = f"Tr_{trial_idx + 1}"
         Y_trial = Data_Reg[:, onset : offset + 1]
@@ -265,11 +370,37 @@ def process_subject_dspte(
             subject_id, trial_id, onset, offset, Y_trial.shape,
         )
 
+        # ------------------------------------------------------------------
+        # Step 2.5 — Option A: narrowband filter + full-trial Hilbert
+        # ------------------------------------------------------------------
+        # Apply bandpass to the FULL trial signal before windowing so that:
+        #   (a) Hilbert phase is computed on a quasi-monocomponent oscillation
+        #   (b) Edge artefacts are confined to trial boundaries (outside windows)
+        # The resulting Phi_trial (n_rois, T_trial) and taus_trial (n_rois,)
+        # are passed to compute_windowed_dspte, which slices Phi_trial per
+        # window instead of recomputing phase from raw signal slices.
+        if filter_enabled:
+            Phi_trial, taus_trial = _filter_and_extract_phase_trial(
+                Y_trial,
+                sfreq=sfreq,
+                f_lo=filt_f_lo,
+                f_hi=filt_f_hi,
+                order=filt_order,
+                core_mod=core_mod,
+                subject_id=subject_id,
+                trial_id=trial_id,
+            )
+        else:
+            Phi_trial = None
+            taus_trial = None
+
         windows_dspte = compute_windowed_dspte(
             Y_trial,
             window_size=window_size,
             stride=stride,
             config=config,
+            Phi_trial=Phi_trial,
+            taus_trial=taus_trial,
         )
 
         trial_result: dict = {}
@@ -326,6 +457,7 @@ def process_subject_dspte(
     # ------------------------------------------------------------------
     elapsed_subject = time.perf_counter() - t_subject_start
 
+    filter_enabled = bool(filt_cfg.get("enabled", False))
     params = {
         "study": study,
         "window_size_samples": window_size,
@@ -337,6 +469,10 @@ def process_subject_dspte(
         "k0_max_bivariate": int(sym_cfg.get("k0_max_bivariate", 20)),
         "n_connections": 20,
         "elapsed_s": round(elapsed_subject, 1),
+        "narrowband_filter_enabled": filter_enabled,
+        "narrowband_filter_f_lo": float(filt_cfg.get("f_lo", 0.0)) if filter_enabled else None,
+        "narrowband_filter_f_hi": float(filt_cfg.get("f_hi", 0.0)) if filter_enabled else None,
+        "narrowband_filter_order": int(filt_cfg.get("order", 3)) if filter_enabled else None,
     }
 
     _save_subject_dspte_npz(

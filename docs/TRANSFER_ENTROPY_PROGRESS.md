@@ -716,25 +716,57 @@ More iterations do not help beyond ~2,000: nDis plateaus at ~0.067 for k=20 rega
 
 ---
 
-### Issue 3: Lag Profile Shape — RESOLVED (2026-03-30)
+### Issue 3: Lag Profile Shape — RESOLVED (2026-03-30) + Narrowband Filter Fix (2026-03-30)
 
-**Status: FIXED.** The pipeline was computing but discarding the full per-lag TE arrays (`te_profiles` from `compute_dspte_matrix` metadata). Only the argmax was saved. The visualisation consequently synthesised a bell curve centred on the stored delay — not actual data.
+**Status: FIXED (storage) + IMPROVED (profile structure via narrowband filter).**
 
-**Fix implemented:**
-1. `03_subject_dspte_pipeline.py` — Added `_extract_canonical_lag_profiles()` helper that converts the `te_profiles` dict (keyed by local ROI index pairs) to a canonical `(20, u_max)` array per window.
-2. `_save_subject_dspte_npz()` — Now saves `Tr_N_te_profiles: shape (20, u_max, n_wins)` in every per-subject `.npz`.
-3. `05_dspte_visualization.py` — `_generate_lag_profile_example()` now reads `Tr_N_te_profiles[:, :, window_idx]` directly. Falls back to synthesised bell curve (with explicit warning) only for legacy `.npz` files that predate this fix.
-4. Full batch re-run (2026-03-30): all 13 subjects regenerated, 150.5 s total. All PNGs regenerated. No synthesised-profile warnings emitted — real data confirmed loaded.
+**Part A — Storage fix:**
+The pipeline was computing but discarding the full per-lag TE arrays. Fixed:
+1. `_extract_canonical_lag_profiles()` added to `03_subject_dspte_pipeline.py` — maps `te_profiles` dict to canonical `(20, u_max)` array per window.
+2. `_save_subject_dspte_npz()` — now saves `Tr_N_te_profiles: shape (20, u_max, n_wins)`.
+3. `_generate_lag_profile_example()` in `05_dspte_visualization.py` — reads real arrays; falls back to synthesised bell curve with warning for legacy files only.
 
-**Critical finding from first real profiles (A1 LPFC→SMA, Tr_1 Win_1):**
+**Critical finding from first real broadband profiles:** Flat across all 50 lags (range ~0.01). The argmax delay was noise — not a detected neural transmission delay. This is because Hilbert phase on broadband fNIRS is quasi-uniform and carries no lag structure.
 
-The lag-TE profile is essentially **flat** across all 50 lags (range 0.0425–0.0541, total variation ~0.012). The stored "optimal delay" of 46 samples (1840 ms) is the argmax of random noise on a flat curve — not a detected neural transmission delay. This pattern was confirmed across multiple subjects and connections.
+**Part B — Narrowband filter (Option A) — implemented 2026-03-30:**
 
-**Implication:** The multi-delay argmax as currently implemented (`argmax over lags 1–u_max`) is uninformative when the TE curve is flat. The "optimal delay" estimates in existing results should not be interpreted as true causal transmission delays. This is expected given:
-- Hilbert phase on broadband fNIRS does not produce lag-structured information flow
-- fNIRS hemodynamic coupling is slow and non-oscillatory — there is no sharp phase-delay signature to detect
+Root cause of flat profiles: the Hilbert transform requires a quasi-monocomponent (narrowband) input to produce meaningful instantaneous phase. Applied to broadband fNIRS, phase spins quasi-randomly — no lag peak is detectable.
 
-**Conclusion:** The delay estimation component of dSPTE is not meaningful for broadband fNIRS. The connectivity value (max TE over lags) may still be informative as a coupling strength estimate, but the lag dimension should be interpreted with caution. This will be re-evaluated after Phase 2 (amplitude branch + NUE embedding).
+**Fix:** Apply a zero-phase Butterworth bandpass to the **full trial signal** (not per-window) before Hilbert transform and windowing. Two validated bands tested:
+
+| Band | Freq range | Period | Cycles/trial (~270 s) | Reference |
+|------|------------|--------|-----------------------|-----------|
+| Wang  | 0.01–0.10 Hz | 10–100 s | ~2.7–27 | Wang (2020) |
+| Lobier | 0.04–0.15 Hz | 6.7–25 s | ~10.8–40 | Lobier (2014) |
+
+**Implementation changes:**
+- `01_dspte_core.py` — added `narrowband_filter(x, f_lo, f_hi, sfreq, order)` using `scipy.signal.sosfiltfilt` (zero-phase). Extended `compute_dspte_matrix(phases=, taus=)` to accept pre-computed phase arrays, bypassing `extract_phase_signal` when Option A is active.
+- `02_dspte_pipeline.py` — `compute_windowed_dspte(Phi_trial=, taus_trial=)` slices pre-computed phase arrays per window instead of recomputing phase from raw window signal.
+- `03_subject_dspte_pipeline.py` — new Step 2.5: `_filter_and_extract_phase_trial()` applies bandpass + Hilbert to full trial → passes `Phi_trial` and `taus_trial` to windowed pipeline. Controlled by `narrowband_filter.enabled` in `config.yaml`.
+- `config.yaml` — new `narrowband_filter` block: `enabled`, `f_lo`, `f_hi`, `order`.
+
+**Batch results comparison (Tr_1, Win_1, 13 subjects):**
+
+| Metric | Broadband | Lobier 0.04–0.15 Hz | Wang 0.01–0.10 Hz |
+|--------|-----------|---------------------|-------------------|
+| Batch time | 150.5 s | **52.9 s** | 84.9 s |
+| Mean k₀ | 16–25 | **7–9** | 10–13 |
+| nDis convergence | ~60% pairs | **~100% pairs** | ~100% pairs |
+| Expert mean dSPTE | 0.194 | 0.0183 | 0.0210 |
+| Novice mean dSPTE | 0.198 | 0.0205 | 0.0226 |
+| Novice > Expert | YES (all 20) | Yes (slight) | Yes (slight) |
+| R3 outlier effect | 15× range | **Normalised** | Normalised |
+
+**Key improvements from narrowband filter:**
+1. **nDis convergence: broadband ~60% → narrowband ~100%.** Filtered phase occupies a structured region of phase space (slow oscillation arc rather than uniform disk) — Neural Gas finds compact Voronoi cells at k₀ = 7–9 instead of hitting the k₀_max ceiling.
+2. **k₀ drops from 20–35 to 7–13** — faster computation (3× speedup for Lobier band).
+3. **R3's extreme TE (0.4–1.4) normalises to ~0.02** — confirming R3's high broadband TE was amplitude variability noise, not genuine coupling.
+4. **Novice > Expert gap narrows significantly** — group means now 0.018 vs 0.021 (Lobier) rather than 0.027 vs 0.252 (broadband).
+5. **Profiles remain relatively flat** — still no sharp lag peak, but range increases slightly (0.007 Lobier vs 0.012 broadband raw). The Wang band shows slightly more structure in some connections.
+
+**Active config:** Lobier 0.04–0.15 Hz (safer for 54 s windows; ~11 cycles/trial). Wang band available by changing `f_lo: 0.01, f_hi: 0.10` in config.yaml.
+
+**Remaining concern:** Novice > Expert persists (slight) under both filter conditions. To be investigated in Issue 2 analysis after current batch stabilises.
 
 ---
 

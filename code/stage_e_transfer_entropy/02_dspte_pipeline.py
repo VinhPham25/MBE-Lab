@@ -86,6 +86,8 @@ def compute_windowed_dspte(
     window_size: int = 1350,
     stride: int = 1350,
     config: Optional[dict] = None,
+    Phi_trial: Optional[np.ndarray] = None,
+    taus_trial: Optional[list] = None,
 ) -> dict:
     """
     Slide a fixed-size window over one trial and compute dSPTE per window.
@@ -113,6 +115,17 @@ def compute_windowed_dspte(
         Parsed ``config.yaml``.  Forwarded to ``compute_dspte_matrix()`` for
         embedding dimension, u_max, nDis threshold, and NG hyperparameters.
         Loaded from disk if None.
+    Phi_trial : np.ndarray, shape (n_rois, T), optional
+        Pre-computed instantaneous phase array for the full trial (Option A:
+        narrowband filter → Hilbert on full trial).  When provided, each
+        window's phase slice ``Phi_trial[:, w-window_size : w+1]`` is passed
+        directly to ``compute_dspte_matrix`` instead of re-extracting phase
+        from the raw signal window.  ``None`` entries in ``taus_trial`` are
+        preserved as skipped ROIs.
+    taus_trial : list of int, length n_rois, optional
+        Pre-computed embedding delays (one per ROI) computed on the full-trial
+        phase signal.  Must be supplied together with ``Phi_trial``; ignored
+        otherwise.
 
     Returns
     -------
@@ -181,7 +194,19 @@ def compute_windowed_dspte(
             label, w - window_size, w, Y_win.shape,
         )
 
-        EC_matrix, delay_matrix, metadata = compute_dspte_matrix(Y_win, config=config)
+        # Option A: pass pre-computed phase window slices if available.
+        # Phi_trial is (n_rois, T); NaN rows remain NaN in the slice and
+        # compute_dspte_matrix's own NaN guard handles them.
+        phi_win = (
+            [Phi_trial[roi, w - window_size : w + 1] for roi in range(n_rois)]
+            if Phi_trial is not None else None
+        )
+
+        EC_matrix, delay_matrix, metadata = compute_dspte_matrix(
+            Y_win, config=config,
+            phases=phi_win,
+            taus=taus_trial,
+        )
 
         elapsed = time.perf_counter() - t_win_start
 
