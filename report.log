@@ -1,0 +1,20 @@
+2026-04-07 22:43:39,667 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.00 NOT reached by k=4 (final nDis=0.1518). Using k=4 as fallback.
+2026-04-07 22:43:39,667 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1518  (pre-clamp k₀=4)  clamped=False
+2026-04-07 22:43:39,667 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-07 22:43:39,668 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-07 22:43:39,669 - __main__ - WARNING - symbolise_multivariate: τ divergence detected — max τ (50) > 2× min τ (5). ROI τ values: {'LPFC': 5, 'CPFC': 5, 'RPFC': 5, 'LM1': 5, 'SMA': 50}. Filter may not be fully stabilising phase structure. Using τ_min=5 for all ROIs.
+2026-04-07 22:43:39,669 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=5  T'=1346
+2026-04-07 22:43:39,670 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6730, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-07 22:43:39,679 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1233). Using k=4 as fallback.
+2026-04-07 22:43:39,679 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1233  (pre-clamp k₀=4)  clamped=False
+2026-04-07 22:43:39,680 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1346: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.3 samples/cell). Adequate (>5 samp/cell)
+2026-04-07 22:43:39,680 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-07 22:43:39,681 - __main__ - INFO - symbolise_multivariate: τ values per ROI: {'LPFC': 8, 'CPFC': 9, 'RPFC': 8, 'LM1': 10, 'SMA': 9}  τ_min=8
+2026-04-07 22:43:39,681 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=8  T'=1343
+2026-04-07 22:43:39,682 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6715, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-07 22:43:39,691 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1718). Using k=4 as fallback.
+2026-04-07 22:43:39,691 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1718  (pre-clamp k₀=4)  clamped=False
+2026-04-07 22:43:39,692 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-07 22:43:39,692 - __main__ - WARNING - symbolise_multivariate: WARNING: Degenerate symbol sequence for ROI LPFC (idx=0) — H(S_roi)=-0.000 nat < threshold=1.0 nat (max at k₀=4 is 1.386 nat). TE estimates for pairs involving this ROI will be unreliable. Symbol distribution: {2: 1343}
+2026-04-07 22:43:39,693 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '-0.000', 'CPFC': '1.358', 'RPFC': '1.349', 'LM1': '1.361', 'SMA': '1.354'}
+2026-04-07 22:43:39,693 - __main__ - WARNING - symbolise_multivariate: 1/5 ROIs have degenerate symbol sequences: ['LPFC']

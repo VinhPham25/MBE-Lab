@@ -545,6 +545,42 @@ stage_e_transfer_entropy:
     # all_windows:   all windows NaN-padded (used for H0/HIV only)
 
   # --------------------------------------------------------------------------
+  # Phase 2 — Hybrid-dSPTE (Multivariate Conditioning) parameters
+  # See TRANSFER_ENTROPY_PROGRESS.md Section 7.1 for design rationale.
+  # --------------------------------------------------------------------------
+  phase_2:
+    # k₀ hard ceiling for multivariate symbolisation (Section 7.1.1).
+    # At k₀=4: 4D contingency table has 256 cells → ~5.2 samples/cell at T'=1341.
+    # This is the practical lower bound for frequency-count TE to be approximately
+    # unbiased (bias is O(k₀/N)). Raising this to k₀=8 gives 4096 cells → 0.33
+    # samples/cell — severely under-sampled for the ASTaUND window size.
+    # Documented as PRD deviation E4.
+    k0_max_multivariate: 4
+
+    # Sparsity guard for conditional TE (Section 7.2.1).
+    # If > sparsity_fallback_threshold fraction of cells are zero in the
+    # (n+2)-dimensional contingency table, fall back to bivariate dSPTE for
+    # that pair at that lag. Log fallback count per window.
+    sparsity_fallback_threshold: 0.20   # 20% zero cells → fallback to Phase 1
+
+    # τ divergence check (Section 7.1.1).
+    # If max(τ) > tau_divergence_ratio × min(τ) across ROIs, emit a WARNING.
+    # The narrowband filter (0.04–0.15 Hz) should homogenise τ across ROIs
+    # to within ~2× — larger divergence suggests the filter is not fully
+    # stabilising phase structure.
+    tau_divergence_ratio: 2.0
+
+    # Symbol entropy degenerate threshold (Section 7.1.1) in nats.
+    # ROIs with H(S_roi) < degenerate_entropy_threshold are flagged as
+    # degenerate: their TE estimates will be unreliable (H ≈ 0 → all samples
+    # map to one symbol → TE ≈ 0 regardless of coupling).
+    # Maximum possible entropy at k₀=4 is log(4) ≈ 1.386 nats.
+    degenerate_entropy_threshold: 1.0   # nats
+
+    # Output paths (relative to output_root/expert-novice/)
+    batch_log_filename: "hybrid_te_batch_log.json"
+
+  # --------------------------------------------------------------------------
   # Phase 3 — Bimodal fusion parameters
   # --------------------------------------------------------------------------
   phase_3:

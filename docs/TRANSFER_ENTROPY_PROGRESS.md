@@ -499,29 +499,113 @@ Functions in `code/stage_e_transfer_entropy/05_dspte_visualization.py`. Mirrors 
 ### SECTION 7: PHASE 2 — HYBRID-dSPTE (MULTIVARIATE CONDITIONING)
 
 Functions in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`.
-
+ 
+---
+ 
 #### 7.1 Multivariate Symbolisation
-- [ ] **7.1.1** Implement `symbolise_multivariate(Y_phase: np.ndarray, d: int, tau_list: list, k0_max: int, ndis_threshold: float) -> tuple[list[np.ndarray], dict]`. Input: phase matrix `(n_rois, T)` with per-ROI embedding delays. Builds joint state matrix over ALL n_rois channels: `θ_all^d` with shape `(n_rois × T, d)` (stack all embeddings). Fit single shared NG codebook. Quantise each channel's embedded vectors independently using this shared codebook. Returns `(list_of_symbol_sequences, {'k0': k0, 'nDis': nDis})`. If k₀ from nDis criterion exceeds `k0_max_multivariate`, clamp to `k0_max_multivariate` and log WARNING.
+ 
+- [x] **7.1.1** Implement `symbolise_multivariate(Phi_trial: np.ndarray, d: int, tau_list: list, k0_max: int, ndis_threshold: float) -> tuple[list[np.ndarray], dict]`. Input: Pre-computed phase matrix `Phi_trial` of shape `(n_rois, T)`. **This function is strictly prohibited from calling `extract_phase_signal()` or applying internal filters — it must consume the trial-level Hilbert output.**
+ 
+  **Shared Codebook Logic:**
+  Build a joint state matrix $\theta_{all}^d$ by stacking the embedded phase vectors from all 5 ROIs into a single `(n_rois × T', d)` matrix. Fit a single shared NG codebook to this global matrix to ensure a consistent symbolic alphabet across all brain regions. Quantise each ROI's phase trajectory independently using this universal codebook.
+ 
+  - **k₀ clamping:** If the nDis criterion selects a k₀ exceeding `k0_max_multivariate=4`, clamp to 4 and log `WARNING: Sparsity Constraint Triggered — k0 clamped from {selected} to 4`. Document this as the primary Phase 2 limitation: coarser symbolisation trades quantisation fidelity for statistical reliability. The theoretical maximum is log(4)=1.39 nats of symbolic information per ROI.
+ 
+  - **Per-channel τ selection:** Use each channel's own ACF-derived τ independently, since the narrowband filter (0.04–0.15 Hz) homogenises spectral content and τ values should be similar across ROIs (~10–30 samples). Log τ per ROI per window. If any pair of ROIs in a given window has τ values differing by more than 2×, emit `WARNING: τ divergence detected — filter may not be fully stabilising phase structure` and record the window index.
+ 
+  - **Symbol entropy diagnostic:** After quantising, compute the marginal symbol entropy $H(S_{roi}) = -\sum_s p(s) \log p(s)$ for each ROI's symbol sequence. Log all 5 values. If any ROI has $H(S_{roi}) < 1.0$ nat (max possible at k₀=4 is 1.39 nat), emit `WARNING: Degenerate symbol sequence for ROI {name} — TE estimates for pairs involving this ROI will be unreliable`. A degenerate sequence (symbols concentrating on 1–2 codewords) produces TE ≈ 0 regardless of coupling and cannot be distinguished from genuine absence of connectivity.
+ 
+> ⚠️ **Sample scarcity is a serious risk in Phase 2.** With 1,351 samples per window (~1,341 usable post-embedding), the 4D contingency table for one conditioning channel has shape `(k₀, k₀, k₀, k₀)`. At k₀=8 that is 4,096 cells — meaning < 1 sample/cell on average. At k₀=4 (256 cells) you get ~5.2 samples/cell, which is the practical lower bound for frequency-count entropy estimation to be approximately unbiased (bias is O(k₀/N)). `k0_max_multivariate=4` is therefore a hard ceiling, not a conservative suggestion. The trade-off cost is real — see drawbacks below — and must be stated explicitly in any report.
+ 
+> **Known drawbacks of k₀=4:**
+> 1. **Limited state-space history.** A small codebook can only encode coarse transitions in the hemodynamic phase trajectory. Slow signals with long memory (the HRF rise-and-fall spans ~20 s) may require finer grids to distinguish meaningful from trivial state transitions.
+> 2. **Increased state-space folding.** With only 4 prototypes in 2D phase space, distant trajectories may collapse into the same symbol, producing false information transfer estimates (inflated TE from aliasing) or masking genuine causal links.
+> 3. **Reduced nonlinear sensitivity.** TE's advantage over linear GC lies in capturing nonlinear transitions between states. At k₀=4 the symbolic representation is coarse enough to resemble a linear discretisation, partially defeating the purpose. This motivates running IDTxl's KSG-based multivariate TE as a parallel validation (see task 7.4.1) — a method that avoids binning entirely.
 
-> ⚠️ **Sample scarcity is a serious risk in Phase 2.** With 1,351 samples per window (after embedding edge effects, ~1,341 usable), the 4D contingency table for one conditioning channel has shape `(k₀, k₀, k₀, k₀)`. At k₀=8 that is 4,096 cells — meaning an average of **< 1 sample per cell**. Even at k₀=4 (256 cells) you have ~5 samples/cell, which is borderline. Frequency-counting entropy estimates become unreliable when cells are sparse (bias is O(k₀/N)). Mitigation options in order of preference: (1) keep `k0_max_multivariate ≤ 4` in practice even if nDis criterion would select higher; (2) run Phase 2 with the sparsity guard set to 20% (not 40%) for ASTaUND's short windows; (3) use IDTxl's `MultivariateTE` with its built-in NUE and KSG estimator, which handles continuous data and avoids the discrete table problem entirely. **Before reporting Phase 2 results, run Phase 2 on the Wang (2020) AR simulation with artificially truncated N=1,351 samples and compare accuracy against the full N=20,000 run — this empirically characterises how much Phase 2 degrades at ASTaUND's window length.**
+> **Result (2026-04-07):** Implemented in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`. All 5 smoke tests pass (exit 0, ~9 s wall-clock for synthetic T=1351, 5 ROIs).
+>
+> **Key observations from smoke test:**
+> - nDis = 0.1518 at k₀=4 (threshold of 0.05 not met — expected; this is the same geometric constraint documented in Issue 1 for Phase 1, now confirmed for the multivariate global matrix).
+> - Bivariate 3D table: 64 cells, ~21.0 samples/cell ✓
+> - Conditional 4D table (1 cond. channel): 256 cells, ~5.2 samples/cell ✓ (just above the adequate threshold)
+> - Symbol entropies all ≥ 1.376 nat (well above degenerate threshold of 1.0 nat) for well-behaved narrowband phase signals.
+> - Degenerate detection works: constant-phase ROI correctly flagged with H ≈ 0.000 nat.
+> - τ divergence detection: 10× τ ratio correctly raises WARNING with τ_min selected.
+> - Output shape: T' = 1343 matches Phase 1 expectation for same d=2, τ_min=8.
+>
+> **config.yaml updated:** Added `phase_2` block with `k0_max_multivariate: 4`, `sparsity_fallback_threshold: 0.20`, `tau_divergence_ratio: 2.0`, `degenerate_entropy_threshold: 1.0`.
+>
+> **Critical nDis observation (relevant for 7.2):** With k₀ clamped to 4, the nDis=0.152 is substantially above the 0.05 threshold. The global joint matrix (5 ROIs × T' = 6715 rows) distributes even more uniformly in phase space than the bivariate case (2 ROIs × T' = 2686 rows), because 5 independent narrowband oscillators collectively fill phase space more densely. This means the shared codebook at k₀=4 provides a coarser representation than Phase 1's per-pair codebooks. The downstream consequence for Phase 2 conditioning is that some genuine directed connectivity differences may be washed out by this coarse discretisation — motivating the IDTxl parallel validation in 7.4.
 
+---
+ 
 #### 7.2 Conditional dSPTE
-- [ ] **7.2.1** Implement `compute_conditional_dspte_at_lag(S_x, S_y, S_z_list, u, k0) -> float`. S_z_list is a list of symbolic sequences for all conditioning channels. Extends Eq. 17 by adding conditioning on `{S_{t-u}^{θz} for z in S_z_list}`:
+ 
+- [ ] **7.2.1** Implement `compute_conditional_dspte_at_lag(S_x, S_y, S_z_list, u, k0) -> float`. `S_z_list` is a list of symbolic sequences for all conditioning channels. Extends Eq. 17 by conditioning on `{S_{t-u}^{θz} for z in S_z_list}`:
+ 
   - For 1 conditioning channel: 4D contingency table `(k₀, k₀, k₀, k₀)`
   - For n conditioning channels: `(n+2)`-dimensional table
-  - Sparsity guard: if > 40% cells are zero → fallback to bivariate dSPTE and log WARNING
-  - Compute conditional TE as nested probability ratios (same log-ratio structure as Eq. 17, extended dimensions)
-
-  > 📦 **Consider IDTxl as an alternative backend for Phase 2:** IDTxl's `MultivariateTE` class implements multivariate TE with non-uniform embedding (the Faes 2011 NUE method, same reference as Wang 2022) and uses KSG estimation on continuous data — sidestepping the discrete table sparsity problem entirely. The workflow would be: run NG symbolisation as normal → pass the *pre-symbolisation* phase sequences to IDTxl's `MultivariateTE` (treating them as continuous inputs) → use IDTxl's output EC matrix in place of the manual conditional dSPTE. This is not faithful to Wang (2020)'s symbolic approach but gives you a well-validated multivariate TE with built-in significance testing. Implementing both and comparing is ideal — the NG-symbolic path is the novel contribution; the IDTxl path is the sanity check.
-
-- [ ] **7.2.2** Implement `compute_hybrid_dspte_matrix(Y_window, config) -> tuple[np.ndarray, np.ndarray, dict]`. Drop-in replacement for `compute_dspte_matrix()`. Same signature. For each pair (src, tgt): conditioning set = `{all ROIs} \ {src, tgt}`. Returns `(EC_matrix, delay_matrix, metadata)` in same format as Phase 1.
-
-- [ ] **7.2.3** Wire into subject pipeline. Create `process_subject_hybrid_dspte()` by cloning `process_subject_dspte()` and swapping the core function. Save to `phase_2_hybrid_dspte/te_connectivity/`. Batch all 13 subjects.
-
+  - **Sparsity guard (tightened from original PRD):** if > **20%** of cells are zero → fall back to bivariate dSPTE for that pair and log `WARNING: Sparsity fallback triggered for pair ({src}→{tgt}) at lag {u} — {pct:.1f}% empty cells`. Record the fallback count in the metadata dict; if more than 50% of pairs in a window trigger the fallback, log an additional `WARNING: Majority of pairs fell back to bivariate — Phase 2 results for this window should be treated as equivalent to Phase 1`.
+  - Compute conditional TE via the log-ratio structure of Eq. 17 extended to higher dimensions. All marginal/conditional probabilities are derived by broadcasting over the N-dimensional array; use `np.where(p_joint > 0, ...)` to guard against log(0). Return a non-negative float (clip numerical noise to 0).
+ 
+  **Lag profile diagnostic — primary validation of Phase 2:** The Phase 1 lag profiles exhibit monotonically increasing TE(u) with lag u, a symptom of shared slow autocorrelated noise from the narrowband hemodynamic rhythm. Multivariate conditioning on Z is intended to remove this shared-source contribution. To verify Phase 2 is functioning correctly:
+ 
+  - Save `Tr_N_conditional_te_profiles: shape (20, u_max, n_wins)` in the Phase 2 `.npz` — identical schema to the Phase 1 lag-profile fix.
+  - In task 7.3.3, plot Phase 1 vs Phase 2 lag profiles for the same connection, subject, and window. **Success criterion:** the monotonic increase from Phase 1 flattens or develops a local maximum in Phase 2, indicating the shared slow-noise component has been removed. If Phase 2 profiles remain monotonically increasing, conditioning is not suppressing the shared component and the result must be flagged as a Phase 2 failure mode in the report.
+ 
+> 📦 **Consider IDTxl as an alternative backend for Phase 2:** IDTxl's `MultivariateTE` class implements multivariate TE with non-uniform embedding (the Faes 2011 NUE method, same reference as Wang 2022) and uses KSG estimation on continuous data — sidestepping the discrete table sparsity problem entirely. The workflow would be: run NG symbolisation as normal → pass the *pre-symbolisation* phase sequences to IDTxl's `MultivariateTE` (treating them as continuous inputs) → use IDTxl's output EC matrix in place of the manual conditional dSPTE. This is not faithful to Wang (2020)'s symbolic approach but gives you a well-validated multivariate TE with built-in significance testing. Implementing both and comparing is ideal — the NG-symbolic path is the novel contribution; the IDTxl path is the sanity check.
+ 
+- [ ] **7.2.2** Implement `compute_hybrid_dspte_matrix(Phi_win: np.ndarray, taus: list, config: dict) -> tuple[np.ndarray, np.ndarray, dict]`. **Drop-in replacement for `compute_dspte_matrix()` — accepts pre-filtered phase window slices, not raw signals.** For each ordered pair (src, tgt): conditioning set = `{all ROIs} \ {src, tgt}` (3 channels for 5 ROIs). Calls `symbolise_multivariate` once per window (shared codebook across all pairs in that window — do not refit NG per pair), then calls `compute_conditional_dspte_at_lag` for each pair and lag. Returns `(EC_matrix, delay_matrix, metadata)` in the same format as Phase 1.
+ 
+  **Delay matrix interpretation note:** The `delay_matrix[src, tgt]` entry is the argmax lag of the **conditional** TE profile. If Phase 2 successfully suppresses the shared-noise monotonic trend, these optimal delay estimates will be more physiologically meaningful than Phase 1's (which reflect noise argmax rather than true transmission delay). Track the cross-subject standard deviation of `delay_matrix` values per connection: lower variance in Phase 2 vs Phase 1 is a secondary success criterion, independent of the TE magnitude change.
+ 
+- [ ] **7.2.3** Wire into subject pipeline. Implement `process_subject_hybrid_dspte()` by cloning the **updated narrowband-aware Phase 1 pipeline** (`03_subject_dspte_pipeline.py` post-Issue-3 fix), not the original pre-filter version. The architecture must mirror the trial-level phase extraction structure:
+ 
+  1. Load ROI signals from Stage D cache (identical to Phase 1).
+  2. Apply 0.04–0.15 Hz Butterworth bandpass to the **full trial signal** via `_filter_and_extract_phase_trial()` (reuse Phase 1 implementation — do not duplicate).
+  3. Slice `Phi_full` into `Phi_win` segments aligned to trial markers. Pass `Phi_win` and `taus_trial` directly to `compute_hybrid_dspte_matrix` — no Hilbert re-extraction inside the window loop.
+  4. Extract connectivity vectors and delay vectors using `extract_connectivity_vector()` (same canonical 5×5 → 20-element schema as Phase 1 and Stage D).
+  5. Save `.npz` to `phase_2_hybrid_dspte/te_connectivity/` with schema identical to Phase 1 plus the additional `Tr_N_conditional_te_profiles` key. Support `overwrite=False` caching.
+ 
+  Batch all 13 subjects (R10 excluded). Log per-subject: n_trials, n_windows, mean conditional k₀, mean sparsity fallback rate, mean Phase 2 dSPTE, and mean optimal delay. Save `hybrid_te_batch_log.json`.
+ 
+---
+ 
 #### 7.3 Phase 2 Stats + Visualization
-- [ ] **7.3.1** Run same 4 statistical tests as Phase 1 on hybrid group arrays. Save to `phase_2_hybrid_dspte/statistics/`.
-
-- [ ] **7.3.2** Implement `plot_phase1_vs_phase2_comparison()`. For each connection: bar showing absolute difference `|dSPTE_bivariate - dSPTE_hybrid|` averaged across subjects. Connections where the multivariate conditioning substantially changes the value (>20% relative change) are highlighted — these are candidates for indirect/spurious connections in Phase 1.
+ 
+- [ ] **7.3.1** Run same 4 statistical tests as Phase 1 on hybrid group arrays using the three-strategy builders (`subject_mean` for H1, `all_windows` for H0 and HIV). Save to `phase_2_hybrid_dspte/statistics/`. Re-use `04_dspte_statistics.py` functions directly, passing the Phase 2 group arrays — no duplication of test logic.
+ 
+- [ ] **7.3.2** Implement `plot_phase1_vs_phase2_comparison()`. For each of the 20 connections, display a paired bar showing `mean_dSPTE_phase1` vs `mean_dSPTE_hybrid` averaged across subjects and windows. Highlight connections meeting **both** of the following thresholds (not just one):
+  - Relative change: `|dSPTE_phase1 - dSPTE_hybrid| / dSPTE_phase1 > 0.20` (>20%)
+  - Absolute change: `|dSPTE_phase1 - dSPTE_hybrid| > 0.005` TE units
+ 
+  Connections meeting both thresholds are candidates for indirect/spurious connections in Phase 1. Connections meeting only the relative threshold (large percentage change on a very small absolute value) are annotated with a `†` symbol to indicate the change may not be scientifically meaningful. Save to `phase_2_hybrid_dspte/visualizations/phase1_vs_phase2_comparison.png`.
+ 
+- [ ] **7.3.3** Implement `plot_lag_profile_phase1_vs_phase2()`. For a specified subject, trial, window, and connection, load `Tr_N_te_profiles` from the Phase 1 `.npz` and `Tr_N_conditional_te_profiles` from the Phase 2 `.npz`. Plot both profiles on the same axes (Phase 1 in blue, Phase 2 in orange) with the Phase 2 optimal delay marked by a vertical line. Add a secondary panel showing the difference curve `TE_phase2(u) - TE_phase1(u)` — a flat or negative difference at low lags with a peak at intermediate lags indicates successful shared-noise suppression. Generate this plot for all 20 connections for subject A1, Trial 1, Window 1 as the primary diagnostic run. Save to `phase_2_hybrid_dspte/visualizations/lag_profile_comparison/`.
+ 
+---
+ 
+#### 7.4 IDTxl Parallel Validation
+ 
+- [ ] **7.4.1** Install and configure IDTxl: `pip install idtxl`. Verify `from idtxl.multivariate_te import MultivariateTE` and `from idtxl.data import Data` are importable. If IDTxl is unavailable in the environment, document the failure and skip to 7.4.3. Log outcome to `code/stage_e_transfer_entropy/IDTXL_EVAL.md`.
+ 
+- [ ] **7.4.2** Implement `run_idtxl_multivariate_te(Phi_win: np.ndarray, config: dict) -> np.ndarray`. Input: pre-filtered phase window of shape `(n_rois, T)`. Wraps IDTxl's `MultivariateTE` with the following settings:
+  - Estimator: `JidtKraskovTE` (continuous KSG — bypasses the binning/sparsity problem entirely)
+  - Max lag: `u_max` from config
+  - Target: each ROI in turn; sources: all other ROIs (equivalent to full multivariate conditioning)
+  - Returns: `(n_rois × n_rois)` EC matrix with IDTxl's inferred significant connections (non-significant entries set to 0 per IDTxl's built-in permutation test)
+ 
+  Save the IDTxl EC matrix to `phase_2_hybrid_dspte/idtxl_validation/sub-{id}_idtxl_ec.npz` alongside the NG-symbolic Phase 2 EC matrix for the same window.
+ 
+- [ ] **7.4.3** Implement `compare_symbolic_vs_idtxl()`. For each subject, compute the Pearson correlation between the 20-element NG-symbolic Phase 2 connectivity vector and the 20-element IDTxl connectivity vector, averaged across trials and windows. Plot as a scatter (one point per connection, coloured by connection category: PFC-intra, PFC→Motor, Motor-intra). Interpret results as follows:
+ 
+  | Pearson r | Interpretation | Action |
+  |-----------|----------------|--------|
+  | r > 0.6 | NG-symbolic and IDTxl agree — Phase 2 implementation validated, k₀=4 is sufficient | Report NG-symbolic as primary method |
+  | 0.3 < r ≤ 0.6 | Partial agreement — NG-symbolic captures dominant structure but misses some connections, likely due to coarse binning | Report both methods; frame NG-symbolic as methodologically faithful, IDTxl as more statistically powerful |
+  | r ≤ 0.3 | Substantial disagreement — k₀=4 tables are too coarse for this dataset | Elevate IDTxl to primary Phase 2 method; document NG-symbolic as failed attempt with known cause (sample scarcity at ASTaUND's window length) |
+ 
+  Save comparison plot to `phase_2_hybrid_dspte/visualizations/symbolic_vs_idtxl_scatter.png` and write interpretation summary to `phase_2_hybrid_dspte/idtxl_validation/idtxl_comparison_summary.json`.
 
 ---
 
@@ -623,9 +707,9 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 50
-- **Completed:** 33
+- **Completed:** 34
 - **In Progress:** 0
-- **Remaining:** 17
+- **Remaining:** 16
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
@@ -634,7 +718,7 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Section 4 (Phase 1 Pipeline):** 6/6 ✅ Complete (4.3.1a–d added 2026-03-26; full-cohort batch run pending)
 - **Section 5 (Phase 1 Stats):** 4/4 ✅ Complete (2026-03-26)
 - **Section 6 (Phase 1 Viz):** 5/5 ✅ Complete (2026-03-26)
-- **Section 7 (Phase 2 Hybrid):** 0/6
+- **Section 7 (Phase 2 Hybrid):** 1/6 (7.1.1 complete 2026-04-07)
 - **Section 8 (Phase 3 Bimodal):** 0/5
 - **Section 9 (Cross-Phase):** 0/3
 - **Section 10 (Batch Runner):** 0/2
