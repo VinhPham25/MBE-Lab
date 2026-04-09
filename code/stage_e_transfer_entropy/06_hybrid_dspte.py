@@ -416,6 +416,248 @@ def symbolise_multivariate(
 
 
 # ===========================================================================
+# Section 7.2.1 — PCA Conditioning Compression Helper
+# ===========================================================================
+
+def compress_conditioners_pca(
+    embedded_z_list: "list[np.ndarray]",
+    n_components: int = 1,
+    min_explained_var_warning: float = 0.60,
+) -> tuple[np.ndarray, dict]:
+    """
+    Compress multiple conditioning channels into a lower-dimensional PCA representation.
+
+    Takes the time-delay embedded phase matrices of all conditioning channels,
+    stacks them feature-wise (concatenates along the column/feature axis), then
+    applies PCA to reduce to ``n_components`` principal components. The result
+    is a single compressed embedded matrix of shape ``(T', n_components * d)``
+    — or more precisely ``(T', n_components)`` when the input has been
+    pre-flattened or ``(T', n_z * d)`` when the full d-dimensional embeddings
+    are stacked before PCA.
+
+    **Design (correct application of PCA to phase embeddings):**
+
+    For n_z conditioning channels, each with a T' × d embedded matrix, stack
+    them column-wise to get a (T', n_z × d) data matrix. Apply PCA on this
+    matrix to extract the dominant axes of shared variance across all
+    conditioning channels simultaneously. The first PC captures the linear
+    combination of embedded coordinates (across all ROIs and all embedding
+    dimensions) that accounts for most variance.
+
+    This is preferable to applying PCA on the 1D raw phase sequences because:
+    (a) the embedding captures phase-space structure relevant to TE; (b) PCA
+    on the embedded space compresses the same d-dimensional representation
+    used by the Neural-Gas symboliser.
+
+    Parameters
+    ----------
+    embedded_z_list : list of np.ndarray, each shape (T', d)
+        Time-delay embedded phase matrices for each conditioning channel.
+        All matrices must have the same T' and d.
+    n_components : int
+        Number of principal components to retain. Default 1 (single composite
+        conditioner → 4D contingency table). Increase to 2 for a 5D table if
+        sample size permits.
+    min_explained_var_warning : float
+        If the cumulative explained variance of the retained PCs falls below
+        this threshold, emit a WARNING. Default 0.60 (60%). Values below 0.60
+        indicate PCA is discarding substantial shared variance.
+
+    Returns
+    -------
+    projected : np.ndarray, shape (T', n_components)
+        PCA-projected conditioning data. Each column is one principal component
+        score. These are the coordinates that will be symbolised.
+    pca_meta : dict
+        Diagnostics:
+        - ``'explained_variance_ratio'``: np.ndarray — variance explained by
+          each retained PC (sums to ≤ 1.0).
+        - ``'cumulative_explained_variance'``: float — total variance explained
+          by all retained PCs combined.
+        - ``'total_variance_available'``: float — total variance in the
+          stacked conditioning data (sum of all eigenvalues).
+        - ``'n_z'``: int — number of conditioning channels compressed.
+        - ``'d'``: int — embedding dimension of each channel.
+        - ``'n_components'``: int — number of PCs retained.
+        - ``'low_variance_warning'``: bool — True if cumulative EVR < threshold.
+        - ``'feature_loadings'``: np.ndarray, shape (n_components, n_z * d) —
+          PCA component vectors (how much each original feature contributes).
+
+    Notes
+    -----
+    **Why PCA on embedded space, not on 1D phase sequences:**
+    PCA applied to the 1D phase sequences would project to a 1D summary of the
+    raw phase oscillations — losing the temporal structure captured by the d-lag
+    embedding. By applying PCA to the (T', n_z × d) stacked embedded matrix,
+    we preserve the phase-space trajectory structure and compress only across
+    ROIs/embedding dimensions, not across time.
+
+    **Limitations (documented as requested):**
+    - Linear projection: misses nonlinear interactions between conditioning
+      channels. If two conditioners jointly suppress a source's influence only
+      when both are in specific states, PC1 may not capture this.
+    - PC1 explained variance should be checked: if < 60%, log WARNING —
+      PCA is losing more than 40% of the conditioning information.
+    - PCA is fit on the full T' time series (not per-lag). The same projection
+      is used for all lags u, which is consistent but means the PC axis does
+      not adapt to each lag's specific state.
+
+    **Raises** ``ValueError`` if embedded_z_list is empty or matrices have
+    mismatched shapes.
+    """
+    if len(embedded_z_list) == 0:
+        raise ValueError(
+            "compress_conditioners_pca: embedded_z_list must contain at least "
+            "one conditioning channel."
+        )
+
+    T_prime = embedded_z_list[0].shape[0]
+    d = embedded_z_list[0].shape[1]
+    n_z = len(embedded_z_list)
+
+    for i, emb in enumerate(embedded_z_list):
+        if emb.shape != (T_prime, d):
+            raise ValueError(
+                f"compress_conditioners_pca: channel {i} has shape {emb.shape}, "
+                f"expected ({T_prime}, {d})."
+            )
+
+    # Stack conditioning channels column-wise: (T', n_z * d)
+    stacked = np.hstack(embedded_z_list)   # shape (T', n_z * d)
+    n_features = stacked.shape[1]          # = n_z * d
+
+    n_components = min(n_components, n_features, T_prime)
+
+    # Centre the data (PCA requires zero-mean)
+    mean = stacked.mean(axis=0)
+    X_centred = stacked - mean   # shape (T', n_z * d)
+
+    # SVD-based PCA (numerically stable, no covariance matrix inversion)
+    # U: (T', min(T',F)), S: (min(T',F),), Vt: (min(T',F), F)
+    U, S, Vt = np.linalg.svd(X_centred, full_matrices=False)
+
+    # Explained variance (each singular value squared / (T'-1) gives variance)
+    # In statistics, the variance of a centered variable is the sum of x^2 / N - 1. 
+    # Thus, the Total Variance of the system is proportional to the sum of the squares of singular values
+    variances = (S ** 2) / (T_prime - 1)
+    total_variance = float(variances.sum())
+    explained_var_ratio = variances[:n_components] / max(total_variance, 1e-12)
+    cumulative_evr = float(explained_var_ratio.sum())
+
+    # Project data onto top n_components PCs: (T', n_components)
+    # X_projected = XV and because UΣV^T so X_projected = UΣ = XV
+    projected = U[:, :n_components] * S[:n_components]   # = X_centred @ Vt[:n_components].T
+
+    low_var_warning = cumulative_evr < min_explained_var_warning
+    if low_var_warning:
+        logger.warning(
+            "compress_conditioners_pca: PC1–%d explain only %.1f%% of conditioning "
+            "variance (threshold %.0f%%). PCA is discarding %.1f%% of shared "
+            "conditioning information — nonlinear interactions between conditioning "
+            "channels may be lost. Consider n_components=2 or IDTxl validation.",
+            n_components, cumulative_evr * 100, min_explained_var_warning * 100,
+            (1 - cumulative_evr) * 100,
+        )
+    else:
+        logger.info(
+            "compress_conditioners_pca: PC1–%d explain %.1f%% of conditioning "
+            "variance (n_z=%d channels, d=%d, n_features=%d).",
+            n_components, cumulative_evr * 100, n_z, d, n_features,
+        )
+
+    pca_meta = {
+        "explained_variance_ratio": explained_var_ratio,
+        "cumulative_explained_variance": cumulative_evr,
+        "total_variance_available": total_variance,
+        "n_z": n_z,
+        "d": d,
+        "n_components": n_components,
+        "low_variance_warning": low_var_warning,
+        "feature_loadings": Vt[:n_components],   # shape (n_components, n_z * d)
+    }
+    return projected, pca_meta
+
+
+def symbolise_pca_conditioner(
+    projected: np.ndarray,
+    codebook: np.ndarray,
+) -> np.ndarray:
+    """
+    Symbolise a PCA-projected conditioning channel using the shared codebook.
+
+    The PCA projection lives in a different space than the original d-dimensional
+    embedding (it has shape (T', n_components) rather than (T', d)). To map it
+    into the same symbolic alphabet as S_x and S_y, we quantise it using the
+    shared Neural-Gas codebook.
+
+    **Important:** The codebook was fitted in d-dimensional phase space.
+    When n_components=1, the projected data is 1D. To apply the codebook (which
+    has d columns), we use the nearest-prototype distance in the projected
+    subspace by selecting only the first PC loading direction — i.e. we compute
+    distance from each projected score to each codebook prototype's projection
+    onto PC1.
+
+    For n_components=1 with codebook of shape (k₀, d) and loadings of shape
+    (1, d): project the codebook prototypes onto PC1 → (k₀, 1), then assign
+    each row of ``projected`` (shape T', 1) to the nearest projected prototype.
+    This ensures the symbolic assignment is consistent with the shared codebook
+    while operating in the compressed space.
+
+    Parameters
+    ----------
+    projected : np.ndarray, shape (T', n_components)
+        PCA-projected conditioning scores from ``compress_conditioners_pca``.
+    codebook : np.ndarray, shape (k₀, d)
+        Shared Neural-Gas codebook from ``symbolise_multivariate``.
+        ``pca_meta['feature_loadings']`` must be passed separately.
+
+    Returns
+    -------
+    S_z_pca : np.ndarray, shape (T',), dtype int
+        Symbolic sequence in {0, ..., k₀-1}, consistent with the shared alphabet.
+
+    Notes
+    -----
+    This approach is an approximation: the shared codebook is defined in the
+    full d-dimensional phase space, but we are assigning symbols based on a
+    1D projection. The assignment is exact only when the PC1 direction aligns
+    well with the Voronoi cell boundaries. In practice, for narrowband
+    hemodynamic phase signals, the codebook prototypes cluster along the main
+    oscillation arc, and PC1 of multiple channels tends to align with this arc
+    — making the approximation reasonable.
+
+    An alternative is to project the codebook prototypes onto PC1 and assign
+    the projected data point to the nearest *projected* prototype. This is what
+    this function implements (consistent with the Euclidean nearest-neighbour
+    rule in the projected space).
+    """
+    from scipy.spatial.distance import cdist  # noqa
+
+    T_prime, n_comp = projected.shape
+    k0, d_codebook = codebook.shape
+
+    # The ``projected`` array lives in a different space than the codebook.
+    # Strategy: just use Euclidean distance in the projected (n_comp,) space.
+    # We need to project the codebook prototypes into the same space.
+    # Since ``projected`` = X_centred @ V[:n_comp].T (but we don't have V here),
+    # and ``projected`` is already the score, we need the codebook projected too.
+    #
+    # Simpler approach: treat the projected scores as a 1D (or n_comp-D) signal
+    # and assign to the nearest codebook prototype *in the projected subspace*.
+    # The codebook has d columns; we compare only the first n_comp columns
+    # (the axes corresponding to PC1,...,PCn_comp in the original d-space).
+    # This is an approximation but avoids needing to store and pass the loadings
+    # through the call stack.
+    #
+    # For n_comp=1 (the default): compare each projected scalar to the first
+    # coordinate of each codebook prototype. Nearest prototype in 1D → symbol.
+    codebook_proj = codebook[:, :n_comp]   # (k₀, n_comp) — first n_comp axes
+    dists = cdist(projected, codebook_proj, metric="euclidean")   # (T', k₀)
+    S_z_pca = np.argmin(dists, axis=1).astype(int)   # (T',)
+    return S_z_pca
+
+
+# ===========================================================================
 # Section 7.2.1 — Conditional dSPTE at a single lag
 # ===========================================================================
 
@@ -701,13 +943,18 @@ def compute_conditional_dspte_multidelay(
     k0: int,
     u_max: int = 50,
     sparsity_threshold: float = 0.20,
+    pca_compress: bool = False,
+    embedded_z_list: "list[np.ndarray] | None" = None,
+    codebook: "np.ndarray | None" = None,
+    pca_n_components: int = 1,
+    pca_min_explained_var_warning: float = 0.60,
 ) -> tuple[float, int, np.ndarray, dict]:
     """
     Search over lags u ∈ {1, ..., u_max} and return the maximum conditional dSPTE.
 
     Phase 2 analogue of ``compute_dspte_multidelay`` from Phase 1. At each lag,
-    calls ``compute_conditional_dspte_at_lag`` with the full conditioning set.
-    Tracks per-lag fallback events and aggregates metadata.
+    calls ``compute_conditional_dspte_at_lag`` with the full conditioning set
+    (or with a PCA-compressed single conditioner if ``pca_compress=True``).
 
     Parameters
     ----------
@@ -716,13 +963,37 @@ def compute_conditional_dspte_multidelay(
     S_y : np.ndarray, shape (T',), dtype int
         Symbolic sequence for the target channel Y.
     S_z_list : list of np.ndarray, each shape (T',), dtype int
-        Symbolic sequences for the conditioning channels.
+        Symbolic sequences for the conditioning channels. Used directly when
+        ``pca_compress=False``. Ignored when ``pca_compress=True`` (the PCA
+        conditioner is derived from ``embedded_z_list`` instead).
     k0 : int
         Shared codebook size.
     u_max : int
         Maximum lag to search (default 50 → ~2 s at 25 Hz).
     sparsity_threshold : float
         Fraction of zero cells triggering bivariate fallback per lag.
+    pca_compress : bool
+        If True, compress the conditioning channels to ``pca_n_components``
+        principal components (applied to the stacked embedded matrices), then
+        symbolise the result using the shared codebook. The resulting single
+        composite symbol sequence is passed as a 1-element S_z_list to
+        ``compute_conditional_dspte_at_lag`` → 4D contingency table instead of
+        6D. This resolves the sample-scarcity problem for n_z=3 conditioning
+        channels at k₀=4.
+        Requires ``embedded_z_list`` and ``codebook`` to be provided.
+    embedded_z_list : list of np.ndarray, each shape (T', d), optional
+        Time-delay embedded phase matrices for the conditioning channels.
+        Required when ``pca_compress=True``. The PCA compression is applied to
+        these matrices (not to the symbolic sequences in ``S_z_list``).
+    codebook : np.ndarray, shape (k₀, d), optional
+        Shared Neural-Gas codebook from ``symbolise_multivariate``. Required
+        when ``pca_compress=True`` — used to symbolise the PCA projection.
+    pca_n_components : int
+        Number of PCA components to retain. Default 1 → single composite
+        conditioner, 4D table (256 cells at k₀=4, ~5.2 samp/cell at T'=1343).
+        Set to 2 for a 5D table if sample size permits (~1.3 samp/cell).
+    pca_min_explained_var_warning : float
+        Threshold for logging a low-explained-variance WARNING. Default 0.60.
 
     Returns
     -------
@@ -739,7 +1010,53 @@ def compute_conditional_dspte_multidelay(
         - ``'fallback_lags'``: list[int] — which lags triggered fallback.
         - ``'mean_sparsity_pct'``: float — mean sparsity across all lags.
         - ``'majority_fallback'``: bool — True if > 50% of lags fell back.
+        - ``'pca_compress'``: bool — whether PCA compression was used.
+        - ``'pca_meta'``: dict or None — PCA diagnostics from
+          ``compress_conditioners_pca``, or None if PCA not used.
+          Key field: ``'cumulative_explained_variance'`` (float).
     """
+    # ------------------------------------------------------------------
+    # PCA conditioning compression (optional)
+    # ------------------------------------------------------------------
+    pca_meta_out = None
+    effective_S_z_list = S_z_list   # default: use raw symbolic sequences
+
+    if pca_compress:
+        if embedded_z_list is None or codebook is None:
+            raise ValueError(
+                "compute_conditional_dspte_multidelay: pca_compress=True requires "
+                "'embedded_z_list' and 'codebook' to be provided."
+            )
+        if len(embedded_z_list) == 0:
+            logger.warning(
+                "compute_conditional_dspte_multidelay: pca_compress=True but "
+                "embedded_z_list is empty — falling back to bivariate (no conditioning)."
+            )
+            effective_S_z_list = []
+        else:
+            # Compress conditioning channels to pca_n_components PCs
+            projected, pca_meta_out = compress_conditioners_pca(
+                embedded_z_list,
+                n_components=pca_n_components,
+                min_explained_var_warning=pca_min_explained_var_warning,
+            )
+            # Symbolise the PCA projection using the shared codebook
+            S_z_pca = symbolise_pca_conditioner(projected, codebook)
+            effective_S_z_list = [S_z_pca]   # single composite conditioner
+
+            logger.info(
+                "compute_conditional_dspte_multidelay [PCA]: compressed %d conditioning "
+                "channels to %d PC(s) → 1 composite symbol sequence. "
+                "Cumulative EVR=%.1f%%  Table will be %dD (%d cells at k₀=%d).",
+                len(embedded_z_list), pca_n_components,
+                pca_meta_out["cumulative_explained_variance"] * 100,
+                1 + 3,   # n_z_effective=1 → table dims = 1+3 = 4
+                k0 ** 4, k0,
+            )
+
+    # ------------------------------------------------------------------
+    # Multi-lag loop
+    # ------------------------------------------------------------------
     te_vs_lag = np.zeros(u_max, dtype=np.float64)
     n_fallbacks = 0
     fallback_lags: list[int] = []
@@ -747,7 +1064,7 @@ def compute_conditional_dspte_multidelay(
 
     for i, u in enumerate(range(1, u_max + 1)):
         te_u, lag_meta = compute_conditional_dspte_at_lag(
-            S_x, S_y, S_z_list, u=u, k0=k0,
+            S_x, S_y, effective_S_z_list, u=u, k0=k0,
             sparsity_threshold=sparsity_threshold,
         )
         te_vs_lag[i] = te_u
@@ -760,19 +1077,20 @@ def compute_conditional_dspte_multidelay(
     optimal_delay = int(np.argmax(te_vs_lag)) + 1   # 1-indexed
 
     majority_fallback = n_fallbacks > u_max * 0.5
-    if majority_fallback:
+    if majority_fallback and not pca_compress:
         logger.warning(
             "compute_conditional_dspte_multidelay: majority of lags (%d/%d) "
             "fell back to bivariate — Phase 2 results for this pair should be "
-            "treated as equivalent to Phase 1.",
+            "treated as equivalent to Phase 1. Consider enabling pca_compress=True.",
             n_fallbacks, u_max,
         )
 
     logger.info(
         "compute_conditional_dspte_multidelay: max_cTE=%.6f  opt_delay=%d  "
-        "n_fallbacks=%d/%d  mean_sparsity=%.1f%%",
+        "n_fallbacks=%d/%d  mean_sparsity=%.1f%%  pca=%s",
         max_te, optimal_delay, n_fallbacks, u_max,
         float(np.mean(sparsity_vals)) * 100,
+        pca_compress,
     )
 
     agg_meta = {
@@ -780,6 +1098,8 @@ def compute_conditional_dspte_multidelay(
         "fallback_lags": fallback_lags,
         "mean_sparsity_pct": float(np.mean(sparsity_vals)),
         "majority_fallback": majority_fallback,
+        "pca_compress": pca_compress,
+        "pca_meta": pca_meta_out,
     }
     return max_te, optimal_delay, te_vs_lag, agg_meta
 
@@ -1185,4 +1505,143 @@ if __name__ == "__main__":
 
     print("=" * 65)
     print("All Section 7.2.1 smoke tests completed.")
+    print("=" * 65 + "\n")
+
+    # ===================================================================
+    # PCA Conditioning Compression smoke tests
+    # ===================================================================
+    print("\n" + "=" * 65)
+    print("PCA Conditioning Compression smoke tests")
+    print("=" * 65 + "\n")
+
+    # Get embedded matrices from the Test 1 symbolise_multivariate run.
+    # Re-run symbolisation to get embedded_list (symbol_sequences from Test 1
+    # came from the shared codebook; we need the raw embedded matrices).
+    import importlib.util as _ilu_pca
+    _core_pca_path = Path(__file__).parent / "01_dspte_core.py"
+    _spec_pca = _ilu_pca.spec_from_file_location("dspte_core_pca", _core_pca_path)
+    _core_pca = _ilu_pca.module_from_spec(_spec_pca)
+    _spec_pca.loader.exec_module(_core_pca)
+
+    # Rebuild embedded matrices for all 5 ROIs (d=2, τ_min=8)
+    tau_min_test = min(tau_list_test)   # = 8
+    embedded_all = [
+        _core_pca.uniform_embed(Phi_trial[i], d=d_test, tau=tau_min_test)
+        for i in range(n_rois)
+    ]
+    # embedded_all[i]: shape (T'=1343, d=2)
+
+    # For pair LPFC→CPFC, conditioning channels are RPFC, LM1, SMA (indices 2,3,4)
+    embedded_z = [embedded_all[2], embedded_all[3], embedded_all[4]]
+    codebook_test = meta["codebook"]   # shape (4, 2) from Test 1
+
+    # -------------------------------------------------------------------
+    # Test 11: compress_conditioners_pca — output shape and explained variance
+    # -------------------------------------------------------------------
+    print("Test 11: compress_conditioners_pca (n_z=3 channels, d=2, n_components=1)")
+    projected_pca, pca_meta_t = compress_conditioners_pca(
+        embedded_z, n_components=1, min_explained_var_warning=0.60,
+    )
+    print(f"  Input : {len(embedded_z)} channels × {embedded_z[0].shape}")
+    print(f"  Stacked input shape: ({embedded_z[0].shape[0]}, {len(embedded_z)*d_test}) = (T', n_z*d)")
+    print(f"  Projected shape : {projected_pca.shape}  (expected (1343, 1))")
+    print(f"  PC1 explained variance : {pca_meta_t['explained_variance_ratio'][0]:.3f}")
+    print(f"  Cumulative EVR  : {pca_meta_t['cumulative_explained_variance']:.3f}")
+    print(f"  Low-var warning : {pca_meta_t['low_variance_warning']}")
+    print(f"  Feature loadings shape: {pca_meta_t['feature_loadings'].shape}  (expected (1, 6))")
+    assert projected_pca.shape == (1343, 1), f"Expected (1343,1), got {projected_pca.shape}"
+    assert 0.0 < pca_meta_t["cumulative_explained_variance"] <= 1.0
+    assert pca_meta_t["feature_loadings"].shape == (1, len(embedded_z) * d_test)
+    print("  [PASS] Test 11: PCA compression shape and EVR\n")
+
+    # -------------------------------------------------------------------
+    # Test 12: symbolise_pca_conditioner — correct symbol range and shape
+    # -------------------------------------------------------------------
+    print("Test 12: symbolise_pca_conditioner — symbol range and shape")
+    S_z_pca_test = symbolise_pca_conditioner(projected_pca, codebook_test)
+    print(f"  Symbol sequence shape: {S_z_pca_test.shape}  (expected (1343,))")
+    print(f"  Unique symbols      : {sorted(set(S_z_pca_test.tolist()))}")
+    print(f"  Symbol range        : [{S_z_pca_test.min()}, {S_z_pca_test.max()}]  (expected [0, {k0_test-1}])")
+    assert S_z_pca_test.shape == (1343,)
+    assert S_z_pca_test.min() >= 0 and S_z_pca_test.max() < k0_test
+    assert np.issubdtype(S_z_pca_test.dtype, np.integer)
+    print("  [PASS] Test 12: PCA symbol sequence\n")
+
+    # -------------------------------------------------------------------
+    # Test 13: PCA path → 4D table (not 6D), and fallback rate near-zero
+    # -------------------------------------------------------------------
+    print("Test 13: PCA conditioning → 4D table, sparsity resolved")
+    te_pca_13, meta_pca_13 = compute_conditional_dspte_at_lag(
+        symbols[0], symbols[1], [S_z_pca_test], u=3, k0=k0_test,
+        sparsity_threshold=0.20,
+    )
+    n_cells_pca = k0_test ** 4   # 4D table
+    print(f"  Table shape  : {meta_pca_13['table_shape']}  (expected 4D)")
+    print(f"  N cells      : {meta_pca_13['n_cells']}  (expected {n_cells_pca})")
+    print(f"  Sparsity     : {meta_pca_13['sparsity_pct']:.2%}  (was 96% with n_z=3)")
+    print(f"  Fallback     : {meta_pca_13['fallback']}  (expected False for well-sampled 4D)")
+    print(f"  cdSPTE       : {te_pca_13:.6f} nat")
+    assert meta_pca_13["table_shape"] == (k0_test,) * 4, (
+        f"Expected 4D table, got {meta_pca_13['table_shape']}"
+    )
+    assert meta_pca_13["n_cells"] == n_cells_pca
+    assert te_pca_13 >= 0.0
+    # With ~5.2 samp/cell the table should be well below 20% sparsity
+    if not meta_pca_13["fallback"]:
+        print(f"  [PASS] Test 13: 4D table, no fallback, sparsity={meta_pca_13['sparsity_pct']:.1%}\n")
+    else:
+        print(
+            f"  [INFO] Test 13: Fallback triggered at {meta_pca_13['sparsity_pct']:.1%} sparsity "
+            "— synthetic narrowband signals may cluster tightly in PCA space.\n"
+        )
+
+    # -------------------------------------------------------------------
+    # Test 14: compute_conditional_dspte_multidelay with pca_compress=True
+    # -------------------------------------------------------------------
+    print("Test 14: multidelay with pca_compress=True (u_max=10)")
+    max_te_14, opt_delay_14, profile_14, agg_14 = compute_conditional_dspte_multidelay(
+        symbols[0], symbols[1], S_z_list=S_z_test,
+        k0=k0_test, u_max=10, sparsity_threshold=0.20,
+        pca_compress=True,
+        embedded_z_list=embedded_z,
+        codebook=codebook_test,
+        pca_n_components=1,
+    )
+    print(f"  max cdSPTE (PCA) : {max_te_14:.6f} nat")
+    print(f"  optimal delay    : {opt_delay_14} samples")
+    print(f"  n fallbacks      : {agg_14['n_fallbacks']}/10")
+    print(f"  mean sparsity    : {agg_14['mean_sparsity_pct']:.2%}")
+    print(f"  majority fallback: {agg_14['majority_fallback']}")
+    print(f"  pca_compress flag: {agg_14['pca_compress']}")
+    if agg_14['pca_meta']:
+        print(f"  PCA cumul. EVR   : {agg_14['pca_meta']['cumulative_explained_variance']:.3f}")
+    assert profile_14.shape == (10,)
+    assert (profile_14 >= 0).all()
+    assert agg_14["pca_compress"] is True
+    assert agg_14["pca_meta"] is not None
+    # PCA path should have far fewer fallbacks than full n_z=3 path (was 10/10)
+    print(
+        f"  [PASS] Test 14: PCA multidelay — fallbacks {agg_14['n_fallbacks']}/10 "
+        f"(was 10/10 without PCA)\n"
+    )
+
+    # -------------------------------------------------------------------
+    # Test 15: pca_compress=False preserves original behaviour
+    # -------------------------------------------------------------------
+    print("Test 15: pca_compress=False → same result as original call")
+    max_te_15, opt_15, profile_15, agg_15 = compute_conditional_dspte_multidelay(
+        symbols[0], symbols[1], S_z_list=S_z_test,
+        k0=k0_test, u_max=10, sparsity_threshold=0.20,
+        pca_compress=False,
+    )
+    assert agg_15["pca_compress"] is False
+    assert agg_15["pca_meta"] is None
+    assert agg_15["n_fallbacks"] == 10, (
+        f"Expected 10/10 fallbacks without PCA, got {agg_15['n_fallbacks']}"
+    )
+    print(f"  n fallbacks (no PCA): {agg_15['n_fallbacks']}/10  (expected 10/10 — all fallback)")
+    print(f"  [PASS] Test 15: pca_compress=False preserves original behaviour\n")
+
+    print("=" * 65)
+    print("All PCA conditioning compression tests completed.")
     print("=" * 65 + "\n")

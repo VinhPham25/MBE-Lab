@@ -577,6 +577,28 @@ stage_e_transfer_entropy:
     # Maximum possible entropy at k₀=4 is log(4) ≈ 1.386 nats.
     degenerate_entropy_threshold: 1.0   # nats
 
+    # --------------------------------------------------------------------------
+    # PCA Conditioning Compression (toggleable — resolves 6D sparsity problem)
+    #
+    # When conditional_pca.enabled = true, the n_z=3 conditioning channels are
+    # compressed to n_components PCA components before symbolisation. The PCA
+    # is applied to the stacked time-delay embedded phase matrices of the
+    # conditioning channels ((T', n_z × d) → (T', n_components)).
+    # The result is symbolised via the shared NG codebook → single composite
+    # conditioner → 4D contingency table (256 cells, ~5.2 samp/cell).
+    #
+    # When enabled = false: full n_z=3 conditioning is used → 6D table (4096
+    # cells, ~0.33 samp/cell) → effectively always triggers sparsity fallback.
+    #
+    # Trade-off: PCA captures dominant linear shared variance but misses
+    # nonlinear interactions between conditioning channels. If PC1 explains
+    # < min_explained_var_warning_pct of variance, a WARNING is logged.
+    # --------------------------------------------------------------------------
+    conditional_pca:
+      enabled: true           # toggle PCA compression on/off
+      n_components: 1         # 1 → 4D table (256 cells); 2 → 5D table (1024 cells)
+      min_explained_var_warning_pct: 60   # warn if PC1 explains < 60% variance
+
     # Output paths (relative to output_root/expert-novice/)
     batch_log_filename: "hybrid_te_batch_log.json"
 

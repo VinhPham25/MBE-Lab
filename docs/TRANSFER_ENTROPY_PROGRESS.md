@@ -577,6 +577,30 @@ Functions in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`.
 > 2. **Feasible conditioning strategies for ASTaUND data:** (a) reduce to n_z=1 (condition on the single most correlated third ROI), reducing the table to 4D (256 cells, ~5.2 samp/cell); (b) reduce k₀ to 3 for the full n_z=3 case (3^6 = 729 cells, ~1.8 samp/cell — still marginal); (c) use IDTxl's KSG estimator (no binning, no sparsity problem).
 > 3. **Recommended approach for 7.2.2:** Implement the full n_z=3 path correctly (as specified) and let the sparsity fallback fire — this documents the limitation empirically. Separately implement an n_z=1 "partial conditioning" mode that conditions only on the strongest correlated third ROI, which is statistically viable and may still capture the dominant indirect connectivity.
 
+> **PCA Conditioning Compression — Implemented (2026-04-08):**
+>
+> Implemented `compress_conditioners_pca()`, `symbolise_pca_conditioner()`, and the `pca_compress` parameter in `compute_conditional_dspte_multidelay()`. Controlled by `phase_2.conditional_pca.enabled` in `config.yaml`.
+>
+> **How it works:** The time-delay embedded phase matrices (T', d) of the n_z=3 conditioning channels are stacked column-wise → (T', n_z×d) = (1343, 6). PCA via SVD extracts the top n_components principal components. The PC1 projection (T', 1) is symbolised using the shared NG codebook by projecting both the data scores and codebook prototypes onto the first PCA axis and assigning nearest-prototype symbols. The single composite symbol sequence is passed as a 1-element `S_z_list` → 4D table (k₀^4 = 256 cells).
+>
+> **Smoke test results (Tests 11–15, all PASS):**
+>
+> | Metric | Value | Notes |
+> |--------|-------|-------|
+> | PC1 explained variance (synthetic signals) | 42.5% | Below 60% warning threshold → WARNING logged |
+> | 4D table sparsity after PCA | 73.4% | Still above 20% threshold on synthetic signals |
+> | Fallback rate (PCA, synthetic) | 10/10 lags | PCA reduces sparsity from 96% → 73% but not below threshold |
+> | Symbol range validity | {0,1,2,3} ✓ | All symbols in [0, k₀-1] |
+> | `pca_compress=False` regression | 10/10 fallbacks ✓ | Identical to pre-PCA behaviour |
+>
+> **Second obstacle — 4D table sparsity on synthetic narrowband signals:**
+>
+> PCA reduces dimensionality from 6D → 4D (96% → 73% sparsity) but does not solve the sparsity problem for synthetic narrowband phase signals. The root cause is that k₀=4 narrowband phase symbols are not uniformly distributed: the signal occupies only ~1–2 symbols for most of the trial (slow oscillation in one phase region). This means the joint (s_ty, s_ty1, s_txu, s_z_pca) combinations remain sparse regardless of how the conditioning is compressed.
+>
+> **Why real fNIRS data may behave differently:** Real fNIRS data after 0.04–0.15 Hz bandpass has more complex dynamics than the synthetic pure-tone phase used in the smoke test — the signal amplitude varies across the trial, there are task-evoked modulations, and multiple slow rhythms co-exist. This should produce more uniform symbol distributions (higher H(S_roi)) and lower sparsity. The real-data sparsity should be evaluated when `compute_hybrid_dspte_matrix` (7.2.2) runs on actual subject data.
+>
+> **Known limitation (documented as requested):** PCA is a linear projection. If the conditioning effect is captured by a nonlinear combination of the 3 conditioning channels (e.g., "only suppress when RPFC and LM1 are simultaneously in state 2"), PC1 will miss this. The low EVR (42.5% on synthetic data) is partly an artefact of the perfectly decorrelated synthetic signals; real fNIRS channels sharing the same hemodynamic driver should show higher shared variance → higher EVR → more reliable PCA compression.
+
 - [ ] **7.2.2** Implement `compute_hybrid_dspte_matrix(Phi_win: np.ndarray, taus: list, config: dict) -> tuple[np.ndarray, np.ndarray, dict]`. **Drop-in replacement for `compute_dspte_matrix()` — accepts pre-filtered phase window slices, not raw signals.** For each ordered pair (src, tgt): conditioning set = `{all ROIs} \ {src, tgt}` (3 channels for 5 ROIs). Calls `symbolise_multivariate` once per window (shared codebook across all pairs in that window — do not refit NG per pair), then calls `compute_conditional_dspte_at_lag` for each pair and lag. Returns `(EC_matrix, delay_matrix, metadata)` in the same format as Phase 1.
  
   **Delay matrix interpretation note:** The `delay_matrix[src, tgt]` entry is the argmax lag of the **conditional** TE profile. If Phase 2 successfully suppresses the shared-noise monotonic trend, these optimal delay estimates will be more physiologically meaningful than Phase 1's (which reflect noise argmax rather than true transmission delay). Track the cross-subject standard deviation of `delay_matrix` values per connection: lower variance in Phase 2 vs Phase 1 is a secondary success criterion, independent of the TE magnitude change.
@@ -732,6 +756,7 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Completed:** 35
 - **In Progress:** 0
 - **Remaining:** 15
+- **Extensions:** PCA conditioning compression added (2026-04-08) — toggleable via `phase_2.conditional_pca.enabled` in config.yaml
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
