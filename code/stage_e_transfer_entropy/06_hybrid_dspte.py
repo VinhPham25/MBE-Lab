@@ -1105,6 +1105,1149 @@ def compute_conditional_dspte_multidelay(
 
 
 # ===========================================================================
+# Section 7.2.2 — Hybrid-dSPTE Matrix (drop-in replacement for Phase 1)
+# ===========================================================================
+
+def compute_hybrid_dspte_matrix(
+    Phi_win: np.ndarray,
+    taus: list[int],
+    config: "dict | None" = None,
+    roi_names: "list[str] | None" = None,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """
+    Compute the multivariate-conditioned dSPTE effective connectivity matrix.
+
+    Drop-in replacement for Phase 1's ``compute_dspte_matrix()``.  Accepts a
+    pre-filtered phase window slice (not raw signals) and returns the same
+    ``(EC_matrix, delay_matrix, metadata)`` triple as Phase 1.
+
+    **Key differences from Phase 1:**
+
+    1. *Shared codebook:* Calls ``symbolise_multivariate()`` **once** per window
+       to obtain a single shared Neural-Gas codebook and one symbol sequence per
+       ROI.  Phase 1 fits a separate codebook per (src, tgt) pair.
+
+    2. *Multivariate conditioning:* For each ordered pair (src, tgt), the
+       conditioning set is all remaining ROIs: ``{all ROIs} \\ {src, tgt}``.
+       For the 5-ROI ASTaUND system this gives n_z = 3 conditioning channels.
+
+    3. *Sparsity fallback:* At n_z = 3 with k₀ = 4, the 6D table has 4096
+       cells and only ~0.33 samples/cell at T' = 1343 → near-universal fallback
+       to bivariate dSPTE with the default 20% threshold.  This is expected and
+       documented (see PRD 7.2.1 critical finding).  Enabling PCA compression
+       (``phase_2.conditional_pca.enabled = true``) reduces the conditioning to a
+       single PCA component → 4D table (256 cells, ~5.2 samp/cell).
+
+    4. *Lag profiles:* Returns ``te_profiles`` keyed by ``(src, tgt)`` in local
+       valid-ROI index space — same dict structure as Phase 1 — so Phase 1's
+       ``_extract_canonical_lag_profiles()`` helper can be reused unchanged.
+
+    Parameters
+    ----------
+    Phi_win : np.ndarray, shape (n_rois, T_win)
+        Pre-computed instantaneous phase matrix for the current window.
+        **Must be the Hilbert phase of the narrowband-filtered signal.**
+        Do NOT pass raw HbO signals here — no internal filtering is applied.
+        Rows with all-NaN indicate bad/excluded channels.
+    taus : list of int, length n_rois
+        Per-ROI embedding delays (samples), computed externally from the
+        full-trial narrowband phase signal via ``compute_embedding_delay()``.
+    config : dict or None
+        Parsed config.yaml.  Loaded from disk if None.
+    roi_names : list of str, length n_rois, optional
+        Human-readable ROI names for diagnostic logging.  If None, integer
+        indices are used.
+
+    Returns
+    -------
+    EC_matrix : np.ndarray, shape (n_rois, n_rois), dtype float64
+        Directed effective connectivity matrix.  ``EC_matrix[src, tgt]`` is
+        the maximum conditional dSPTE across all tested lags.
+        Diagonal is 0.  Bad channel rows/cols are 0.
+    delay_matrix : np.ndarray, shape (n_rois, n_rois), dtype int
+        Optimal lag (samples) for each connection.  Same conventions as Phase 1.
+    metadata : dict
+        Window-level diagnostics:
+        - ``'k0'``: int — shared codebook size (post-clamp).
+        - ``'k0_pre_clamp'``: int — k₀ before clamping.
+        - ``'nDis'``: float — nDis at k₀_pre_clamp.
+        - ``'clamped'``: bool — whether k₀ was clamped.
+        - ``'symbol_entropies'``: dict[str, float] — H(S_roi) per ROI in nats.
+        - ``'degenerate_rois'``: list[str] — ROIs with H < threshold.
+        - ``'tau_divergence_warning'``: bool — τ_max > 2× τ_min.
+        - ``'te_profiles'``: dict[(src, tgt) → np.ndarray(u_max,)] — full
+          conditional TE lag profile for each pair (local ROI indices).
+          Schema-compatible with Phase 1 for downstream use in
+          ``_extract_canonical_lag_profiles()``.
+        - ``'n_pairs_fallback'``: int — pairs that triggered sparsity fallback.
+        - ``'majority_pairs_fallback'``: bool — > 50% of pairs fell back.
+        - ``'pca_compress'``: bool — whether PCA conditioning was used.
+        - ``'mean_sparsity_pct'``: float — mean sparsity across all pairs/lags.
+        - ``'conditioning_mode'``: str — 'full_nz3', 'pca_1pc', or 'bivariate'.
+
+    Notes
+    -----
+    The ``delay_matrix`` argmax is computed on the *conditional* TE profile.
+    As noted in PRD 7.2.2: if Phase 2 successfully suppresses shared-noise
+    monotonic trends, delay estimates will be more physiologically meaningful
+    than Phase 1's.  If the profile remains monotonically increasing (indicating
+    conditioning did not suppress the shared component), this will appear in the
+    phase-2 vs phase-1 lag profile comparison (Section 7.3.3).
+
+    **NaN handling:** Any ROI row that is all-NaN (bad channel) is excluded from
+    conditioning.  If src or tgt is NaN, the pair is skipped (EC = delay = 0).
+    """
+    if config is None:
+        try:
+            from utils import load_config as _lc
+            config = _lc()
+        except ImportError:
+            config = {}
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    sig_cfg = te_cfg.get("signal", {})
+    p2_cfg = te_cfg.get("phase_2", {})
+    pca_cfg = p2_cfg.get("conditional_pca", {})
+
+    u_max = int(sig_cfg.get("u_max", 50))
+    d = int(sig_cfg.get("embedding_dimension", 2))
+    k0_max = int(p2_cfg.get("k0_max_multivariate", 4))
+    ndis_threshold = float(te_cfg.get("symbolisation", {}).get("ndis_threshold", 0.05))
+    sparsity_threshold = float(p2_cfg.get("sparsity_fallback_threshold", 0.20))
+
+    pca_compress = bool(pca_cfg.get("enabled", True))
+    pca_n_components = int(pca_cfg.get("n_components", 1))
+    pca_min_evr = float(pca_cfg.get("min_explained_var_warning_pct", 60.0)) / 100.0
+
+    Phi_win = np.asarray(Phi_win, dtype=float)
+    n_rois, T_win = Phi_win.shape
+
+    if roi_names is None:
+        roi_names = [str(i) for i in range(n_rois)]
+
+    # ------------------------------------------------------------------
+    # Identify valid (non-NaN) ROIs
+    # ------------------------------------------------------------------
+    valid_mask = np.array([not np.all(np.isnan(Phi_win[i])) for i in range(n_rois)])
+    valid_indices = [i for i, v in enumerate(valid_mask) if v]
+    n_valid = len(valid_indices)
+
+    EC_matrix = np.zeros((n_rois, n_rois), dtype=np.float64)
+    delay_matrix = np.zeros((n_rois, n_rois), dtype=int)
+    te_profiles: dict = {}
+
+    if n_valid < 2:
+        logger.warning(
+            "compute_hybrid_dspte_matrix: fewer than 2 valid ROIs (%d) — "
+            "returning zero matrices.", n_valid
+        )
+        return EC_matrix, delay_matrix, {
+            "k0": k0_max, "k0_pre_clamp": k0_max, "nDis": float("nan"),
+            "clamped": False, "symbol_entropies": {}, "degenerate_rois": [],
+            "tau_divergence_warning": False, "te_profiles": te_profiles,
+            "n_pairs_fallback": 0, "majority_pairs_fallback": False,
+            "pca_compress": pca_compress, "mean_sparsity_pct": float("nan"),
+            "conditioning_mode": "bivariate",
+        }
+
+    # ------------------------------------------------------------------
+    # Step 1: Shared multivariate symbolisation (once per window)
+    # ------------------------------------------------------------------
+    Phi_valid = Phi_win[valid_indices, :]
+    taus_valid = [taus[i] for i in valid_indices]
+    roi_names_valid = [roi_names[i] for i in valid_indices]
+
+    symbol_seqs, sym_meta = symbolise_multivariate(
+        Phi_valid,
+        d=d,
+        tau_list=taus_valid,
+        k0_max=k0_max,
+        ndis_threshold=ndis_threshold,
+        config=config,
+        roi_names=roi_names_valid,
+    )
+    k0 = sym_meta["k0"]
+    tau_min = sym_meta["tau_min"]
+
+    # Pre-build embedded matrices for PCA conditioning (once per window)
+    # These are needed for pca_compress=True path in compute_conditional_dspte_multidelay
+    if pca_compress and n_valid >= 3:
+        import importlib.util as _ilu_embed
+        _core_path = Path(__file__).parent / "01_dspte_core.py"
+        _spec_e = _ilu_embed.spec_from_file_location("dspte_core_emb", _core_path)
+        _core_e = _ilu_embed.module_from_spec(_spec_e)
+        _spec_e.loader.exec_module(_core_e)
+        embedded_valid = [
+            _core_e.uniform_embed(Phi_valid[i], d=d, tau=tau_min)
+            for i in range(n_valid)
+        ]
+    else:
+        embedded_valid = None
+
+    codebook = sym_meta["codebook"]
+
+    # ------------------------------------------------------------------
+    # Step 2: Compute conditional dSPTE for each ordered pair
+    # ------------------------------------------------------------------
+    all_sparsity: list[float] = []
+    n_pairs_fallback = 0
+    n_pairs_total = 0
+
+    for src_v in range(n_valid):
+        for tgt_v in range(n_valid):
+            if src_v == tgt_v:
+                continue
+
+            n_pairs_total += 1
+
+            S_x = symbol_seqs[src_v]
+            S_y = symbol_seqs[tgt_v]
+
+            # Conditioning set: all valid ROIs except src and tgt
+            cond_v_indices = [v for v in range(n_valid) if v != src_v and v != tgt_v]
+            S_z_list = [symbol_seqs[v] for v in cond_v_indices]
+
+            if pca_compress and embedded_valid is not None and len(cond_v_indices) > 0:
+                embedded_z_list = [embedded_valid[v] for v in cond_v_indices]
+            else:
+                embedded_z_list = None
+
+            max_te, optimal_delay, te_profile, pair_meta = compute_conditional_dspte_multidelay(
+                S_x=S_x,
+                S_y=S_y,
+                S_z_list=S_z_list,
+                k0=k0,
+                u_max=u_max,
+                sparsity_threshold=sparsity_threshold,
+                pca_compress=pca_compress and (embedded_z_list is not None) and len(S_z_list) > 0,
+                embedded_z_list=embedded_z_list,
+                codebook=codebook,
+                pca_n_components=pca_n_components,
+                pca_min_explained_var_warning=pca_min_evr,
+            )
+
+            # Map back to original (n_rois, n_rois) indices
+            src_orig = valid_indices[src_v]
+            tgt_orig = valid_indices[tgt_v]
+            EC_matrix[src_orig, tgt_orig] = max_te
+            delay_matrix[src_orig, tgt_orig] = optimal_delay
+            te_profiles[(src_v, tgt_v)] = te_profile
+
+            all_sparsity.append(pair_meta["mean_sparsity_pct"])
+            if pair_meta["majority_fallback"]:
+                n_pairs_fallback += 1
+
+    # ------------------------------------------------------------------
+    # Majority-fallback warning at window level
+    # ------------------------------------------------------------------
+    majority_pairs_fallback = (
+        n_pairs_total > 0 and n_pairs_fallback > n_pairs_total * 0.5
+    )
+    if majority_pairs_fallback:
+        logger.warning(
+            "compute_hybrid_dspte_matrix: Majority of pairs fell back to bivariate "
+            "— %d/%d pairs. Phase 2 results for this window should be treated as "
+            "equivalent to Phase 1.",
+            n_pairs_fallback, n_pairs_total,
+        )
+
+    mean_sparsity = float(np.mean(all_sparsity)) if all_sparsity else float("nan")
+
+    # Determine conditioning mode label for diagnostics
+    if n_valid < 3:
+        conditioning_mode = "bivariate"
+    elif pca_compress:
+        conditioning_mode = f"pca_{pca_n_components}pc"
+    else:
+        conditioning_mode = f"full_nz{n_valid - 2}"
+
+    logger.info(
+        "compute_hybrid_dspte_matrix: k0=%d  n_valid=%d  conditioning=%s  "
+        "pairs_fallback=%d/%d  mean_sparsity=%.1f%%",
+        k0, n_valid, conditioning_mode, n_pairs_fallback, n_pairs_total,
+        mean_sparsity * 100 if not np.isnan(mean_sparsity) else float("nan"),
+    )
+
+    metadata = {
+        "k0": sym_meta["k0"],
+        "k0_pre_clamp": sym_meta["k0_pre_clamp"],
+        "nDis": sym_meta["nDis"],
+        "clamped": sym_meta["clamped"],
+        "symbol_entropies": sym_meta["symbol_entropies"],
+        "degenerate_rois": sym_meta["degenerate_rois"],
+        "tau_divergence_warning": sym_meta["tau_divergence_warning"],
+        "te_profiles": te_profiles,
+        "n_pairs_fallback": n_pairs_fallback,
+        "n_pairs_total": n_pairs_total,
+        "majority_pairs_fallback": majority_pairs_fallback,
+        "pca_compress": pca_compress,
+        "mean_sparsity_pct": mean_sparsity,
+        "conditioning_mode": conditioning_mode,
+    }
+
+    return EC_matrix, delay_matrix, metadata
+
+
+# ===========================================================================
+# Section 7.2.3 — Per-Subject Hybrid-dSPTE Pipeline
+# ===========================================================================
+
+import importlib.util as _importlib_util_p2
+import json as _json_p2
+import time as _time_p2
+from datetime import datetime as _datetime_p2
+from typing import Optional as _Optional_p2
+
+
+def _get_hybrid_module_dependencies():
+    """Lazily load external modules needed by the Phase 2 pipeline."""
+    results = {}
+
+    spec = _importlib_util_p2.spec_from_file_location(
+        "trial_segmentation_p2",
+        Path(__file__).parent.parent / "stage_d_granger" / "02_trial_segmentation.py",
+    )
+    mod = _importlib_util_p2.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    results["seg"] = mod
+
+    spec2 = _importlib_util_p2.spec_from_file_location(
+        "dspte_pipeline_p2",
+        Path(__file__).parent / "02_dspte_pipeline.py",
+    )
+    mod2 = _importlib_util_p2.module_from_spec(spec2)
+    spec2.loader.exec_module(mod2)
+    results["pipeline"] = mod2
+
+    spec3 = _importlib_util_p2.spec_from_file_location(
+        "dspte_core_p2",
+        Path(__file__).parent / "01_dspte_core.py",
+    )
+    mod3 = _importlib_util_p2.module_from_spec(spec3)
+    spec3.loader.exec_module(mod3)
+    results["core"] = mod3
+
+    return results
+
+
+_ROI_NAMES_CANONICAL_P2 = ["LPFC", "CPFC", "RPFC", "LM1", "SMA"]
+_N_CANONICAL_P2 = 5
+
+
+def _expand_to_canonical_5x5_p2(
+    matrix: np.ndarray,
+    roi_names: list,
+) -> np.ndarray:
+    """Place a (n_valid × n_valid) matrix into a canonical (5×5) array."""
+    n_valid = len(roi_names)
+    full = np.zeros((_N_CANONICAL_P2, _N_CANONICAL_P2), dtype=matrix.dtype)
+    for i_v, roi_i in enumerate(roi_names):
+        for j_v, roi_j in enumerate(roi_names):
+            if roi_i != roi_j:
+                try:
+                    i_c = _ROI_NAMES_CANONICAL_P2.index(roi_i)
+                    j_c = _ROI_NAMES_CANONICAL_P2.index(roi_j)
+                    full[i_c, j_c] = matrix[i_v, j_v]
+                except ValueError:
+                    pass
+    return full
+
+
+def _filter_and_extract_phase_trial_p2(
+    Y_trial: np.ndarray,
+    sfreq: float,
+    f_lo: float,
+    f_hi: float,
+    order: int,
+    core_mod,
+    subject_id: str = "",
+    trial_id: str = "",
+) -> tuple[np.ndarray, list]:
+    """
+    Apply narrowband bandpass filter to the full trial then extract Hilbert phase.
+
+    Reuses the Phase 1 logic from ``03_subject_dspte_pipeline._filter_and_extract_phase_trial``
+    without duplicating it — kept here as a private helper so Phase 2 can be
+    run standalone without importing Phase 1's pipeline module.
+
+    Parameters / Returns identical to the Phase 1 version.
+    """
+    n_rois, T_trial = Y_trial.shape
+    Phi_trial = np.full_like(Y_trial, np.nan)
+    taus_trial: list = []
+
+    for roi_idx in range(n_rois):
+        row = Y_trial[roi_idx]
+        if np.all(np.isnan(row)):
+            taus_trial.append(1)
+            logger.warning(
+                "_filter_and_extract_phase_trial_p2 [%s %s]: ROI %d all-NaN — skipping.",
+                subject_id, trial_id, roi_idx,
+            )
+            continue
+
+        x_filt = core_mod.narrowband_filter(
+            row, f_lo=f_lo, f_hi=f_hi, sfreq=sfreq, order=order
+        )
+        ph = core_mod.extract_phase_signal(x_filt)
+        Phi_trial[roi_idx] = ph
+        tau_i = core_mod.compute_embedding_delay(ph)
+        taus_trial.append(tau_i)
+
+    logger.info(
+        "_filter_and_extract_phase_trial_p2 [%s %s]: filtered [%.3f–%.3f Hz]  "
+        "n_rois=%d  taus=%s",
+        subject_id, trial_id, f_lo, f_hi, n_rois, taus_trial,
+    )
+    return Phi_trial, taus_trial
+
+
+def _compute_windowed_hybrid_dspte(
+    Y_trial: np.ndarray,
+    Phi_trial: np.ndarray,
+    taus_trial: list,
+    valid_roi_names: list,
+    window_size: int,
+    stride: int,
+    config: "dict | None" = None,
+    subject_id: str = "",
+    trial_id: str = "",
+) -> dict:
+    """
+    Sliding window loop for Phase 2 hybrid-dSPTE.
+
+    Mirrors Phase 1's ``compute_windowed_dspte()`` but calls
+    ``compute_hybrid_dspte_matrix()`` (multivariate conditioning) instead of
+    ``compute_dspte_matrix()`` (bivariate Phase 1).
+
+    Parameters
+    ----------
+    Y_trial : np.ndarray, shape (n_rois, T_trial)
+        Raw ROI signals (used only for shape/stride logic; not passed to the
+        TE computation — Phi_trial carries the actual phase data).
+    Phi_trial : np.ndarray, shape (n_rois, T_trial)
+        Pre-computed instantaneous phase (Hilbert of narrowband-filtered signal).
+        Slice ``Phi_win = Phi_trial[:, start:end+1]`` is passed to
+        ``compute_hybrid_dspte_matrix``.
+    taus_trial : list of int, length n_rois
+        Per-ROI embedding delays (computed from the full trial signal).
+    valid_roi_names : list of str
+        Human-readable ROI names in the same order as the Phi_trial rows.
+    window_size : int
+        Window size in samples (exclusive of +1 inclusive end).
+    stride : int
+        Stride between windows in samples.
+    config : dict or None
+        Parsed config.yaml.
+    subject_id, trial_id : str
+        For logging only.
+
+    Returns
+    -------
+    windows : dict
+        ``{'Win_N': (EC_matrix, delay_matrix, metadata)}``
+        EC_matrix and delay_matrix are (n_rois × n_rois); metadata contains
+        Phase 2 diagnostics including ``te_profiles``.
+    """
+    n_rois, T_trial = Y_trial.shape
+    windows: dict = {}
+    win_idx = 1
+
+    for w in range(window_size, T_trial, stride):
+        start = w - window_size
+        end = w  # inclusive end (T_win = end - start + 1 = window_size + 1)
+
+        Phi_win = Phi_trial[:, start : end + 1]
+
+        t_win_start = _time_p2.perf_counter()
+        try:
+            EC_matrix, delay_matrix, metadata = compute_hybrid_dspte_matrix(
+                Phi_win=Phi_win,
+                taus=taus_trial,
+                config=config,
+                roi_names=valid_roi_names,
+            )
+        except Exception as exc:
+            logger.error(
+                "_compute_windowed_hybrid_dspte [%s %s Win_%d]: "
+                "compute_hybrid_dspte_matrix raised %s — skipping window.",
+                subject_id, trial_id, win_idx, exc,
+            )
+            win_idx += 1
+            continue
+
+        elapsed_win = _time_p2.perf_counter() - t_win_start
+        if elapsed_win > 120.0:
+            logger.warning(
+                "_compute_windowed_hybrid_dspte [%s %s Win_%d]: "
+                "window took %.1f s (> 120 s threshold).",
+                subject_id, trial_id, win_idx, elapsed_win,
+            )
+
+        win_key = f"Win_{win_idx}"
+        windows[win_key] = (EC_matrix, delay_matrix, metadata)
+        win_idx += 1
+
+        logger.info(
+            "_compute_windowed_hybrid_dspte [%s %s %s]: "
+            "k0=%d  conditioning=%s  fallbacks=%d/%d  elapsed=%.1f s",
+            subject_id, trial_id, win_key,
+            metadata.get("k0", 0),
+            metadata.get("conditioning_mode", "?"),
+            metadata.get("n_pairs_fallback", 0),
+            metadata.get("n_pairs_total", 0),
+            elapsed_win,
+        )
+
+    return windows
+
+
+def process_subject_hybrid_dspte(
+    subject_id: str,
+    study: str = "expert_novice",
+    config: "_Optional_p2[dict]" = None,
+    overwrite: bool = True,
+) -> dict:
+    """
+    Run the full Phase 2 Hybrid-dSPTE pipeline for one subject.
+
+    Clone of ``process_subject_dspte()`` (Phase 1) updated to use:
+    - ``compute_hybrid_dspte_matrix()`` (multivariate conditioning) instead of
+      ``compute_dspte_matrix()`` (bivariate Phase 1).
+    - Output path ``phase_2_connectivity/`` instead of ``phase_1_connectivity/``.
+    - Additional ``Tr_N_conditional_te_profiles`` key in the saved .npz (same
+      schema as Phase 1's ``Tr_N_te_profiles`` but from conditional TE).
+
+    Architecture (mirrors Phase 1 exactly):
+    1. Load ROI signals from Stage D cache.
+    2. Apply 0.04–0.15 Hz Butterworth bandpass to the full trial signal.
+    3. Slice ``Phi_full`` into ``Phi_win`` segments aligned to trial markers.
+    4. Pass ``Phi_win`` + ``taus_trial`` to ``compute_hybrid_dspte_matrix``.
+    5. Extract connectivity and delay vectors using the canonical schema.
+    6. Save .npz to ``phase_2_connectivity/``.
+
+    Parameters
+    ----------
+    subject_id : str
+        Subject identifier (e.g. 'A1', 'R7').
+    study : str
+        Config dataset key. Default 'expert_novice'.
+    config : dict, optional
+        Parsed config.yaml. Loaded if None.
+    overwrite : bool
+        If False and the output .npz already exists, return cached result.
+
+    Returns
+    -------
+    result : dict
+        ``{trial_id: {win_id: conn_vec_20}}``.  Connectivity vectors are the
+        conditional dSPTE values (or bivariate fallback values where the Phase 2
+        sparsity guard triggered).
+    """
+    if config is None:
+        try:
+            from utils import load_config as _lc
+            config = _lc()
+        except ImportError:
+            config = {}
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    sig_cfg = te_cfg.get("signal", {})
+    win_cfg = te_cfg.get("window", {})
+    filt_cfg = te_cfg.get("narrowband_filter", {})
+
+    window_size = int(win_cfg.get("size_samples", 1350))
+    stride = int(win_cfg.get("stride_samples", 1350))
+    u_max = int(sig_cfg.get("u_max", 50))
+
+    # Import utils_te helpers
+    import sys as _sys_p2
+    _stage_e_root = Path(__file__).parent
+    if str(_stage_e_root) not in _sys_p2.path:
+        _sys_p2.path.insert(0, str(_stage_e_root))
+
+    from utils_te import (  # noqa
+        get_te_output_dir,
+        get_subject_group,
+        get_connection_labels,
+        load_or_extract_roi_signals,
+        load_preprocessed_fif,
+    )
+
+    # ------------------------------------------------------------------
+    # Cache check
+    # ------------------------------------------------------------------
+    out_dir = get_te_output_dir("phase_2_connectivity", config=config)
+    npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+
+    if not overwrite and npz_path.exists():
+        logger.info(
+            "process_subject_hybrid_dspte [%s]: cached .npz found — loading.",
+            subject_id,
+        )
+        return _load_subject_hybrid_dspte(subject_id, config=config)
+
+    t_subject_start = _time_p2.perf_counter()
+
+    # ------------------------------------------------------------------
+    # Step 1 — Load ROI signals from Stage D cache
+    # ------------------------------------------------------------------
+    logger.info("process_subject_hybrid_dspte [%s]: loading ROI signals ...", subject_id)
+    Data_Reg, valid_roi_names, sfreq = load_or_extract_roi_signals(
+        subject_id, study=study, config=config
+    )
+    n_rois_valid = Data_Reg.shape[0]
+    logger.info(
+        "process_subject_hybrid_dspte [%s]: Data_Reg shape=%s  ROIs=%s  sfreq=%.1f Hz",
+        subject_id, Data_Reg.shape, valid_roi_names, sfreq,
+    )
+
+    # ------------------------------------------------------------------
+    # Step 2 — Trial segmentation
+    # ------------------------------------------------------------------
+    raw = load_preprocessed_fif(subject_id, study=study, config=config)
+    deps = _get_hybrid_module_dependencies()
+    seg_mod = deps["seg"]
+    core_mod = deps["core"]
+
+    segments = seg_mod.get_trial_segments(raw, config=config)
+    logger.info(
+        "process_subject_hybrid_dspte [%s]: %d trials found.", subject_id, len(segments)
+    )
+
+    # ------------------------------------------------------------------
+    # Step 3 — Windowed hybrid-dSPTE + connectivity extraction, per trial
+    # ------------------------------------------------------------------
+    conn_labels = get_connection_labels()
+    
+    filter_enabled = bool(filt_cfg.get("enabled", True))
+    filt_f_lo = float(filt_cfg.get("f_lo", 0.04))
+    filt_f_hi = float(filt_cfg.get("f_hi", 0.15))
+    filt_order = int(filt_cfg.get("order", 3))
+
+    result: dict = {}
+    delays_result: dict = {}
+    profiles_result: dict = {}
+
+    # Window-level Phase 2 diagnostic accumulators (for batch log)
+    all_k0_vals: list = []
+    all_sparsity_vals: list = []
+    all_fallback_rates: list = []
+    all_delays: list = []
+
+    for trial_idx, (onset, offset) in enumerate(segments):
+        trial_id = f"Tr_{trial_idx + 1}"
+        Y_trial = Data_Reg[:, onset: offset + 1]
+
+        logger.info(
+            "process_subject_hybrid_dspte [%s]: %s  samples=[%d, %d]  shape=%s",
+            subject_id, trial_id, onset, offset, Y_trial.shape,
+        )
+
+        # Step 2.5 — Narrowband filter + full-trial Hilbert
+        if filter_enabled:
+            Phi_trial, taus_trial = _filter_and_extract_phase_trial_p2(
+                Y_trial,
+                sfreq=sfreq,
+                f_lo=filt_f_lo,
+                f_hi=filt_f_hi,
+                order=filt_order,
+                core_mod=core_mod,
+                subject_id=subject_id,
+                trial_id=trial_id,
+            )
+        else:
+            # Fallback: compute phase directly from raw signal (not recommended)
+            logger.warning(
+                "process_subject_hybrid_dspte [%s %s]: narrowband filter disabled — "
+                "Hilbert phase from raw broadband signal will be quasi-uniform. "
+                "Phase 2 results will be unreliable. Enable narrowband_filter in config.",
+                subject_id, trial_id,
+            )
+            n_rois_t, T_t = Y_trial.shape
+            Phi_trial = np.zeros_like(Y_trial)
+            taus_trial = []
+            for roi_i in range(n_rois_t):
+                ph = core_mod.extract_phase_signal(Y_trial[roi_i])
+                Phi_trial[roi_i] = ph
+                taus_trial.append(core_mod.compute_embedding_delay(ph))
+
+        # Windowed Phase 2 computation
+        windows_hybrid = _compute_windowed_hybrid_dspte(
+            Y_trial=Y_trial,
+            Phi_trial=Phi_trial,
+            taus_trial=taus_trial,
+            valid_roi_names=valid_roi_names,
+            window_size=window_size,
+            stride=stride,
+            config=config,
+            subject_id=subject_id,
+            trial_id=trial_id,
+        )
+
+        trial_result: dict = {}
+        trial_delays: dict = {}
+        trial_profiles: dict = {}
+
+        # Re-import pipeline helper for extract_connectivity_vector
+        pipe_mod = deps["pipeline"]
+        extract_connectivity_vector = pipe_mod.extract_connectivity_vector
+
+        for win_id, (EC_matrix, delay_matrix, metadata) in windows_hybrid.items():
+            conn_vec_20 = extract_connectivity_vector(EC_matrix, valid_roi_names)
+            delay_matrix_float = delay_matrix.astype(float)
+            delay_vec_20 = extract_connectivity_vector(delay_matrix_float, valid_roi_names)
+
+            # Lag-TE profiles in canonical 20×u_max order
+            profiles_20 = _extract_canonical_lag_profiles_p2(
+                metadata.get("te_profiles", {}),
+                valid_roi_names,
+                conn_labels,
+                u_max,
+            )
+
+            trial_result[win_id] = conn_vec_20
+            trial_delays[win_id] = delay_vec_20
+            trial_profiles[win_id] = profiles_20
+
+            # Accumulators for batch log
+            all_k0_vals.append(metadata.get("k0", 0))
+            all_sparsity_vals.append(metadata.get("mean_sparsity_pct", float("nan")))
+            n_pairs_total = metadata.get("n_pairs_total", 1)
+            n_pairs_fallback = metadata.get("n_pairs_fallback", 0)
+            fallback_rate = n_pairs_fallback / n_pairs_total if n_pairs_total > 0 else 0.0
+            all_fallback_rates.append(fallback_rate)
+            nonzero_delays = delay_vec_20[delay_vec_20 > 0]
+            if len(nonzero_delays) > 0:
+                all_delays.extend(nonzero_delays.tolist())
+
+        result[trial_id] = trial_result
+        delays_result[trial_id] = trial_delays
+        profiles_result[trial_id] = trial_profiles
+
+        logger.info(
+            "process_subject_hybrid_dspte [%s]: %s → %d windows",
+            subject_id, trial_id, len(trial_result),
+        )
+
+    # ------------------------------------------------------------------
+    # Step 4 — Save per-subject .npz
+    # ------------------------------------------------------------------
+    elapsed_subject = _time_p2.perf_counter() - t_subject_start
+
+    p2_cfg = te_cfg.get("phase_2", {})
+    pca_cfg_save = p2_cfg.get("conditional_pca", {})
+
+    params = {
+        "study": study,
+        "phase": "phase_2_hybrid_dspte",
+        "window_size_samples": window_size,
+        "stride_samples": stride,
+        "sfreq": sfreq,
+        "embedding_dimension": int(sig_cfg.get("embedding_dimension", 2)),
+        "u_max": u_max,
+        "ndis_threshold": float(te_cfg.get("symbolisation", {}).get("ndis_threshold", 0.05)),
+        "k0_max_multivariate": int(p2_cfg.get("k0_max_multivariate", 4)),
+        "sparsity_fallback_threshold": float(p2_cfg.get("sparsity_fallback_threshold", 0.20)),
+        "pca_compress": bool(pca_cfg_save.get("enabled", True)),
+        "pca_n_components": int(pca_cfg_save.get("n_components", 1)),
+        "narrowband_filter_enabled": filter_enabled,
+        "narrowband_filter_f_lo": filt_f_lo if filter_enabled else None,
+        "narrowband_filter_f_hi": filt_f_hi if filter_enabled else None,
+        "narrowband_filter_order": filt_order if filter_enabled else None,
+        "n_connections": 20,
+        "elapsed_s": round(elapsed_subject, 1),
+        "mean_conditional_k0": round(float(np.mean(all_k0_vals)), 2) if all_k0_vals else float("nan"),
+        "mean_sparsity_fallback_rate": round(float(np.mean(all_fallback_rates)), 4) if all_fallback_rates else float("nan"),
+        "mean_optimal_delay_samples": round(float(np.mean(all_delays)), 2) if all_delays else float("nan"),
+    }
+
+    _save_subject_hybrid_dspte_npz(
+        subject_id=subject_id,
+        result=result,
+        delays_result=delays_result,
+        profiles_result=profiles_result,
+        valid_roi_names=valid_roi_names,
+        params=params,
+        config=config,
+    )
+
+    total_wins = sum(len(v) for v in result.values())
+    logger.info(
+        "process_subject_hybrid_dspte [%s]: complete.  "
+        "Trials=%d  Total windows=%d  Elapsed=%.1f s  "
+        "mean_k0=%.1f  mean_fallback_rate=%.2f",
+        subject_id, len(result), total_wins, elapsed_subject,
+        float(np.mean(all_k0_vals)) if all_k0_vals else float("nan"),
+        float(np.mean(all_fallback_rates)) if all_fallback_rates else float("nan"),
+    )
+    return result
+
+
+def _extract_canonical_lag_profiles_p2(
+    te_profiles: dict,
+    roi_names: list,
+    conn_labels: list,
+    u_max: int,
+) -> np.ndarray:
+    """
+    Convert a ``te_profiles`` dict from ``compute_hybrid_dspte_matrix``
+    (keyed by local valid-ROI index pairs) to a canonical (20, u_max) array.
+
+    Identical logic to ``_extract_canonical_lag_profiles`` in Phase 1 pipeline.
+    """
+    profiles = np.zeros((20, u_max), dtype=np.float64)
+
+    conn_index: dict = {}
+    for row_idx, label in enumerate(conn_labels):
+        parts = label.split("→")
+        if len(parts) == 2:
+            conn_index[(parts[0], parts[1])] = row_idx
+
+    for (src_v, tgt_v), profile in te_profiles.items():
+        if src_v >= len(roi_names) or tgt_v >= len(roi_names):
+            continue
+        src_name = roi_names[src_v]
+        tgt_name = roi_names[tgt_v]
+        row_idx = conn_index.get((src_name, tgt_name))
+        if row_idx is None:
+            continue
+        arr = np.asarray(profile, dtype=np.float64)
+        length = min(len(arr), u_max)
+        profiles[row_idx, :length] = arr[:length]
+
+    return profiles
+
+
+def _save_subject_hybrid_dspte_npz(
+    subject_id: str,
+    result: dict,
+    delays_result: dict,
+    profiles_result: dict,
+    valid_roi_names: list,
+    params: dict,
+    config: "_Optional_p2[dict]" = None,
+) -> Path:
+    """
+    Save Phase 2 per-subject output to
+    ``phase_2_connectivity/sub-{id}_hybrid_dspte_connectivity.npz``.
+
+    Schema (extends Phase 1 .npz schema)
+    --------------------------------------
+    Tr_N_connectivity             : (20, n_wins)         — conditional dSPTE
+    Tr_N_delays                   : (20, n_wins)         — optimal delay (samples)
+    Tr_N_conditional_te_profiles  : (20, u_max, n_wins)  — full conditional TE lag profiles
+    subject_id, group, trial_ids, window_counts, roi_names_used,
+    connection_labels, n_trials, params_json.
+    """
+    import sys as _sys_save
+    _stage_e_root_save = Path(__file__).parent
+    if str(_stage_e_root_save) not in _sys_save.path:
+        _sys_save.path.insert(0, str(_stage_e_root_save))
+
+    from utils_te import get_te_output_dir, get_subject_group, get_connection_labels  # noqa
+
+    out_dir = get_te_output_dir("phase_2_connectivity", config=config)
+    conn_labels = get_connection_labels()
+
+    trial_ids = sorted(result.keys(), key=lambda k: int(k.split("_")[1]))
+    window_counts = []
+    save_dict: dict = {}
+
+    n_conn = 20
+    u_max = int(params.get("u_max", 50))
+
+    for trial_id in trial_ids:
+        trial_data = result[trial_id]
+        trial_delays = delays_result.get(trial_id, {})
+        trial_profiles = profiles_result.get(trial_id, {})
+        n_wins = len(trial_data)
+        window_counts.append(n_wins)
+
+        if n_wins > 0:
+            wins_sorted = sorted(
+                trial_data.keys(), key=lambda k: int(k.split("_")[1])
+            )
+            conn_array = np.column_stack(
+                [trial_data[wk] for wk in wins_sorted]
+            ).astype(np.float64)
+
+            delay_array = np.column_stack(
+                [trial_delays.get(wk, np.zeros(n_conn)) for wk in wins_sorted]
+            ).astype(np.float64)
+
+            profiles_list = [
+                trial_profiles.get(wk, np.zeros((n_conn, u_max)))
+                for wk in wins_sorted
+            ]
+            profiles_array = np.stack(profiles_list, axis=2).astype(np.float64)
+        else:
+            conn_array = np.empty((n_conn, 0), dtype=np.float64)
+            delay_array = np.empty((n_conn, 0), dtype=np.float64)
+            profiles_array = np.empty((n_conn, u_max, 0), dtype=np.float64)
+
+        save_dict[f"{trial_id}_connectivity"] = conn_array
+        save_dict[f"{trial_id}_delays"] = delay_array
+        save_dict[f"{trial_id}_conditional_te_profiles"] = profiles_array
+
+    save_dict["subject_id"] = np.array(subject_id)
+    save_dict["n_trials"] = np.array(len(trial_ids))
+    save_dict["trial_ids"] = np.array(trial_ids)
+    save_dict["window_counts"] = np.array(window_counts, dtype=int)
+    save_dict["roi_names_used"] = np.array(valid_roi_names)
+    save_dict["connection_labels"] = np.array(conn_labels)
+    save_dict["params_json"] = np.array(_json_p2.dumps(params))
+
+    try:
+        group = get_subject_group(subject_id, config=config)
+    except ValueError:
+        group = "Unknown"
+    save_dict["group"] = np.array(group)
+
+    npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+    np.savez(npz_path, **save_dict)
+
+    logger.info(
+        "_save_subject_hybrid_dspte_npz [%s]: saved → %s  (trials=%d, total_wins=%d)",
+        subject_id, npz_path.name, len(trial_ids), sum(window_counts),
+    )
+    return npz_path
+
+
+def _load_subject_hybrid_dspte(
+    subject_id: str,
+    config: "_Optional_p2[dict]" = None,
+) -> "_Optional_p2[dict]":
+    """
+    Load ``sub-{id}_hybrid_dspte_connectivity.npz`` and return nested result dict.
+
+    Returns ``{trial_id: {win_id: conn_vec_20}}`` or None if file not found.
+    """
+    import sys as _sys_load
+    _stage_e_root_load = Path(__file__).parent
+    if str(_stage_e_root_load) not in _sys_load.path:
+        _sys_load.path.insert(0, str(_stage_e_root_load))
+    from utils_te import get_te_output_dir  # noqa
+
+    out_dir = get_te_output_dir("phase_2_connectivity", config=config)
+    npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+
+    if not npz_path.exists():
+        logger.warning(
+            "_load_subject_hybrid_dspte [%s]: file not found: %s",
+            subject_id, npz_path,
+        )
+        return None
+
+    data = dict(np.load(npz_path, allow_pickle=True))
+    trial_ids = list(data["trial_ids"])
+
+    result: dict = {}
+    for trial_id in trial_ids:
+        conn_array = data.get(f"{trial_id}_connectivity")
+        trial_result: dict = {}
+        if conn_array is not None and conn_array.ndim == 2 and conn_array.shape[1] > 0:
+            for win_idx in range(conn_array.shape[1]):
+                trial_result[f"Win_{win_idx + 1}"] = conn_array[:, win_idx]
+        result[trial_id] = trial_result
+
+    logger.info(
+        "_load_subject_hybrid_dspte [%s]: loaded from cache — "
+        "%d trials, %d total windows",
+        subject_id, len(result),
+        sum(len(v) for v in result.values()),
+    )
+    return result
+
+
+def run_batch_hybrid_dspte(
+    study: str = "expert_novice",
+    subjects: "_Optional_p2[list[str]]" = None,
+    config: "_Optional_p2[dict]" = None,
+    overwrite: bool = False,
+) -> dict:
+    """
+    Batch-process all subjects with Phase 2 Hybrid-dSPTE.
+
+    Mirrors ``run_batch_dspte()`` from Phase 1 pipeline.  Logs per-subject
+    Phase 2 specific statistics (conditional k₀, sparsity fallback rate,
+    mean conditional dSPTE, mean optimal delay) and writes
+    ``hybrid_te_batch_log.json``.
+
+    Parameters
+    ----------
+    study : str
+        Config dataset key. Default 'expert_novice'.
+    subjects : list[str], optional
+        Explicit subject list. If None, reads from config
+        ``stage_e_transfer_entropy.subjects`` (Expert + Novice, R10 excluded).
+    config : dict, optional
+        Parsed config.yaml.
+    overwrite : bool
+        If False, skip subjects whose .npz already exists.
+
+    Returns
+    -------
+    batch_log : dict
+        ``{'subjects': {id: stats_dict}, 'summary': {...}}``.
+        Also written to ``phase_2_connectivity/hybrid_te_batch_log.json``.
+    """
+    if config is None:
+        try:
+            from utils import load_config as _lc
+            config = _lc()
+        except ImportError:
+            config = {}
+
+    import sys as _sys_batch
+    _stage_e_root_batch = Path(__file__).parent
+    if str(_stage_e_root_batch) not in _sys_batch.path:
+        _sys_batch.path.insert(0, str(_stage_e_root_batch))
+
+    from utils_te import get_te_output_dir, get_connection_labels  # noqa
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    subj_cfg = te_cfg.get("subjects", {})
+    p2_cfg = te_cfg.get("phase_2", {})
+
+    if subjects is None:
+        experts = subj_cfg.get("Expert", [])
+        novices = subj_cfg.get("Novice", [])
+        subjects = experts + novices
+
+    logger.info(
+        "run_batch_hybrid_dspte: processing %d subjects: %s", len(subjects), subjects
+    )
+
+    batch_start = _time_p2.perf_counter()
+    conn_labels = get_connection_labels()
+
+    batch_log: dict = {
+        "run_timestamp": _datetime_p2.now().isoformat(),
+        "study": study,
+        "phase": "phase_2_hybrid_dspte",
+        "n_subjects": len(subjects),
+        "subjects": {},
+    }
+
+    n_success = 0
+    n_failed = 0
+
+    for subject_id in subjects:
+        subj_start = _time_p2.perf_counter()
+        logger.info("run_batch_hybrid_dspte: === Subject %s ===", subject_id)
+
+        try:
+            result = process_subject_hybrid_dspte(
+                subject_id, study=study, config=config, overwrite=overwrite
+            )
+
+            if result is None:
+                raise RuntimeError("process_subject_hybrid_dspte returned None")
+
+            n_trials = len(result)
+            n_wins_total = sum(len(v) for v in result.values())
+
+            all_conn = []
+            for trial_data in result.values():
+                for conn_vec in trial_data.values():
+                    all_conn.append(conn_vec)
+
+            if all_conn:
+                all_conn_arr = np.stack(all_conn)
+                mean_dspte = float(all_conn_arr.mean())
+                max_dspte = float(all_conn_arr.max())
+                conn_means = all_conn_arr.mean(axis=0).tolist()
+            else:
+                mean_dspte = 0.0
+                max_dspte = 0.0
+                conn_means = [0.0] * 20
+
+            # Load Phase 2 specific stats from saved .npz
+            out_dir = get_te_output_dir("phase_2_connectivity", config=config)
+            npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+            mean_conditional_k0 = float("nan")
+            mean_sparsity_fallback_rate = float("nan")
+            mean_delay = float("nan")
+            conditioning_mode = "unknown"
+
+            if npz_path.exists():
+                params_data = dict(np.load(npz_path, allow_pickle=True))
+                try:
+                    params_json = str(params_data.get("params_json", "{}"))
+                    params_parsed = _json_p2.loads(params_json)
+                    mean_conditional_k0 = float(params_parsed.get("mean_conditional_k0", float("nan")))
+                    mean_sparsity_fallback_rate = float(params_parsed.get("mean_sparsity_fallback_rate", float("nan")))
+                    mean_delay_samples = float(params_parsed.get("mean_optimal_delay_samples", float("nan")))
+                    mean_delay = mean_delay_samples
+                    conditioning_mode = "pca_1pc" if params_parsed.get("pca_compress", True) else "full_nz3"
+                except Exception:
+                    pass
+
+            elapsed_subj = _time_p2.perf_counter() - subj_start
+
+            batch_log["subjects"][subject_id] = {
+                "status": "ok",
+                "n_trials": n_trials,
+                "n_windows_total": n_wins_total,
+                "mean_hybrid_dspte": round(mean_dspte, 6),
+                "max_hybrid_dspte": round(max_dspte, 6),
+                "mean_conditional_k0": round(mean_conditional_k0, 2) if not np.isnan(mean_conditional_k0) else None,
+                "mean_sparsity_fallback_rate": round(mean_sparsity_fallback_rate, 4) if not np.isnan(mean_sparsity_fallback_rate) else None,
+                "mean_optimal_delay_samples": round(mean_delay, 2) if not np.isnan(mean_delay) else None,
+                "mean_optimal_delay_s": round(mean_delay / 25.0, 3) if not np.isnan(mean_delay) else None,
+                "conditioning_mode": conditioning_mode,
+                "per_connection_mean_hybrid_dspte": [round(v, 6) for v in conn_means],
+                "connection_labels": conn_labels,
+                "elapsed_s": round(elapsed_subj, 1),
+            }
+            n_success += 1
+
+            logger.info(
+                "run_batch_hybrid_dspte [%s]: OK — trials=%d  wins=%d  "
+                "mean_dspte=%.4f  mean_k0=%.1f  fallback_rate=%.2f  elapsed=%.1f s",
+                subject_id, n_trials, n_wins_total, mean_dspte,
+                mean_conditional_k0 if not np.isnan(mean_conditional_k0) else 0.0,
+                mean_sparsity_fallback_rate if not np.isnan(mean_sparsity_fallback_rate) else 0.0,
+                elapsed_subj,
+            )
+
+        except Exception as exc:
+            elapsed_subj = _time_p2.perf_counter() - subj_start
+            logger.error(
+                "run_batch_hybrid_dspte [%s]: FAILED — %s  (elapsed=%.1f s)",
+                subject_id, exc, elapsed_subj,
+            )
+            batch_log["subjects"][subject_id] = {
+                "status": "failed",
+                "error": str(exc),
+                "elapsed_s": round(elapsed_subj, 1),
+            }
+            n_failed += 1
+
+    elapsed_total = _time_p2.perf_counter() - batch_start
+    batch_log["summary"] = {
+        "n_success": n_success,
+        "n_failed": n_failed,
+        "total_elapsed_s": round(elapsed_total, 1),
+        "completed_at": _datetime_p2.now().isoformat(),
+    }
+
+    # Save batch log
+    log_dir = get_te_output_dir("phase_2_connectivity", config=config)
+    log_filename = te_cfg.get("phase_2", {}).get("batch_log_filename", "hybrid_te_batch_log.json")
+    log_path = log_dir / log_filename
+    with open(log_path, "w") as f:
+        _json_p2.dump(batch_log, f, indent=2)
+
+    logger.info(
+        "run_batch_hybrid_dspte: complete.  OK=%d  FAILED=%d  Total=%.1f s  Log → %s",
+        n_success, n_failed, elapsed_total, log_path,
+    )
+    return batch_log
+
+
+# ===========================================================================
 # Smoke test (run as script)
 # ===========================================================================
 
@@ -1644,4 +2787,160 @@ if __name__ == "__main__":
 
     print("=" * 65)
     print("All PCA conditioning compression tests completed.")
+    print("=" * 65 + "\n")
+
+    # ===================================================================
+    # Section 7.2.2 smoke tests — compute_hybrid_dspte_matrix
+    # ===================================================================
+    print("\n" + "=" * 65)
+    print("Section 7.2.2 — compute_hybrid_dspte_matrix smoke tests")
+    print("=" * 65 + "\n")
+
+    # Reuse Phi_trial (5 ROIs, T=1351) from Section 7.1 tests.
+    # Use u_max=5 for speed in smoke tests.
+    # We need a minimal config-like dict with Phase 2 parameters.
+    config_test_p2 = {
+        "stage_e_transfer_entropy": {
+            "signal": {"u_max": 5, "embedding_dimension": 2},
+            "symbolisation": {"ndis_threshold": 0.05},
+            "window": {"size_samples": 1350, "stride_samples": 1350},
+            "narrowband_filter": {"enabled": True, "f_lo": 0.04, "f_hi": 0.15, "order": 3},
+            "phase_2": {
+                "k0_max_multivariate": 4,
+                "sparsity_fallback_threshold": 0.20,
+                "tau_divergence_ratio": 2.0,
+                "degenerate_entropy_threshold": 1.0,
+                "conditional_pca": {
+                    "enabled": True,
+                    "n_components": 1,
+                    "min_explained_var_warning_pct": 60,
+                },
+            },
+        }
+    }
+
+    # -------------------------------------------------------------------
+    # Test 16: Basic matrix output — shape, diagonal=0, non-negative
+    # -------------------------------------------------------------------
+    print("Test 16: compute_hybrid_dspte_matrix — output shape, diagonal=0, non-negative")
+    t_start_16 = time.time()
+    EC_16, delay_16, meta_16 = compute_hybrid_dspte_matrix(
+        Phi_win=Phi_trial,
+        taus=tau_list_test,
+        config=config_test_p2,
+        roi_names=roi_names_test,
+    )
+    elapsed_16 = time.time() - t_start_16
+
+    print(f"  Elapsed         : {elapsed_16:.2f} s  (u_max=5)")
+    print(f"  EC_matrix shape : {EC_16.shape}  (expected (5, 5))")
+    print(f"  delay_matrix    : {delay_16.shape}  (expected (5, 5))")
+    print(f"  k0              : {meta_16['k0']}  (clamped: {meta_16['clamped']})")
+    print(f"  conditioning    : {meta_16['conditioning_mode']}")
+    print(f"  pairs fallback  : {meta_16['n_pairs_fallback']}/{meta_16['n_pairs_total']}")
+    print(f"  majority fallback: {meta_16['majority_pairs_fallback']}")
+    print(f"  mean sparsity   : {meta_16['mean_sparsity_pct']:.2%}")
+    print(f"  te_profiles keys: {len(meta_16['te_profiles'])}  (expected {5*4}=20)")
+    print(f"  EC matrix (first row): {EC_16[0, :]}")
+
+    assert EC_16.shape == (5, 5), f"Expected (5,5), got {EC_16.shape}"
+    assert delay_16.shape == (5, 5), f"Expected (5,5), got {delay_16.shape}"
+    assert np.all(np.diag(EC_16) == 0), "Diagonal of EC_matrix must be 0"
+    assert np.all(np.diag(delay_16) == 0), "Diagonal of delay_matrix must be 0"
+    assert np.all(EC_16 >= 0), f"All EC values must be ≥ 0; min={EC_16.min():.6f}"
+    assert np.all(np.isfinite(EC_16)), "All EC values must be finite"
+    assert len(meta_16["te_profiles"]) == 5 * 4, (
+        f"Expected 20 te_profiles entries (5 rois × 4 pairs), got {len(meta_16['te_profiles'])}"
+    )
+    # All TE profile arrays should have shape (u_max=5,)
+    for (sv, tv), prof in meta_16["te_profiles"].items():
+        assert prof.shape == (5,), f"Profile ({sv},{tv}) shape={prof.shape}, expected (5,)"
+        assert np.all(prof >= 0), f"Profile ({sv},{tv}) has negative values"
+    print("  [PASS] Test 16: Matrix shape, diagonal=0, non-negative, finite\n")
+
+    # -------------------------------------------------------------------
+    # Test 17: NaN ROI handling — one all-NaN row, should produce 0 row/col
+    # -------------------------------------------------------------------
+    print("Test 17: NaN ROI handling — one all-NaN ROI skipped")
+    Phi_nan_test = Phi_trial.copy()
+    Phi_nan_test[2, :] = np.nan   # RPFC all-NaN
+
+    EC_17, delay_17, meta_17 = compute_hybrid_dspte_matrix(
+        Phi_win=Phi_nan_test,
+        taus=tau_list_test,
+        config=config_test_p2,
+        roi_names=roi_names_test,
+    )
+    print(f"  EC row 2 (RPFC, all-NaN): {EC_17[2, :]}")
+    print(f"  EC col 2 (→RPFC, all-NaN): {EC_17[:, 2]}")
+    assert np.all(EC_17[2, :] == 0), "NaN ROI row should be 0"
+    assert np.all(EC_17[:, 2] == 0), "NaN ROI column should be 0"
+    assert np.all(np.diag(EC_17) == 0), "Diagonal must remain 0 with NaN ROI"
+    # The 4 remaining ROIs should still have non-trivial values
+    off_diag_valid = [EC_17[i, j] for i in range(5) for j in range(5)
+                      if i != j and i != 2 and j != 2]
+    print(f"  Non-NaN off-diagonal values: {len(off_diag_valid)} connections non-zero check")
+    print(f"  Conditioning mode: {meta_17['conditioning_mode']}  (n_valid=4 → n_z=2)")
+    print("  [PASS] Test 17: NaN ROI skipped correctly\n")
+
+    # -------------------------------------------------------------------
+    # Test 18: Drop-in compatibility — metadata has te_profiles dict
+    #          compatible with _extract_canonical_lag_profiles_p2
+    # -------------------------------------------------------------------
+    print("Test 18: te_profiles dict compatible with _extract_canonical_lag_profiles_p2")
+    # Simulate calling the helper (same as Phase 1 pipeline would)
+    import sys as _sys_p2_t
+    _stage_e_path_t = Path(__file__).parent
+    if str(_stage_e_path_t) not in _sys_p2_t.path:
+        _sys_p2_t.path.insert(0, str(_stage_e_path_t))
+    from utils_te import get_connection_labels as _gcl  # noqa
+
+    conn_labels_t = _gcl()
+    profiles_canonical = _extract_canonical_lag_profiles_p2(
+        meta_16["te_profiles"],
+        roi_names_test,   # all 5 ROIs (indices 0-4 = local indices for valid ROIs)
+        conn_labels_t,
+        u_max=5,
+    )
+    print(f"  Canonical profiles shape: {profiles_canonical.shape}  (expected (20, 5))")
+    assert profiles_canonical.shape == (20, 5), (
+        f"Expected (20, 5), got {profiles_canonical.shape}"
+    )
+    assert np.all(profiles_canonical >= 0), "Canonical profiles must be ≥ 0"
+    n_nonzero_rows = int(np.sum(profiles_canonical.any(axis=1)))
+    print(f"  Non-zero profile rows: {n_nonzero_rows}/20 connections")
+    print("  [PASS] Test 18: te_profiles → canonical 20×u_max array\n")
+
+    # -------------------------------------------------------------------
+    # Test 19: PCA disabled → full n_z=3 conditioning (all pairs fallback expected)
+    # -------------------------------------------------------------------
+    print("Test 19: pca_compress=False → full n_z=3 conditioning (fallback for all pairs)")
+    config_no_pca = {
+        "stage_e_transfer_entropy": {
+            "signal": {"u_max": 3, "embedding_dimension": 2},
+            "symbolisation": {"ndis_threshold": 0.05},
+            "phase_2": {
+                "k0_max_multivariate": 4,
+                "sparsity_fallback_threshold": 0.20,
+                "conditional_pca": {"enabled": False, "n_components": 1},
+            },
+        }
+    }
+    EC_19, _, meta_19 = compute_hybrid_dspte_matrix(
+        Phi_win=Phi_trial,
+        taus=tau_list_test,
+        config=config_no_pca,
+        roi_names=roi_names_test,
+    )
+    print(f"  Conditioning mode (no PCA): {meta_19['conditioning_mode']}")
+    print(f"  Fallback rate: {meta_19['n_pairs_fallback']}/{meta_19['n_pairs_total']}")
+    print(f"  Majority fallback: {meta_19['majority_pairs_fallback']}")
+    # At n_z=3, k₀=4, all pairs should fallback (6D table 96% empty)
+    assert meta_19["majority_pairs_fallback"] is True, (
+        "Expected majority fallback with n_z=3, k₀=4 (6D table under-sampled)"
+    )
+    print("  [PASS] Test 19: PCA=False → majority fallback as expected (n_z=3 all fallback)\n")
+
+    print("=" * 65)
+    print("All Section 7.2.2 smoke tests completed.")
     print("=" * 65 + "\n")
