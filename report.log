@@ -18,3 +18,81 @@
 2026-04-07 22:43:39,692 - __main__ - WARNING - symbolise_multivariate: WARNING: Degenerate symbol sequence for ROI LPFC (idx=0) — H(S_roi)=-0.000 nat < threshold=1.0 nat (max at k₀=4 is 1.386 nat). TE estimates for pairs involving this ROI will be unreliable. Symbol distribution: {2: 1343}
 2026-04-07 22:43:39,693 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '-0.000', 'CPFC': '1.358', 'RPFC': '1.349', 'LM1': '1.361', 'SMA': '1.354'}
 2026-04-07 22:43:39,693 - __main__ - WARNING - symbolise_multivariate: 1/5 ROIs have degenerate symbol sequences: ['LPFC']
+2026-04-08 00:02:05,841 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.00 NOT reached by k=4 (final nDis=0.1518). Using k=4 as fallback.
+2026-04-08 00:02:05,841 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1518  (pre-clamp k₀=4)  clamped=False
+2026-04-08 00:02:05,841 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 00:02:05,842 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-08 00:02:05,842 - __main__ - WARNING - symbolise_multivariate: τ divergence detected — max τ (50) > 2× min τ (5). ROI τ values: {'LPFC': 5, 'CPFC': 5, 'RPFC': 5, 'LM1': 5, 'SMA': 50}. Filter may not be fully stabilising phase structure. Using τ_min=5 for all ROIs.
+2026-04-08 00:02:05,842 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=5  T'=1346
+2026-04-08 00:02:05,842 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6730, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-08 00:02:05,852 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1233). Using k=4 as fallback.
+2026-04-08 00:02:05,852 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1233  (pre-clamp k₀=4)  clamped=False
+2026-04-08 00:02:05,852 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1346: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.3 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 00:02:05,852 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-08 00:02:05,852 - __main__ - INFO - symbolise_multivariate: τ values per ROI: {'LPFC': 8, 'CPFC': 9, 'RPFC': 8, 'LM1': 10, 'SMA': 9}  τ_min=8
+2026-04-08 00:02:05,852 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=8  T'=1343
+2026-04-08 00:02:05,852 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6715, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-08 00:02:05,863 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1718). Using k=4 as fallback.
+2026-04-08 00:02:05,863 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1718  (pre-clamp k₀=4)  clamped=False
+2026-04-08 00:02:05,863 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 00:02:05,863 - __main__ - WARNING - symbolise_multivariate: WARNING: Degenerate symbol sequence for ROI LPFC (idx=0) — H(S_roi)=-0.000 nat < threshold=1.0 nat (max at k₀=4 is 1.386 nat). TE estimates for pairs involving this ROI will be unreliable. Symbol distribution: {2: 1343}
+2026-04-08 00:02:05,863 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '-0.000', 'CPFC': '1.358', 'RPFC': '1.349', 'LM1': '1.361', 'SMA': '1.354'}
+2026-04-08 00:02:05,864 - __main__ - WARNING - symbolise_multivariate: 1/5 ROIs have degenerate symbol sequences: ['LPFC']
+2026-04-08 21:19:48,606 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.00 NOT reached by k=4 (final nDis=0.1518). Using k=4 as fallback.
+2026-04-08 21:19:48,606 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1518  (pre-clamp k₀=4)  clamped=False
+2026-04-08 21:19:48,607 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 21:19:48,607 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-08 21:19:48,608 - __main__ - WARNING - symbolise_multivariate: τ divergence detected — max τ (50) > 2× min τ (5). ROI τ values: {'LPFC': 5, 'CPFC': 5, 'RPFC': 5, 'LM1': 5, 'SMA': 50}. Filter may not be fully stabilising phase structure. Using τ_min=5 for all ROIs.
+2026-04-08 21:19:48,608 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=5  T'=1346
+2026-04-08 21:19:48,609 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6730, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-08 21:19:48,619 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1233). Using k=4 as fallback.
+2026-04-08 21:19:48,620 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1233  (pre-clamp k₀=4)  clamped=False
+2026-04-08 21:19:48,620 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1346: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.3 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 21:19:48,621 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-08 21:19:48,621 - __main__ - INFO - symbolise_multivariate: τ values per ROI: {'LPFC': 8, 'CPFC': 9, 'RPFC': 8, 'LM1': 10, 'SMA': 9}  τ_min=8
+2026-04-08 21:19:48,622 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=8  T'=1343
+2026-04-08 21:19:48,622 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6715, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-08 21:19:48,632 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1718). Using k=4 as fallback.
+2026-04-08 21:19:48,633 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1718  (pre-clamp k₀=4)  clamped=False
+2026-04-08 21:19:48,633 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 21:19:48,634 - __main__ - WARNING - symbolise_multivariate: WARNING: Degenerate symbol sequence for ROI LPFC (idx=0) — H(S_roi)=-0.000 nat < threshold=1.0 nat (max at k₀=4 is 1.386 nat). TE estimates for pairs involving this ROI will be unreliable. Symbol distribution: {2: 1343}
+2026-04-08 21:19:48,634 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '-0.000', 'CPFC': '1.358', 'RPFC': '1.349', 'LM1': '1.361', 'SMA': '1.354'}
+2026-04-08 21:19:48,634 - __main__ - WARNING - symbolise_multivariate: 1/5 ROIs have degenerate symbol sequences: ['LPFC']
+2026-04-08 21:19:48,635 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=3 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,824 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.00 NOT reached by k=4 (final nDis=0.1518). Using k=4 as fallback.
+2026-04-08 21:20:40,825 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1518  (pre-clamp k₀=4)  clamped=False
+2026-04-08 21:20:40,825 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 21:20:40,826 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-08 21:20:40,826 - __main__ - WARNING - symbolise_multivariate: τ divergence detected — max τ (50) > 2× min τ (5). ROI τ values: {'LPFC': 5, 'CPFC': 5, 'RPFC': 5, 'LM1': 5, 'SMA': 50}. Filter may not be fully stabilising phase structure. Using τ_min=5 for all ROIs.
+2026-04-08 21:20:40,827 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=5  T'=1346
+2026-04-08 21:20:40,827 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6730, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-08 21:20:40,837 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1233). Using k=4 as fallback.
+2026-04-08 21:20:40,838 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1233  (pre-clamp k₀=4)  clamped=False
+2026-04-08 21:20:40,838 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1346: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.3 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 21:20:40,839 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '1.385', 'CPFC': '1.377', 'RPFC': '1.381', 'LM1': '1.382', 'SMA': '1.381'}
+2026-04-08 21:20:40,839 - __main__ - INFO - symbolise_multivariate: τ values per ROI: {'LPFC': 8, 'CPFC': 9, 'RPFC': 8, 'LM1': 10, 'SMA': 9}  τ_min=8
+2026-04-08 21:20:40,839 - __main__ - INFO - symbolise_multivariate: n_rois=5  T=1351  d=2  τ_min=8  T'=1343
+2026-04-08 21:20:40,840 - __main__ - INFO - symbolise_multivariate: global joint matrix shape (6715, 2)  (fitting shared Neural-Gas codebook, k0_max=4)
+2026-04-08 21:20:40,850 - utils_te_mod - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.1718). Using k=4 as fallback.
+2026-04-08 21:20:40,850 - __main__ - INFO - symbolise_multivariate: k₀=4  nDis=0.1718  (pre-clamp k₀=4)  clamped=False
+2026-04-08 21:20:40,850 - __main__ - INFO - symbolise_multivariate: k₀=4, T'=1343: bivariate 3D table has 64 cells (~21.0 samples/cell); conditional 4D table (1 cond. channel) has 256 cells (~5.2 samples/cell). Adequate (>5 samp/cell)
+2026-04-08 21:20:40,851 - __main__ - WARNING - symbolise_multivariate: WARNING: Degenerate symbol sequence for ROI LPFC (idx=0) — H(S_roi)=-0.000 nat < threshold=1.0 nat (max at k₀=4 is 1.386 nat). TE estimates for pairs involving this ROI will be unreliable. Symbol distribution: {2: 1343}
+2026-04-08 21:20:40,851 - __main__ - INFO - symbolise_multivariate: symbol entropies (nats): {'LPFC': '-0.000', 'CPFC': '1.358', 'RPFC': '1.349', 'LM1': '1.361', 'SMA': '1.354'}
+2026-04-08 21:20:40,852 - __main__ - WARNING - symbolise_multivariate: 1/5 ROIs have degenerate symbol sequences: ['LPFC']
+2026-04-08 21:20:40,852 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=3 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,853 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=3 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,854 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=1 — 96.4% empty cells (3947/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,854 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=2 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,855 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=3 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,855 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=4 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,856 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=5 — 96.3% empty cells (3944/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,856 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=6 — 96.3% empty cells (3944/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,857 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=7 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,857 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=8 — 96.3% empty cells (3946/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,858 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=9 — 96.3% empty cells (3946/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,858 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=10 — 96.3% empty cells (3945/4096). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,859 - __main__ - WARNING - compute_conditional_dspte_multidelay: majority of lags (10/10) fell back to bivariate — Phase 2 results for this pair should be treated as equivalent to Phase 1.
+2026-04-08 21:20:40,859 - __main__ - INFO - compute_conditional_dspte_multidelay: max_cTE=0.008245  opt_delay=6  n_fallbacks=10/10  mean_sparsity=96.3%
+2026-04-08 21:20:40,871 - utils_te - WARNING - fit_neural_gas_codebook: nDis threshold 0.05 NOT reached by k=4 (final nDis=0.3888). Using k=4 as fallback.
+2026-04-08 21:20:40,872 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=3 — 88.5% empty cells (906/1024). Falling back to bivariate dSPTE (ignoring conditioning channels).
+2026-04-08 21:20:40,872 - __main__ - WARNING - compute_conditional_dspte_at_lag: Sparsity fallback triggered at lag u=3 — 85.3% empty cells (873/1024). Falling back to bivariate dSPTE (ignoring conditioning channels).

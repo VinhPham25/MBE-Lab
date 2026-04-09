@@ -541,7 +541,7 @@ Functions in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`.
  
 #### 7.2 Conditional dSPTE
  
-- [ ] **7.2.1** Implement `compute_conditional_dspte_at_lag(S_x, S_y, S_z_list, u, k0) -> float`. `S_z_list` is a list of symbolic sequences for all conditioning channels. Extends Eq. 17 by conditioning on `{S_{t-u}^{θz} for z in S_z_list}`:
+- [x] **7.2.1** Implement `compute_conditional_dspte_at_lag(S_x, S_y, S_z_list, u, k0) -> float`. `S_z_list` is a list of symbolic sequences for all conditioning channels. Extends Eq. 17 by conditioning on `{S_{t-u}^{θz} for z in S_z_list}`:
  
   - For 1 conditioning channel: 4D contingency table `(k₀, k₀, k₀, k₀)`
   - For n conditioning channels: `(n+2)`-dimensional table
@@ -554,7 +554,29 @@ Functions in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`.
   - In task 7.3.3, plot Phase 1 vs Phase 2 lag profiles for the same connection, subject, and window. **Success criterion:** the monotonic increase from Phase 1 flattens or develops a local maximum in Phase 2, indicating the shared slow-noise component has been removed. If Phase 2 profiles remain monotonically increasing, conditioning is not suppressing the shared component and the result must be flagged as a Phase 2 failure mode in the report.
  
 > 📦 **Consider IDTxl as an alternative backend for Phase 2:** IDTxl's `MultivariateTE` class implements multivariate TE with non-uniform embedding (the Faes 2011 NUE method, same reference as Wang 2022) and uses KSG estimation on continuous data — sidestepping the discrete table sparsity problem entirely. The workflow would be: run NG symbolisation as normal → pass the *pre-symbolisation* phase sequences to IDTxl's `MultivariateTE` (treating them as continuous inputs) → use IDTxl's output EC matrix in place of the manual conditional dSPTE. This is not faithful to Wang (2020)'s symbolic approach but gives you a well-validated multivariate TE with built-in significance testing. Implementing both and comparing is ideal — the NG-symbolic path is the novel contribution; the IDTxl path is the sanity check.
- 
+
+> **Result (2026-04-08):** Implemented in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`. Also implemented `compute_conditional_dspte_multidelay()` (the Phase 2 analogue of Phase 1's `compute_dspte_multidelay`). All 5 new smoke tests pass (Tests 6–10).
+>
+> **Critical finding — Full conditioning fallback is near-universal at n_z=3, k₀=4:**
+>
+> | Conditioning channels (n_z) | Table dimensions | Total cells | Samples/cell @ T'=1343 | Sparsity | Action |
+> |---|---|---|---|---|---|
+> | 0 (Phase 1 bivariate) | 3D | 64 | ~21.0 | ~0% | Compute normally |
+> | 1 | 4D | 256 | ~5.2 | ~30–40% | Usually below threshold |
+> | 2 | 5D | 1,024 | ~1.3 | ~70–80% | Frequent fallback |
+> | 3 (full Phase 2: 5 ROIs) | **6D** | **4,096** | **~0.33** | **~96%** | **Always fallbacks** |
+>
+> With 3 conditioning channels and k₀=4, the 6D contingency table has 4^6 = 4,096 cells populated by only T'=1343 samples → ~0.33 samples/cell → 96.3% empty cells. This exceeds the 20% sparsity threshold on every lag for every pair, meaning **every pair in every window falls back to bivariate dSPTE**. The full Phase 2 conditioning path (n_z=3) is effectively non-operational at these data dimensions.
+>
+> **Mathematical verification:** `compute_conditional_dspte_at_lag(..., S_z_list=[], sparsity_threshold=1.0)` produces values numerically identical to Phase 1 `compute_dspte_at_lag()` (difference < 6.6×10⁻¹⁷) — confirming the n_z=0 case correctly reduces to Phase 1.
+>
+> **Directionality check (Test 10):** On an AR model with X→Y coupling at δ=3 and two independent noise conditioning channels (n_z=2, 5D table): X→Y = 0.0692 nat >> Y→X = 0.0052 nat — correct directionality recovered. The n_z=2 case is less sparse (4^5 = 1024 cells, ~1.3 samp/cell) and may approach the threshold.
+>
+> **Implications for 7.2.2 (compute_hybrid_dspte_matrix):**
+> 1. With the default 20% sparsity threshold and n_z=3 for a 5-ROI system, `compute_hybrid_dspte_matrix` will log "Majority of pairs fell back to bivariate" for every window. Phase 2 output will be identical to Phase 1.
+> 2. **Feasible conditioning strategies for ASTaUND data:** (a) reduce to n_z=1 (condition on the single most correlated third ROI), reducing the table to 4D (256 cells, ~5.2 samp/cell); (b) reduce k₀ to 3 for the full n_z=3 case (3^6 = 729 cells, ~1.8 samp/cell — still marginal); (c) use IDTxl's KSG estimator (no binning, no sparsity problem).
+> 3. **Recommended approach for 7.2.2:** Implement the full n_z=3 path correctly (as specified) and let the sparsity fallback fire — this documents the limitation empirically. Separately implement an n_z=1 "partial conditioning" mode that conditions only on the strongest correlated third ROI, which is statistically viable and may still capture the dominant indirect connectivity.
+
 - [ ] **7.2.2** Implement `compute_hybrid_dspte_matrix(Phi_win: np.ndarray, taus: list, config: dict) -> tuple[np.ndarray, np.ndarray, dict]`. **Drop-in replacement for `compute_dspte_matrix()` — accepts pre-filtered phase window slices, not raw signals.** For each ordered pair (src, tgt): conditioning set = `{all ROIs} \ {src, tgt}` (3 channels for 5 ROIs). Calls `symbolise_multivariate` once per window (shared codebook across all pairs in that window — do not refit NG per pair), then calls `compute_conditional_dspte_at_lag` for each pair and lag. Returns `(EC_matrix, delay_matrix, metadata)` in the same format as Phase 1.
  
   **Delay matrix interpretation note:** The `delay_matrix[src, tgt]` entry is the argmax lag of the **conditional** TE profile. If Phase 2 successfully suppresses the shared-noise monotonic trend, these optimal delay estimates will be more physiologically meaningful than Phase 1's (which reflect noise argmax rather than true transmission delay). Track the cross-subject standard deviation of `delay_matrix` values per connection: lower variance in Phase 2 vs Phase 1 is a secondary success criterion, independent of the TE magnitude change.
@@ -707,9 +729,9 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 50
-- **Completed:** 34
+- **Completed:** 35
 - **In Progress:** 0
-- **Remaining:** 16
+- **Remaining:** 15
 
 ### By Section
 - **Section 1 (Setup):** 4/4 ✅ Complete (2026-03-23)
@@ -718,7 +740,7 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Section 4 (Phase 1 Pipeline):** 6/6 ✅ Complete (4.3.1a–d added 2026-03-26; full-cohort batch run pending)
 - **Section 5 (Phase 1 Stats):** 4/4 ✅ Complete (2026-03-26)
 - **Section 6 (Phase 1 Viz):** 5/5 ✅ Complete (2026-03-26)
-- **Section 7 (Phase 2 Hybrid):** 1/6 (7.1.1 complete 2026-04-07)
+- **Section 7 (Phase 2 Hybrid):** 2/6 (7.1.1 complete 2026-04-07; 7.2.1 complete 2026-04-08)
 - **Section 8 (Phase 3 Bimodal):** 0/5
 - **Section 9 (Cross-Phase):** 0/3
 - **Section 10 (Batch Runner):** 0/2
