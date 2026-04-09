@@ -502,7 +502,7 @@ stage_e_transfer_entropy:
     ndis_threshold: 0.05           # 5% — Wang (2020) Section 3.2
     k0_min: 2                      # minimum codebook size to test
     k0_max_bivariate: 35           # guard against codebook explosion (bivariate)
-    k0_max_multivariate: 8         # sample-scarcity guard for 4D+ contingency tables (Phase 2)
+    k0_max_multivariate: 3         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
     ng_max_iterations: 500         # Neural-Gas training iterations per k
     ng_learning_rate_i: 0.5        # initial learning rate λ_i
     ng_learning_rate_f: 0.01       # final learning rate λ_f
@@ -549,14 +549,6 @@ stage_e_transfer_entropy:
   # See TRANSFER_ENTROPY_PROGRESS.md Section 7.1 for design rationale.
   # --------------------------------------------------------------------------
   phase_2:
-    # k₀ hard ceiling for multivariate symbolisation (Section 7.1.1).
-    # At k₀=4: 4D contingency table has 256 cells → ~5.2 samples/cell at T'=1341.
-    # This is the practical lower bound for frequency-count TE to be approximately
-    # unbiased (bias is O(k₀/N)). Raising this to k₀=8 gives 4096 cells → 0.33
-    # samples/cell — severely under-sampled for the ASTaUND window size.
-    # Documented as PRD deviation E4.
-    k0_max_multivariate: 4
-
     # Sparsity guard for conditional TE (Section 7.2.1).
     # If > sparsity_fallback_threshold fraction of cells are zero in the
     # (n+2)-dimensional contingency table, fall back to bivariate dSPTE for
@@ -601,6 +593,7 @@ stage_e_transfer_entropy:
 
     # Output paths (relative to output_root/expert-novice/)
     batch_log_filename: "hybrid_te_batch_log.json"
+    window_slow_threshold_s: 120    # warn if a single window takes longer than this (seconds)
 
   # --------------------------------------------------------------------------
   # Phase 3 — Bimodal fusion parameters

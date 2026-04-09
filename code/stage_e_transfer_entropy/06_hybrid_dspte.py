@@ -49,7 +49,7 @@ def symbolise_multivariate(
     Phi_trial: np.ndarray,
     d: int,
     tau_list: list[int],
-    k0_max: int = 4,
+    k0_max: int = 3,
     ndis_threshold: float = 0.05,
     config: "dict | None" = None,
     roi_names: "list[str] | None" = None,
@@ -161,6 +161,12 @@ def symbolise_multivariate(
         except ImportError:
             config = {}
 
+    # Read Phase 2 thresholds from config early (used in Steps 1 and 6)
+    _te_cfg_sym = config.get("stage_e_transfer_entropy", {})
+    _p2_cfg_sym = _te_cfg_sym.get("phase_2", {})
+    tau_divergence_ratio = float(_p2_cfg_sym.get("tau_divergence_ratio", 2.0))
+    H_DEGENERATE_THRESHOLD = float(_p2_cfg_sym.get("degenerate_entropy_threshold", 1.0))
+
     Phi_trial = np.asarray(Phi_trial, dtype=float)
 
     if Phi_trial.ndim != 2:
@@ -195,7 +201,7 @@ def symbolise_multivariate(
     tau_max = int(tau_array.max())
 
     tau_divergence_warning = False
-    if tau_max > 2 * tau_min and tau_min > 0:
+    if tau_max > tau_divergence_ratio * tau_min and tau_min > 0:
         tau_divergence_warning = True
         logger.warning(
             "symbolise_multivariate: τ divergence detected — max τ (%d) > 2× min τ (%d). "
@@ -355,7 +361,7 @@ def symbolise_multivariate(
     # -----------------------------------------------------------------
     symbol_entropies: dict[str, float] = {}
     degenerate_rois: list[str] = []
-    H_DEGENERATE_THRESHOLD = 1.0   # nats; max is log(k₀) = log(4) ≈ 1.386 nats
+    # H_DEGENERATE_THRESHOLD read from config above (phase_2.degenerate_entropy_threshold)
 
     for roi_idx, (roi_name, symbols) in enumerate(zip(roi_names, symbol_sequences)):
         unique, counts = np.unique(symbols, return_counts=True)
@@ -667,7 +673,7 @@ def compute_conditional_dspte_at_lag(
     S_z_list: "list[np.ndarray]",
     u: int,
     k0: int,
-    sparsity_threshold: float = 0.20,
+    sparsity_threshold: float = 0.20,   # matches config: phase_2.sparsity_fallback_threshold
 ) -> tuple[float, dict]:
     """
     Compute conditional dSPTE_{X→Y|Z} at a single lag u via frequency counting.
@@ -941,13 +947,13 @@ def compute_conditional_dspte_multidelay(
     S_y: np.ndarray,
     S_z_list: "list[np.ndarray]",
     k0: int,
-    u_max: int = 50,
-    sparsity_threshold: float = 0.20,
-    pca_compress: bool = False,
+    u_max: int = 50,                          # matches config: signal.u_max
+    sparsity_threshold: float = 0.20,         # matches config: phase_2.sparsity_fallback_threshold
+    pca_compress: bool = False,               # callers set this from config: phase_2.conditional_pca.enabled
     embedded_z_list: "list[np.ndarray] | None" = None,
     codebook: "np.ndarray | None" = None,
-    pca_n_components: int = 1,
-    pca_min_explained_var_warning: float = 0.60,
+    pca_n_components: int = 1,                # matches config: phase_2.conditional_pca.n_components
+    pca_min_explained_var_warning: float = 0.60,  # matches config: phase_2.conditional_pca.min_explained_var_warning_pct / 100
 ) -> tuple[float, int, np.ndarray, dict]:
     """
     Search over lags u ∈ {1, ..., u_max} and return the maximum conditional dSPTE.
@@ -1206,13 +1212,14 @@ def compute_hybrid_dspte_matrix(
 
     te_cfg = config.get("stage_e_transfer_entropy", {})
     sig_cfg = te_cfg.get("signal", {})
+    sym_cfg = te_cfg.get("symbolisation", {})
     p2_cfg = te_cfg.get("phase_2", {})
     pca_cfg = p2_cfg.get("conditional_pca", {})
 
     u_max = int(sig_cfg.get("u_max", 50))
     d = int(sig_cfg.get("embedding_dimension", 2))
-    k0_max = int(p2_cfg.get("k0_max_multivariate", 4))
-    ndis_threshold = float(te_cfg.get("symbolisation", {}).get("ndis_threshold", 0.05))
+    k0_max = int(sym_cfg.get("k0_max_multivariate", 3))
+    ndis_threshold = float(sym_cfg.get("ndis_threshold", 0.05))
     sparsity_threshold = float(p2_cfg.get("sparsity_fallback_threshold", 0.20))
 
     pca_compress = bool(pca_cfg.get("enabled", True))
@@ -1553,6 +1560,9 @@ def _compute_windowed_hybrid_dspte(
     windows: dict = {}
     win_idx = 1
 
+    _te_cfg_w = (config or {}).get("stage_e_transfer_entropy", {})
+    _slow_thresh = float(_te_cfg_w.get("phase_2", {}).get("window_slow_threshold_s", 120.0))
+
     for w in range(window_size, T_trial, stride):
         start = w - window_size
         end = w  # inclusive end (T_win = end - start + 1 = window_size + 1)
@@ -1577,11 +1587,11 @@ def _compute_windowed_hybrid_dspte(
             continue
 
         elapsed_win = _time_p2.perf_counter() - t_win_start
-        if elapsed_win > 120.0:
+        if elapsed_win > _slow_thresh:
             logger.warning(
                 "_compute_windowed_hybrid_dspte [%s %s Win_%d]: "
-                "window took %.1f s (> 120 s threshold).",
-                subject_id, trial_id, win_idx, elapsed_win,
+                "window took %.1f s (> %.0f s threshold).",
+                subject_id, trial_id, win_idx, elapsed_win, _slow_thresh,
             )
 
         win_key = f"Win_{win_idx}"
@@ -1719,7 +1729,7 @@ def process_subject_hybrid_dspte(
     # Step 3 — Windowed hybrid-dSPTE + connectivity extraction, per trial
     # ------------------------------------------------------------------
     conn_labels = get_connection_labels()
-    
+
     filter_enabled = bool(filt_cfg.get("enabled", True))
     filt_f_lo = float(filt_cfg.get("f_lo", 0.04))
     filt_f_hi = float(filt_cfg.get("f_hi", 0.15))
@@ -1847,7 +1857,7 @@ def process_subject_hybrid_dspte(
         "embedding_dimension": int(sig_cfg.get("embedding_dimension", 2)),
         "u_max": u_max,
         "ndis_threshold": float(te_cfg.get("symbolisation", {}).get("ndis_threshold", 0.05)),
-        "k0_max_multivariate": int(p2_cfg.get("k0_max_multivariate", 4)),
+        "k0_max_multivariate": int(te_cfg.get("symbolisation", {}).get("k0_max_multivariate", 3)),
         "sparsity_fallback_threshold": float(p2_cfg.get("sparsity_fallback_threshold", 0.20)),
         "pca_compress": bool(pca_cfg_save.get("enabled", True)),
         "pca_n_components": int(pca_cfg_save.get("n_components", 1)),
@@ -1954,7 +1964,7 @@ def _save_subject_hybrid_dspte_npz(
     window_counts = []
     save_dict: dict = {}
 
-    n_conn = 20
+    n_conn = int(params.get("n_connections", 20))
     u_max = int(params.get("u_max", 50))
 
     for trial_id in trial_ids:
@@ -2109,6 +2119,7 @@ def run_batch_hybrid_dspte(
     te_cfg = config.get("stage_e_transfer_entropy", {})
     subj_cfg = te_cfg.get("subjects", {})
     p2_cfg = te_cfg.get("phase_2", {})
+    _sfreq_batch = float(te_cfg.get("signal", {}).get("sfreq", 25.0))
 
     if subjects is None:
         experts = subj_cfg.get("Expert", [])
@@ -2195,7 +2206,7 @@ def run_batch_hybrid_dspte(
                 "mean_conditional_k0": round(mean_conditional_k0, 2) if not np.isnan(mean_conditional_k0) else None,
                 "mean_sparsity_fallback_rate": round(mean_sparsity_fallback_rate, 4) if not np.isnan(mean_sparsity_fallback_rate) else None,
                 "mean_optimal_delay_samples": round(mean_delay, 2) if not np.isnan(mean_delay) else None,
-                "mean_optimal_delay_s": round(mean_delay / 25.0, 3) if not np.isnan(mean_delay) else None,
+                "mean_optimal_delay_s": round(mean_delay / _sfreq_batch, 3) if not np.isnan(mean_delay) else None,
                 "conditioning_mode": conditioning_mode,
                 "per_connection_mean_hybrid_dspte": [round(v, 6) for v in conn_means],
                 "connection_labels": conn_labels,
@@ -2248,10 +2259,139 @@ def run_batch_hybrid_dspte(
 
 
 # ===========================================================================
-# Smoke test (run as script)
+# CLI entry point
 # ===========================================================================
 
-if __name__ == "__main__":
+def _cli_main() -> None:
+    """
+    CLI entry point for Phase 2 Hybrid-dSPTE pipeline.
+
+    Usage examples
+    --------------
+    # Single subject (recompute even if .npz exists):
+    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --subject A1 --overwrite
+
+    # Single subject (use cache if available):
+    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --subject R7
+
+    # Full batch — all 13 subjects (skip already-done):
+    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --batch
+
+    # Full batch — force recompute all:
+    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --batch --overwrite
+
+    # Smoke tests only (unit tests, no real data required):
+    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --test
+    """
+    import argparse
+    import sys as _sys_cli
+
+    _stage_e_cli = Path(__file__).parent
+    if str(_stage_e_cli) not in _sys_cli.path:
+        _sys_cli.path.insert(0, str(_stage_e_cli))
+    _code_root_cli = _stage_e_cli.parent
+    if str(_code_root_cli) not in _sys_cli.path:
+        _sys_cli.path.insert(0, str(_code_root_cli))
+
+    p = argparse.ArgumentParser(
+        description="Stage E Phase 2 — Hybrid-dSPTE per-subject pipeline and batch runner.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run one subject (recompute):
+  python3 06_hybrid_dspte.py --subject A1 --overwrite
+
+  # Run full batch (cache-first):
+  python3 06_hybrid_dspte.py --batch
+
+  # Force recompute full batch:
+  python3 06_hybrid_dspte.py --batch --overwrite
+
+  # Run unit smoke tests (no real data):
+  python3 06_hybrid_dspte.py --test
+        """,
+    )
+    p.add_argument(
+        "--batch",
+        action="store_true",
+        help="Run hybrid-dSPTE for all Expert+Novice subjects in config (R10 excluded). "
+             "Writes hybrid_te_batch_log.json to phase_2_connectivity/.",
+    )
+    p.add_argument(
+        "--subject",
+        type=str,
+        default=None,
+        metavar="ID",
+        help="Run hybrid-dSPTE for one subject (e.g. A1, R7). "
+             "Add --overwrite to force recompute if .npz already exists.",
+    )
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Recompute and overwrite even if sub-{id}_hybrid_dspte_connectivity.npz already exists.",
+    )
+    p.add_argument(
+        "--test",
+        action="store_true",
+        help="Run unit smoke tests (synthetic data, no real subjects required).",
+    )
+    args = p.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+    # If no flag given, default to smoke tests
+    run_tests = args.test or not (args.batch or args.subject)
+
+    if run_tests:
+        _run_smoke_tests()
+        return
+
+    try:
+        from utils import load_config as _lc_cli
+        config = _lc_cli()
+    except ImportError:
+        logger.error("Could not load config.yaml — ensure code/ is on PYTHONPATH.")
+        raise
+
+    if args.subject:
+        logger.info("=== Phase 2 Hybrid-dSPTE: single subject %s ===", args.subject)
+        result = process_subject_hybrid_dspte(
+            args.subject.strip(),
+            study="expert_novice",
+            config=config,
+            overwrite=args.overwrite,
+        )
+        n_wins = sum(len(v) for v in result.values()) if result else 0
+        logger.info(
+            "Done: subject=%s  trials=%d  windows=%d",
+            args.subject, len(result) if result else 0, n_wins,
+        )
+        return
+
+    if args.batch:
+        logger.info("=== Phase 2 Hybrid-dSPTE: full batch ===")
+        batch_log = run_batch_hybrid_dspte(
+            study="expert_novice",
+            subjects=None,
+            config=config,
+            overwrite=args.overwrite,
+        )
+        summary = batch_log.get("summary", {})
+        logger.info(
+            "Batch complete: OK=%d  FAILED=%d  Total=%.1f s",
+            summary.get("n_success", 0),
+            summary.get("n_failed", 0),
+            summary.get("total_elapsed_s", 0.0),
+        )
+        return
+
+
+def _run_smoke_tests() -> None:
+    """Run all Section 7.1, 7.2.1, PCA, and 7.2.2 smoke tests."""
     import time
     logging.basicConfig(
         level=logging.INFO,
@@ -2944,3 +3084,7 @@ if __name__ == "__main__":
     print("=" * 65)
     print("All Section 7.2.2 smoke tests completed.")
     print("=" * 65 + "\n")
+
+
+if __name__ == "__main__":
+    _cli_main()
