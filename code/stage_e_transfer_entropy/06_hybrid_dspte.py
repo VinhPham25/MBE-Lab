@@ -745,6 +745,13 @@ def compute_conditional_dspte_at_lag(
         Diagnostics:
         - ``'fallback'``: bool — True if sparsity fallback was triggered.
         - ``'sparsity_pct'``: float — fraction of zero cells (0–1).
+        - ``'mean_count_occupied'``: float — mean count per *occupied* cell
+          (cells where count > 0). This is the quantity that governs estimation
+          bias: structural zeros (phase combinations that narrowband hemodynamic
+          signals never visit) do not bias entropy estimates, so only occupied
+          cells matter. An adequate threshold is ≥ 3.0 (relaxed from the
+          conventional 5.0 because structural zeros dominate the empty space).
+          A WARNING is logged if this falls below the threshold.
         - ``'n_cells'``: int — total cells in joint table.
         - ``'n_valid_samples'``: int — number of t values used.
         - ``'table_shape'``: tuple — shape of joint contingency table.
@@ -801,6 +808,7 @@ def compute_conditional_dspte_at_lag(
         )
         return 0.0, {
             "fallback": False, "sparsity_pct": 0.0,
+            "mean_count_occupied": 0.0,
             "n_cells": k0 ** (n_z + 3), "n_valid_samples": 0,
             "table_shape": tuple([k0] * (n_z + 3)),
             "te_bivariate_fallback": None,
@@ -838,12 +846,29 @@ def compute_conditional_dspte_at_lag(
     n_zero_cells = int(np.sum(counts == 0))
     sparsity_pct = n_zero_cells / n_cells
 
+    # Mean count per *occupied* cell — the statistic that actually matters for
+    # bias.  Structural zeros (phase combinations that never occur for
+    # narrowband hemodynamic signals) do not bias the entropy estimate; only
+    # random zeros from insufficient sampling do.  An occupied-cell mean ≥ 3.0
+    # is considered adequate given the narrowband signal structure.
+    _occupied = counts[counts > 0]
+    mean_count_occupied = float(_occupied.mean()) if _occupied.size > 0 else 0.0
+    _ADEQUATE_MEAN_COUNT = 3.0
+    if _occupied.size > 0 and mean_count_occupied < _ADEQUATE_MEAN_COUNT:
+        logger.warning(
+            "compute_conditional_dspte_at_lag: u=%d — mean count per occupied cell "
+            "is %.2f (< %.1f adequate threshold). TE estimate may be biased. "
+            "n_occupied=%d / n_cells=%d.",
+            u, mean_count_occupied, _ADEQUATE_MEAN_COUNT,
+            int(_occupied.size), n_cells,
+        )
+
     if sparsity_pct > sparsity_threshold:
         logger.warning(
             "compute_conditional_dspte_at_lag: Sparsity fallback triggered "
-            "at lag u=%d — %.1f%% empty cells (%d/%d). "
+            "at lag u=%d — %.1f%% empty cells (%d/%d), mean_count_occupied=%.2f. "
             "Falling back to bivariate dSPTE (ignoring conditioning channels).",
-            u, sparsity_pct * 100, n_zero_cells, n_cells,
+            u, sparsity_pct * 100, n_zero_cells, n_cells, mean_count_occupied,
         )
         # Fall back to the Phase 1 bivariate dSPTE for this pair at this lag.
         # Import compute_dspte_at_lag from 01_dspte_core via importlib.
@@ -855,6 +880,7 @@ def compute_conditional_dspte_at_lag(
         return te_biv, {
             "fallback": True,
             "sparsity_pct": float(sparsity_pct),
+            "mean_count_occupied": mean_count_occupied,
             "n_cells": n_cells,
             "n_valid_samples": N_valid,
             "table_shape": table_shape,
@@ -868,6 +894,7 @@ def compute_conditional_dspte_at_lag(
     if total == 0.0:
         return 0.0, {
             "fallback": False, "sparsity_pct": float(sparsity_pct),
+            "mean_count_occupied": mean_count_occupied,
             "n_cells": n_cells, "n_valid_samples": N_valid,
             "table_shape": table_shape, "te_bivariate_fallback": None,
         }
@@ -928,13 +955,14 @@ def compute_conditional_dspte_at_lag(
 
     logger.debug(
         "compute_conditional_dspte_at_lag: u=%d  k0=%d  n_z=%d  T'=%d  "
-        "sparsity=%.1f%%  TE=%.6f",
-        u, k0, n_z, T_prime, sparsity_pct * 100, te,
+        "sparsity=%.1f%%  mean_count_occupied=%.2f  TE=%.6f",
+        u, k0, n_z, T_prime, sparsity_pct * 100, mean_count_occupied, te,
     )
 
     return te, {
         "fallback": False,
         "sparsity_pct": float(sparsity_pct),
+        "mean_count_occupied": mean_count_occupied,
         "n_cells": n_cells,
         "n_valid_samples": N_valid,
         "table_shape": table_shape,
@@ -1015,6 +1043,9 @@ def compute_conditional_dspte_multidelay(
         - ``'n_fallbacks'``: int — number of lags where bivariate fallback fired.
         - ``'fallback_lags'``: list[int] — which lags triggered fallback.
         - ``'mean_sparsity_pct'``: float — mean sparsity across all lags.
+        - ``'mean_count_occupied'``: float — mean count per occupied cell,
+          averaged across all lags. See ``compute_conditional_dspte_at_lag``
+          docstring for interpretation.
         - ``'majority_fallback'``: bool — True if > 50% of lags fell back.
         - ``'pca_compress'``: bool — whether PCA compression was used.
         - ``'pca_meta'``: dict or None — PCA diagnostics from
@@ -1067,6 +1098,7 @@ def compute_conditional_dspte_multidelay(
     n_fallbacks = 0
     fallback_lags: list[int] = []
     sparsity_vals: list[float] = []
+    mean_count_occupied_vals: list[float] = []
 
     for i, u in enumerate(range(1, u_max + 1)):
         te_u, lag_meta = compute_conditional_dspte_at_lag(
@@ -1075,6 +1107,7 @@ def compute_conditional_dspte_multidelay(
         )
         te_vs_lag[i] = te_u
         sparsity_vals.append(lag_meta["sparsity_pct"])
+        mean_count_occupied_vals.append(lag_meta["mean_count_occupied"])
         if lag_meta["fallback"]:
             n_fallbacks += 1
             fallback_lags.append(u)
@@ -1091,11 +1124,14 @@ def compute_conditional_dspte_multidelay(
             n_fallbacks, u_max,
         )
 
+    mean_count_occupied_across_lags = float(np.mean(mean_count_occupied_vals)) if mean_count_occupied_vals else 0.0
+
     logger.info(
         "compute_conditional_dspte_multidelay: max_cTE=%.6f  opt_delay=%d  "
-        "n_fallbacks=%d/%d  mean_sparsity=%.1f%%  pca=%s",
+        "n_fallbacks=%d/%d  mean_sparsity=%.1f%%  mean_count_occupied=%.2f  pca=%s",
         max_te, optimal_delay, n_fallbacks, u_max,
         float(np.mean(sparsity_vals)) * 100,
+        mean_count_occupied_across_lags,
         pca_compress,
     )
 
@@ -1103,6 +1139,7 @@ def compute_conditional_dspte_multidelay(
         "n_fallbacks": n_fallbacks,
         "fallback_lags": fallback_lags,
         "mean_sparsity_pct": float(np.mean(sparsity_vals)),
+        "mean_count_occupied": mean_count_occupied_across_lags,
         "majority_fallback": majority_fallback,
         "pca_compress": pca_compress,
         "pca_meta": pca_meta_out,
@@ -1189,6 +1226,9 @@ def compute_hybrid_dspte_matrix(
         - ``'majority_pairs_fallback'``: bool — > 50% of pairs fell back.
         - ``'pca_compress'``: bool — whether PCA conditioning was used.
         - ``'mean_sparsity_pct'``: float — mean sparsity across all pairs/lags.
+        - ``'mean_count_occupied'``: float — mean count per occupied cell,
+          averaged across all pairs and lags. See
+          ``compute_conditional_dspte_at_lag`` for interpretation.
         - ``'conditioning_mode'``: str — 'full_nz3', 'pca_1pc', or 'bivariate'.
 
     Notes
@@ -1254,6 +1294,7 @@ def compute_hybrid_dspte_matrix(
             "tau_divergence_warning": False, "te_profiles": te_profiles,
             "n_pairs_fallback": 0, "majority_pairs_fallback": False,
             "pca_compress": pca_compress, "mean_sparsity_pct": float("nan"),
+            "mean_count_occupied": float("nan"),
             "conditioning_mode": "bivariate",
         }
 
@@ -1297,6 +1338,7 @@ def compute_hybrid_dspte_matrix(
     # Step 2: Compute conditional dSPTE for each ordered pair
     # ------------------------------------------------------------------
     all_sparsity: list[float] = []
+    all_mean_count_occupied: list[float] = []
     n_pairs_fallback = 0
     n_pairs_total = 0
 
@@ -1341,6 +1383,7 @@ def compute_hybrid_dspte_matrix(
             te_profiles[(src_v, tgt_v)] = te_profile
 
             all_sparsity.append(pair_meta["mean_sparsity_pct"])
+            all_mean_count_occupied.append(pair_meta["mean_count_occupied"])
             if pair_meta["majority_fallback"]:
                 n_pairs_fallback += 1
 
@@ -1359,6 +1402,7 @@ def compute_hybrid_dspte_matrix(
         )
 
     mean_sparsity = float(np.mean(all_sparsity)) if all_sparsity else float("nan")
+    mean_count_occupied_win = float(np.mean(all_mean_count_occupied)) if all_mean_count_occupied else float("nan")
 
     # Determine conditioning mode label for diagnostics
     if n_valid < 3:
@@ -1370,9 +1414,10 @@ def compute_hybrid_dspte_matrix(
 
     logger.info(
         "compute_hybrid_dspte_matrix: k0=%d  n_valid=%d  conditioning=%s  "
-        "pairs_fallback=%d/%d  mean_sparsity=%.1f%%",
+        "pairs_fallback=%d/%d  mean_sparsity=%.1f%%  mean_count_occupied=%.2f",
         k0, n_valid, conditioning_mode, n_pairs_fallback, n_pairs_total,
         mean_sparsity * 100 if not np.isnan(mean_sparsity) else float("nan"),
+        mean_count_occupied_win if not np.isnan(mean_count_occupied_win) else float("nan"),
     )
 
     metadata = {
@@ -1389,6 +1434,7 @@ def compute_hybrid_dspte_matrix(
         "majority_pairs_fallback": majority_pairs_fallback,
         "pca_compress": pca_compress,
         "mean_sparsity_pct": mean_sparsity,
+        "mean_count_occupied": mean_count_occupied_win,
         "conditioning_mode": conditioning_mode,
     }
 
@@ -1742,6 +1788,7 @@ def process_subject_hybrid_dspte(
     # Window-level Phase 2 diagnostic accumulators (for batch log)
     all_k0_vals: list = []
     all_sparsity_vals: list = []
+    all_mean_count_occupied_vals: list = []
     all_fallback_rates: list = []
     all_delays: list = []
 
@@ -1823,6 +1870,7 @@ def process_subject_hybrid_dspte(
             # Accumulators for batch log
             all_k0_vals.append(metadata.get("k0", 0))
             all_sparsity_vals.append(metadata.get("mean_sparsity_pct", float("nan")))
+            all_mean_count_occupied_vals.append(metadata.get("mean_count_occupied", float("nan")))
             n_pairs_total = metadata.get("n_pairs_total", 1)
             n_pairs_fallback = metadata.get("n_pairs_fallback", 0)
             fallback_rate = n_pairs_fallback / n_pairs_total if n_pairs_total > 0 else 0.0
@@ -1869,6 +1917,9 @@ def process_subject_hybrid_dspte(
         "elapsed_s": round(elapsed_subject, 1),
         "mean_conditional_k0": round(float(np.mean(all_k0_vals)), 2) if all_k0_vals else float("nan"),
         "mean_sparsity_fallback_rate": round(float(np.mean(all_fallback_rates)), 4) if all_fallback_rates else float("nan"),
+        "mean_count_occupied": round(
+            float(np.nanmean(all_mean_count_occupied_vals)), 2
+        ) if all_mean_count_occupied_vals else float("nan"),
         "mean_optimal_delay_samples": round(float(np.mean(all_delays)), 2) if all_delays else float("nan"),
     }
 

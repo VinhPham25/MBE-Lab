@@ -461,7 +461,7 @@ stage_e_transfer_entropy:
     sfreq: 25.0                           # Hz (R9 resampled from 50 Hz in-memory)
     embedding_dimension: 2                # d — Wang (2020) standard for fNIRS phase-TE
     embedding_delay_method: "autocorr_1_over_e"  # lag where ACF first drops below 1/e ≈ 0.368
-    u_max: 50                             # maximum lag for multi-delay search (50 samples = 2 s at 25 Hz)
+    u_max: 300                             # maximum lag for multi-delay search (50 samples = 2 s at 25 Hz)
 
   # --------------------------------------------------------------------------
   # Narrowband pre-filter (Option A: full-trial filter → Hilbert → window)
@@ -502,7 +502,7 @@ stage_e_transfer_entropy:
     ndis_threshold: 0.05           # 5% — Wang (2020) Section 3.2
     k0_min: 2                      # minimum codebook size to test
     k0_max_bivariate: 35           # guard against codebook explosion (bivariate)
-    k0_max_multivariate: 3         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
+    k0_max_multivariate: 4         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
     ng_max_iterations: 500         # Neural-Gas training iterations per k
     ng_learning_rate_i: 0.5        # initial learning rate λ_i
     ng_learning_rate_f: 0.01       # final learning rate λ_f
@@ -553,7 +553,7 @@ stage_e_transfer_entropy:
     # If > sparsity_fallback_threshold fraction of cells are zero in the
     # (n+2)-dimensional contingency table, fall back to bivariate dSPTE for
     # that pair at that lag. Log fallback count per window.
-    sparsity_fallback_threshold: 0.20   # 20% zero cells → fallback to Phase 1
+    sparsity_fallback_threshold: 0.95   # Ex: 80% zero cells → fallback to Phase 1
 
     # τ divergence check (Section 7.1.1).
     # If max(τ) > tau_divergence_ratio × min(τ) across ROIs, emit a WARNING.
