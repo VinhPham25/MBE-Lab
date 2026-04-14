@@ -587,13 +587,13 @@ def compress_conditioners_pca(
 def symbolise_pca_conditioner(
     projected: np.ndarray,
     codebook: np.ndarray,
+    into the same symbolic alphabet as S_x and S_y, we quantise it using the
 ) -> np.ndarray:
     """
     Symbolise a PCA-projected conditioning channel using the shared codebook.
 
     The PCA projection lives in a different space than the original d-dimensional
     embedding (it has shape (T', n_components) rather than (T', d)). To map it
-    into the same symbolic alphabet as S_x and S_y, we quantise it using the
     shared Neural-Gas codebook.
 
     **Important:** The codebook was fitted in d-dimensional phase space.

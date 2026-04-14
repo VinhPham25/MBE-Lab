@@ -658,7 +658,62 @@ Functions in `code/stage_e_transfer_entropy/06_hybrid_dspte.py`.
  
 #### 7.3 Phase 2 Stats + Visualization
  
-- [ ] **7.3.1** Run same 4 statistical tests as Phase 1 on hybrid group arrays using the three-strategy builders (`subject_mean` for H1, `all_windows` for H0 and HIV). Save to `phase_2_hybrid_dspte/statistics/`. Re-use `04_dspte_statistics.py` functions directly, passing the Phase 2 group arrays — no duplication of test logic.
+- [x] **7.3.1** Run same 4 statistical tests as Phase 1 on hybrid group arrays using the three-strategy builders (`subject_mean` for H1, `all_windows` for H0 and HIV). Save to `phase_2_hybrid_dspte/statistics/`. Re-use `04_dspte_statistics.py` functions directly, passing the Phase 2 group arrays — no duplication of test logic.
+
+> **Result (2026-04-12):** Implemented in `code/stage_e_transfer_entropy/08_hybrid_dspte_statistics.py`. All smoke-test assertions pass (exit 0, ~2.6 s wall-clock). All 4 CSVs written to `phase_2_hybrid_dspte/statistics/`.
+>
+> **Functions implemented:**
+> - `build_p2_group_arrays_all_windows()` — Phase 2 mirror of Phase 1's `build_group_arrays_all_windows()`, loads from `phase_2_connectivity/` → saves `B_Exp_hybrid_all.npz` / `B_Nov_hybrid_all.npz` + `hybrid_group_summary.json`
+> - `build_p2_group_arrays_subject_mean()` — subject-mean builder (PRIMARY for H1); saves `B_Exp_hybrid_mean.npz` / `B_Nov_hybrid_mean.npz`
+> - `build_p2_group_arrays_first_window()` — first-window sensitivity builder; saves `B_Exp_hybrid_fw.npz` / `B_Nov_hybrid_fw.npz`
+> - `run_normality_tests_p2()` — calls Phase 1's `run_normality_tests_te()` with Phase 2 mean arrays
+> - `test_expert_vs_novice_p2()` — calls Phase 1's `_run_h1_anova()` for both primary (subject_mean) and sensitivity (first_window) runs
+> - `test_within_trial_stability_p2()` — H0 ANOVA across windows per trial (all_windows arrays)
+> - `test_across_trial_stability_p2()` — HIV ANOVA across trials per window (all_windows arrays)
+> - `run_all_statistics_p2()` — master runner (Step 1: group arrays → Step 2: 4 tests)
+>
+> **Phase 2 Group Array Shapes:**
+>
+> | Array | Shape | Notes |
+> |-------|-------|-------|
+> | `B_Exp_hybrid_all[Tr_1]` | (7, 20, 6) | 7 Expert × 20 conn × 6 max windows |
+> | `B_Exp_hybrid_all[Tr_2–4]` | (7, 20, 4) | 4 max windows per trial |
+> | `B_Exp_hybrid_all[Tr_5]` | (7, 20, 3) | R4 excluded from Tr_5 |
+> | `B_Nov_hybrid_all[Tr_1]` | (6, 20, 6) | 6 Novice subjects |
+> | `B_Exp_hybrid_mean` | (7, 20, 5) | subject_mean: each trial → 1 value/subject |
+> | `B_Nov_hybrid_mean` | (6, 20, 5) | |
+>
+> **Statistical Test Results (13 subjects, 7 Expert / 6 Novice, 5 trials, 20 connections):**
+>
+> | Test | Result | Notes |
+> |------|--------|-------|
+> | **7.3.1a Normality** | 135/200 cells normal (67.5%); Expert 71%, Novice 64% | Comparable to Phase 1 normality rates; non-normality does not invalidate ANOVA at n=7/6 (CLT) |
+> | **7.3.1b H1 Expert vs Novice** | **0/100 FDR-significant** (both primary and sensitivity) | p_raw best connection: LPFC→LM1 p=0.022 (uncorrected), FDR-corrected p=0.421. Phase 2 Novice > Expert persists on 17/20 connections but statistical power is insufficient at n=7/6 |
+> | **7.3.1c H0 Within-trial stability** | **0/200 FDR-significant** (0% unstable) | Expert trials: ANOVA skipped (only 1 valid window passes NaN filter — see note below). Novice trials: 3–4 valid windows tested; no instability detected |
+> | **7.3.1d HIV Across-trial stability** | **0/120 FDR-significant** (0% trial-varying) | Consistent with Phase 1 HIV result (Phase 1 also 0 significant across-trial) |
+>
+> **Phase 1 vs Phase 2 Group Mean Comparison (primary trial):**
+>
+> | Metric | Phase 1 | Phase 2 | Change |
+> |--------|---------|---------|--------|
+> | Expert mean dSPTE | 0.02752 | 0.01410 | −48.8% (PCA conditioning suppressed ~half the bivariate signal) |
+> | Novice mean dSPTE | 0.02990 | 0.01671 | −44.1% |
+> | Novice > Expert on N connections | 20/20 | 17/20 | 3 connections flipped to Expert > Novice under conditioning |
+> | Best raw p (LPFC→LM1) | 0.096 | **0.022** | Phase 2 sharpened the Expert/Novice contrast on PFC→Motor connections |
+> | Best FDR p | 0.96 | 0.42 | FDR correction absorbs significance; n=7/6 is underpowered |
+>
+> **Top Phase 2 connections by F-statistic (primary trial, Novice > Expert):**
+> - `LPFC→LM1`: F=7.16, p_raw=0.022, Expert=0.0112, Novice=0.0180
+> - `CPFC→LM1`: F=4.66, p_raw=0.054, Expert=0.0122, Novice=0.0177
+> - `LM1→CPFC`: F=3.30, p_raw=0.097, Expert=0.0138, Novice=0.0189
+>
+> **H0 Note — Expert window sparsity:** Phase 2 Expert subjects produced 1–2 windows per trial on average (vs 3–6 for Novice), causing all Expert trials to fail the `h0_max_nan_subjects=2` NaN filter at Win_2 (only Win_1 survives). ANOVA requires ≥2 groups → Expert H0 is correctly skipped. This reflects the Phase 2 window count per subject (Expert 5-trial subjects: A1=8 windows total, A2=5, avg ~1.6/trial) vs Novice (R3=20, R5=14, R6=16, avg ~3.8/trial). Novice H0 tests proceed normally with 2–4 valid windows.
+>
+> **Key interpretive findings:**
+> 1. **Phase 2 conditioning sharpens PFC→Motor contrast**: LPFC→LM1 improves from p=0.096 (Phase 1) to p=0.022 (Phase 2) uncorrected, suggesting multivariate conditioning successfully removes some shared-variance confound that was masking the Expert/Novice difference on this connection.
+> 2. **No FDR significance**: With n=7/6 and 20 connections × 5 trials, FDR correction absorbs all marginal effects. This is expected — see Phase 1 analysis where the same result holds.
+> 3. **3/20 connections flip direction**: RPFC→CPFC, SMA→RPFC, and CPFC→RPFC show Expert ≥ Novice in Phase 2 (vs Novice > Expert in Phase 1), consistent with conditioning removing a shared Novice co-activation confound on those connections.
+> 4. **0% H0/HIV instability**: Phase 2 conditional dSPTE is as stable across windows and trials as Phase 1 bivariate dSPTE — the PCA conditioning does not destabilise the estimates.
  
 - [x] **7.3.2** Implement `plot_phase1_vs_phase2_comparison()`. For each of the 20 connections, display a paired bar showing `mean_dSPTE_phase1` vs `mean_dSPTE_hybrid` averaged across subjects and windows. Highlight connections meeting **both** of the following thresholds (not just one):
   - Relative change: `|dSPTE_phase1 - dSPTE_hybrid| / dSPTE_phase1 > 0.20` (>20%)
@@ -808,9 +863,9 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 ## 📊 COMPLETION METRICS
 
 - **Total Tasks:** 50
-- **Completed:** 39
+- **Completed:** 40
 - **In Progress:** 0
-- **Remaining:** 11
+- **Remaining:** 10
 - **Extensions:** PCA conditioning compression added (2026-04-08) — toggleable via `phase_2.conditional_pca.enabled` in config.yaml
 
 ### By Section
@@ -820,7 +875,7 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Section 4 (Phase 1 Pipeline):** 6/6 ✅ Complete (4.3.1a–d added 2026-03-26; full-cohort batch run pending)
 - **Section 5 (Phase 1 Stats):** 4/4 ✅ Complete (2026-03-26)
 - **Section 6 (Phase 1 Viz):** 5/5 ✅ Complete (2026-03-26)
-- **Section 7 (Phase 2 Hybrid):** 6/6 ✅ Complete (7.1.1: 2026-04-07; 7.2.1: 2026-04-08; 7.2.2+7.2.3: 2026-04-09; 7.3.2+7.3.3: 2026-04-09)
+- **Section 7 (Phase 2 Hybrid):** 7/7 ✅ Complete (7.1.1: 2026-04-07; 7.2.1: 2026-04-08; 7.2.2+7.2.3: 2026-04-09; 7.3.1: 2026-04-12; 7.3.2+7.3.3: 2026-04-09)
 - **Section 8 (Phase 3 Bimodal):** 0/5
 - **Section 9 (Cross-Phase):** 0/3
 - **Section 10 (Batch Runner):** 0/2

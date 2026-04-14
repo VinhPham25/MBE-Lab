@@ -700,6 +700,342 @@ def plot_all_lag_profiles_phase1_vs_phase2(
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 group array helpers (shared by the two new group plots)
+# ---------------------------------------------------------------------------
+
+def _load_p2_group_mean_arrays(
+    config: Optional[dict] = None,
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str], list[str]]:
+    """
+    Load Phase 2 subject-mean group arrays built by 08_hybrid_dspte_statistics.py.
+
+    Returns
+    -------
+    B_Exp_mean : (n_exp, 20, n_trials)
+    B_Nov_mean : (n_nov, 20, n_trials)
+    conn_labels : list[str]
+    expert_ids  : list[str]
+    novice_ids  : list[str]
+    """
+    from utils_te import get_te_output_dir, get_connection_labels  # noqa
+    grp_dir = get_te_output_dir("phase_2_group", config=config)
+
+    exp_path = grp_dir / "B_Exp_hybrid_mean.npz"
+    nov_path = grp_dir / "B_Nov_hybrid_mean.npz"
+    if not exp_path.exists() or not nov_path.exists():
+        raise FileNotFoundError(
+            f"Phase 2 group arrays not found in {grp_dir}.\n"
+            "Run run_all_statistics_p2() from 08_hybrid_dspte_statistics.py first."
+        )
+
+    exp_npz = np.load(exp_path, allow_pickle=True)
+    nov_npz = np.load(nov_path, allow_pickle=True)
+    return (
+        exp_npz["data"],
+        nov_npz["data"],
+        get_connection_labels(),
+        list(exp_npz["subject_ids"]),
+        list(nov_npz["subject_ids"]),
+    )
+
+
+def _p2_group_stats(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
+    """Return (mean_20, sem_20, n) across subject axis, ignoring NaN."""
+    mean = np.nanmean(arr, axis=0)
+    n    = int(np.sum(~np.isnan(arr[:, 0])))
+    sem  = np.nanstd(arr, axis=0, ddof=1) / max(np.sqrt(n), 1)
+    return mean, sem, n
+
+
+def _vec20_to_mat5_p2(vec: np.ndarray) -> np.ndarray:
+    """Reconstruct 5×5 directed-connectivity matrix from 20-element off-diagonal vector."""
+    _off_diag = [i for i in range(25) if i not in [0, 6, 12, 18, 24]]
+    flat = np.zeros(25)
+    flat[_off_diag] = vec
+    return flat.reshape(5, 5)
+
+
+# ---------------------------------------------------------------------------
+# Group connectivity heatmap (Expert | Novice | Expert−Novice) — Phase 2
+# ---------------------------------------------------------------------------
+
+def plot_group_connectivity_matrix_p2(
+    save: bool = True,
+    config: Optional[dict] = None,
+) -> plt.Figure:
+    """
+    Side-by-side 5×5 heatmaps of group-mean hybrid-dSPTE (Expert | Novice | Difference).
+
+    Mirrors Phase 1's ``plot_group_connectivity_matrix_te_averaged()`` exactly but
+    loads Phase 2 subject-mean arrays (``B_Exp_hybrid_mean.npz`` /
+    ``B_Nov_hybrid_mean.npz``).
+
+    Layout
+    ------
+    Three panels:
+      Left   — Expert mean conditional dSPTE (viridis)
+      Centre — Novice mean conditional dSPTE (viridis, same colour scale)
+      Right  — Expert − Novice difference (RdBu_r, centred at 0)
+
+    Each cell is annotated with the numeric value.  Diagonal is masked (grey '—').
+
+    Saves to ``phase_2_hybrid_dspte/visualizations/group_hybrid_te_connectivity_matrix.png``.
+
+    Parameters
+    ----------
+    save   : bool
+    config : dict, optional
+
+    Returns
+    -------
+    fig : plt.Figure
+    """
+    if config is None:
+        config = load_config()
+
+    _EXPERT_COLOR = "#1F618D"
+    _NOVICE_COLOR = "#C0392B"
+    _CMAP_TE  = "viridis"
+
+    B_Exp_mean, B_Nov_mean, conn_labels, exp_ids, nov_ids = _load_p2_group_mean_arrays(config)
+
+    # Average over subject AND trial axes → (20,)
+    exp_mean = np.nanmean(B_Exp_mean, axis=(0, 2))
+    nov_mean = np.nanmean(B_Nov_mean, axis=(0, 2))
+    n_exp = int(np.sum(~np.isnan(B_Exp_mean[:, 0, 0])))
+    n_nov = int(np.sum(~np.isnan(B_Nov_mean[:, 0, 0])))
+
+    exp_mat  = _vec20_to_mat5_p2(exp_mean)
+    nov_mat  = _vec20_to_mat5_p2(nov_mean)
+    diff_mat = exp_mat - nov_mat
+
+    diag_mask = np.eye(5, dtype=bool)
+    exp_d  = np.where(diag_mask, np.nan, exp_mat)
+    nov_d  = np.where(diag_mask, np.nan, nov_mat)
+    diff_d = np.where(diag_mask, np.nan, diff_mat)
+
+    vmax_abs  = max(float(np.nanmax([np.nanmax(np.abs(exp_d)), np.nanmax(np.abs(nov_d))])), 1e-6)
+    diff_abs  = max(float(np.nanmax(np.abs(diff_d))), 1e-6)
+
+    fig, axes = plt.subplots(1, 3, figsize=(15.5, 5.2))
+
+    panels = [
+        (axes[0], exp_d,  0,         vmax_abs, _CMAP_TE,  f"Expert (n={n_exp})",  _EXPERT_COLOR, "cdSPTE"),
+        (axes[1], nov_d,  0,         vmax_abs, _CMAP_TE,  f"Novice (n={n_nov})",  _NOVICE_COLOR, "cdSPTE"),
+        (axes[2], diff_d, -diff_abs, diff_abs, "RdBu_r",  "Expert − Novice",      "#555555",     "Δ cdSPTE"),
+    ]
+
+    for ax, mat, vmin, vmax, cmap, title, title_color, cbar_lbl in panels:
+        im = ax.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
+
+        for r in range(5):
+            for c in range(5):
+                if r == c:
+                    ax.add_patch(plt.Rectangle(
+                        (c - 0.5, r - 0.5), 1, 1,
+                        facecolor="#CCCCCC", edgecolor="none", zorder=2,
+                    ))
+                    ax.text(c, r, "—", ha="center", va="center",
+                            fontsize=8, color="#888888", zorder=3)
+                else:
+                    val = mat[r, c]
+                    if not np.isnan(val):
+                        if cmap == "RdBu_r":
+                            txt_color = "white" if abs(val) > 0.55 * diff_abs else "black"
+                        else:
+                            txt_color = "white" if val > 0.65 * vmax else "black"
+                        ax.text(c, r, f"{val:.3f}", ha="center", va="center",
+                                fontsize=7.5, color=txt_color, zorder=3, fontweight="bold")
+
+        ax.set_xticks(range(5))
+        ax.set_yticks(range(5))
+        ax.set_xticklabels(_ROI_NAMES, fontsize=9)
+        ax.set_yticklabels(_ROI_NAMES, fontsize=9)
+        ax.set_xlabel("Target ROI", fontsize=9)
+        ax.set_ylabel("Source ROI", fontsize=9)
+        ax.set_xticks(np.arange(-0.5, 5, 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, 5, 1), minor=True)
+        ax.grid(which="minor", color="white", linewidth=1.2, zorder=4)
+        ax.tick_params(which="minor", length=0)
+        ax.set_title(title, fontsize=11, fontweight="bold", color=title_color, pad=6)
+
+        cb = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, shrink=0.85)
+        cb.set_label(cbar_lbl, fontsize=8)
+
+    fig.suptitle(
+        "Group-Mean Conditional dSPTE Connectivity Matrix — Phase 2 Hybrid  [All-Trial Average]\n"
+        "(row = Source, col = Target;  diagonal masked;  subject_mean strategy)",
+        fontsize=11, y=1.02,
+    )
+    fig.tight_layout()
+
+    if save:
+        out = _p2_viz_dir(config) / "group_hybrid_te_connectivity_matrix.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        logger.info("Saved %s", out.name)
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Expert vs Novice bar chart — Phase 2
+# ---------------------------------------------------------------------------
+
+def plot_group_te_comparison_p2(
+    h1_df=None,
+    save: bool = True,
+    config: Optional[dict] = None,
+) -> plt.Figure:
+    """
+    Expert vs Novice bar chart of mean conditional dSPTE per connection (Phase 2).
+
+    Mirrors Phase 1's ``plot_group_te_comparison_averaged()`` but loads Phase 2
+    group arrays.  Three visual layers are stacked for comparison:
+
+    1. **Paired bars** — Expert (steel blue) and Novice (brick red), height =
+       subject-mean TE averaged across all trials, error bars = SEM across subjects.
+
+    2. **FDR significance markers** — ``*`` for connections that are FDR-significant
+       under the primary (subject_mean) strategy from the Phase 2 H1 CSV.  ``†`` for
+       connections significant only in the sensitivity (first_window) strategy.
+       Loaded from ``phase_2_hybrid_dspte/statistics/H1_expert_vs_novice.csv``
+       automatically if ``h1_df=None``.
+
+    3. **Phase 1 reference dots** — small dots above each group's bar showing the
+       corresponding Phase 1 bivariate dSPTE value, so the viewer can see how much
+       the conditioning suppressed each connection.
+
+    Saves to ``phase_2_hybrid_dspte/visualizations/group_hybrid_te_comparison.png``.
+
+    Parameters
+    ----------
+    h1_df  : pd.DataFrame or None  — Phase 2 H1 CSV; auto-loaded if None
+    save   : bool
+    config : dict, optional
+
+    Returns
+    -------
+    fig : plt.Figure
+    """
+    import pandas as pd
+    from matplotlib.lines import Line2D
+
+    if config is None:
+        config = load_config()
+
+    _EXPERT_COLOR  = "#1F618D"
+    _NOVICE_COLOR  = "#C0392B"
+    _P1_DOT_EXPERT = "#A9CCE3"   # pale blue — Phase 1 expert reference dot
+    _P1_DOT_NOVICE = "#F1948A"   # pale red  — Phase 1 novice reference dot
+
+    B_Exp_mean, B_Nov_mean, conn_labels, exp_ids, nov_ids = _load_p2_group_mean_arrays(config)
+
+    # Average over trial axis for each subject → (n_subs, 20)
+    exp_subj = np.nanmean(B_Exp_mean, axis=2)
+    nov_subj = np.nanmean(B_Nov_mean, axis=2)
+
+    exp_mean, exp_sem, n_exp = _p2_group_stats(exp_subj)
+    nov_mean, nov_sem, n_nov = _p2_group_stats(nov_subj)
+
+    # ------------------------------------------------------------------
+    # Phase 1 reference means (from Phase 1 group arrays, if available)
+    # ------------------------------------------------------------------
+    p1_exp_mean = np.full(20, np.nan)
+    p1_nov_mean = np.full(20, np.nan)
+    try:
+        from utils_te import get_te_output_dir  # noqa
+        grp_dir_p1 = get_te_output_dir("phase_1_group", config=config, create=False)
+        p1_exp_npz = np.load(grp_dir_p1 / "B_Exp_dspte_mean.npz", allow_pickle=True)
+        p1_nov_npz = np.load(grp_dir_p1 / "B_Nov_dspte_mean.npz", allow_pickle=True)
+        p1_exp_mean = np.nanmean(np.nanmean(p1_exp_npz["data"], axis=2), axis=0)
+        p1_nov_mean = np.nanmean(np.nanmean(p1_nov_npz["data"], axis=2), axis=0)
+        logger.info("Loaded Phase 1 reference means for comparison dots.")
+    except Exception as exc:
+        logger.warning("Could not load Phase 1 group arrays for reference dots: %s", exc)
+
+    # ------------------------------------------------------------------
+    # Load Phase 2 H1 CSV for FDR significance markers
+    # ------------------------------------------------------------------
+    if h1_df is None:
+        from utils_te import get_te_output_dir  # noqa
+        stats_dir = get_te_output_dir("phase_2_statistics", config=config, create=False)
+        h1_path = stats_dir / "H1_expert_vs_novice.csv"
+        if h1_path.exists():
+            h1_df = pd.read_csv(h1_path)
+
+    sig_primary: set = set()
+    sig_fw_only: set = set()
+    if h1_df is not None:
+        sig_primary = set(h1_df.loc[h1_df["significant"] == True, "connection"].tolist())
+        if "significant_fw" in h1_df.columns:
+            sig_fw = set(h1_df.loc[h1_df["significant_fw"] == True, "connection"].tolist())
+            sig_fw_only = sig_fw - sig_primary
+
+    # ------------------------------------------------------------------
+    # Plot
+    # ------------------------------------------------------------------
+    n_conn = len(conn_labels)
+    x      = np.arange(n_conn)
+    bar_w  = 0.38
+
+    fig, ax = plt.subplots(figsize=(15, 5.5))
+
+    ax.bar(x - bar_w / 2, exp_mean, bar_w,
+           color=_EXPERT_COLOR, alpha=0.88, label=f"Expert (n={n_exp})  Phase 2",
+           yerr=exp_sem, capsize=3, error_kw={"elinewidth": 1.2})
+    ax.bar(x + bar_w / 2, nov_mean, bar_w,
+           color=_NOVICE_COLOR, alpha=0.88, label=f"Novice (n={n_nov})  Phase 2",
+           yerr=nov_sem, capsize=3, error_kw={"elinewidth": 1.2})
+
+    # Phase 1 reference dots
+    p1_has_data = not (np.all(np.isnan(p1_exp_mean)) and np.all(np.isnan(p1_nov_mean)))
+    if p1_has_data:
+        ax.scatter(x - bar_w / 2, p1_exp_mean,
+                   marker="o", s=22, color=_P1_DOT_EXPERT, zorder=5,
+                   label="Expert Phase 1 (reference)", edgecolors="#5B9BD5", linewidths=0.7)
+        ax.scatter(x + bar_w / 2, p1_nov_mean,
+                   marker="o", s=22, color=_P1_DOT_NOVICE, zorder=5,
+                   label="Novice Phase 1 (reference)", edgecolors="#C0392B", linewidths=0.7)
+
+    # FDR significance annotations
+    y_max_all = float(np.nanmax(
+        np.concatenate([exp_mean + exp_sem, nov_mean + nov_sem])
+    )) if n_conn > 0 else 0.05
+
+    for i, lbl in enumerate(conn_labels):
+        y_top = max(exp_mean[i] + exp_sem[i], nov_mean[i] + nov_sem[i]) + 0.04 * y_max_all
+        if lbl in sig_primary:
+            ax.text(i, y_top, "*", ha="center", va="bottom",
+                    fontsize=14, fontweight="bold", color="#E74C3C")
+        elif lbl in sig_fw_only:
+            ax.text(i, y_top, "†", ha="center", va="bottom",
+                    fontsize=12, fontweight="bold", color="#E67E22")
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(conn_labels, rotation=55, ha="right", fontsize=8)
+    ax.set_ylabel("Conditional dSPTE (nats)", fontsize=11)
+    ax.set_title(
+        "Expert vs. Novice — Phase 2 Conditional dSPTE  [All-Trial Average, subject_mean strategy]\n"
+        "Dots = Phase 1 bivariate reference  |  * FDR-sig primary  |  † FDR-sig sensitivity  |  BH α=0.05",
+        fontsize=11, fontweight="bold", pad=8,
+    )
+    ax.legend(fontsize=9, framealpha=0.9, loc="upper right")
+    ax.set_ylim(bottom=0)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.yaxis.grid(True, alpha=0.35, linewidth=0.7)
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+
+    if save:
+        out = _p2_viz_dir(config) / "group_hybrid_te_comparison.png"
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        logger.info("Saved %s", out.name)
+
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Main runner — generate all Section 7.3.2 + 7.3.3 visualizations
 # ---------------------------------------------------------------------------
 
@@ -732,7 +1068,33 @@ def run_all_phase2_visualizations(
     viz_dir = _p2_viz_dir(config)
     lag_dir = _lag_profile_dir(config)
 
-    # 7.3.2 — group comparison bar chart
+    # 7.3.1 — group connectivity matrix (Expert | Novice | Difference)
+    matrix_path = viz_dir / "group_hybrid_te_connectivity_matrix.png"
+    if overwrite or not matrix_path.exists():
+        logger.info("Generating 7.3.1 group matrix: Expert | Novice | Expert−Novice …")
+        try:
+            fig = plot_group_connectivity_matrix_p2(save=True, config=config)
+            plt.close(fig)
+            logger.info("Group matrix saved: %s", matrix_path)
+        except Exception as exc:
+            logger.error("Group matrix failed: %s", exc)
+    else:
+        logger.info("Group matrix already exists (overwrite=False): %s", matrix_path)
+
+    # 7.3.1 — Expert vs Novice bar chart
+    bar_path = viz_dir / "group_hybrid_te_comparison.png"
+    if overwrite or not bar_path.exists():
+        logger.info("Generating 7.3.1 Expert vs Novice bar chart …")
+        try:
+            fig = plot_group_te_comparison_p2(save=True, config=config)
+            plt.close(fig)
+            logger.info("Group bar chart saved: %s", bar_path)
+        except Exception as exc:
+            logger.error("Group bar chart failed: %s", exc)
+    else:
+        logger.info("Group bar chart already exists (overwrite=False): %s", bar_path)
+
+    # 7.3.2 — group comparison bar chart (Phase 1 vs Phase 2)
     comparison_path = viz_dir / "phase1_vs_phase2_comparison.png"
     if overwrite or not comparison_path.exists():
         logger.info("Generating 7.3.2: Phase 1 vs Phase 2 comparison bar chart …")
@@ -841,8 +1203,20 @@ Examples:
     p.add_argument(
         "--batch",
         action="store_true",
-        help="Run all Phase 2 visualizations: 7.3.2 comparison chart + 20 lag "
-             "profiles for the subject/trial/window specified by --subject/--trial/--window.",
+        help="Run all Phase 2 visualizations: group matrix, group bar chart, "
+             "7.3.2 comparison chart + 20 lag profiles for --subject/--trial/--window.",
+    )
+    p.add_argument(
+        "--group-matrix",
+        dest="group_matrix",
+        action="store_true",
+        help="Generate Phase 2 group connectivity matrix (Expert | Novice | Difference).",
+    )
+    p.add_argument(
+        "--group-bar",
+        dest="group_bar",
+        action="store_true",
+        help="Generate Phase 2 Expert vs Novice bar chart with Phase 1 reference dots.",
     )
     p.add_argument(
         "--comparison",
@@ -987,12 +1361,43 @@ Examples:
         print("=== Unit smoke tests complete ===\n")
         return
 
-    if not any([args.batch, args.comparison, args.lag_profiles]):
+    if not any([args.batch, args.comparison, args.lag_profiles,
+                args.group_matrix, args.group_bar]):
         p.print_help()
         return
 
     # ------------------------------------------------------------------
-    # --comparison  — 7.3.2 group bar chart
+    # --group-matrix  — Phase 2 group connectivity heatmap
+    # ------------------------------------------------------------------
+    if args.group_matrix or args.batch:
+        print("\n--- Phase 2 Group Connectivity Matrix (Expert | Novice | Difference) ---")
+        t0 = _time.perf_counter()
+        try:
+            fig = plot_group_connectivity_matrix_p2(save=True, config=cfg)
+            plt.close(fig)
+            print(f"  Done in {_time.perf_counter() - t0:.1f} s")
+        except FileNotFoundError as e:
+            print(f"  [SKIP — data not found] {e}")
+        except Exception as e:
+            logger.error("Group matrix failed: %s", e)
+
+    # ------------------------------------------------------------------
+    # --group-bar  — Phase 2 Expert vs Novice bar chart
+    # ------------------------------------------------------------------
+    if args.group_bar or args.batch:
+        print("\n--- Phase 2 Expert vs Novice Bar Chart ---")
+        t0 = _time.perf_counter()
+        try:
+            fig = plot_group_te_comparison_p2(save=True, config=cfg)
+            plt.close(fig)
+            print(f"  Done in {_time.perf_counter() - t0:.1f} s")
+        except FileNotFoundError as e:
+            print(f"  [SKIP — data not found] {e}")
+        except Exception as e:
+            logger.error("Group bar chart failed: %s", e)
+
+    # ------------------------------------------------------------------
+    # --comparison  — 7.3.2 Phase 1 vs Phase 2 comparison bar chart
     # ------------------------------------------------------------------
     if args.comparison or args.batch:
         print("\n--- 7.3.2: Phase 1 vs Phase 2 comparison bar chart ---")
