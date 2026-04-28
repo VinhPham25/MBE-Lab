@@ -385,7 +385,7 @@ stage_d_granger:
     # --------------------------------------------------------------------------
     band_avg:
       f_low: 0.01          # Hz — lower bound of hemodynamic band
-      f_high: 0.07         # Hz — upper bound
+      f_high: 0.10         # Hz — upper bound
 
     # --------------------------------------------------------------------------
     # Signal units note
@@ -480,8 +480,8 @@ stage_e_transfer_entropy:
   # --------------------------------------------------------------------------
   narrowband_filter:
     enabled: true
-    f_lo: 0.04      # Hz — high-pass cutoff (Lobier 2014 default; change to 0.01 for Wang 2020)
-    f_hi: 0.15      # Hz — low-pass  cutoff (Lobier 2014 default; change to 0.10 for Wang 2020)
+    f_lo: 0.01      # Hz — high-pass cutoff (Lobier 2014 default; change to 0.01 for Wang 2020)
+    f_hi: 0.10      # Hz — low-pass  cutoff (Lobier 2014 default; change to 0.10 for Wang 2020)
     order: 3        # Butterworth order (effective order = 2×order after zero-phase filtfilt)
 
   # --------------------------------------------------------------------------
@@ -502,7 +502,7 @@ stage_e_transfer_entropy:
     ndis_threshold: 0.05           # 5% — Wang (2020) Section 3.2
     k0_min: 2                      # minimum codebook size to test
     k0_max_bivariate: 35           # guard against codebook explosion (bivariate)
-    k0_max_multivariate: 4         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
+    k0_max_multivariate: 2         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
     ng_max_iterations: 500         # Neural-Gas training iterations per k
     ng_learning_rate_i: 0.5        # initial learning rate λ_i
     ng_learning_rate_f: 0.01       # final learning rate λ_f

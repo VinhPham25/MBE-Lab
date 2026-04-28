@@ -128,6 +128,7 @@ def _stats_cfg(config: Optional[dict] = None) -> dict:
 
 
 def _load_connection_labels(config: Optional[dict] = None) -> list:
+    """Return canonical 20 directed connection labels."""
     from utils_te import get_connection_labels  # noqa
     return get_connection_labels()
 
@@ -138,6 +139,7 @@ def _load_connection_labels(config: Optional[dict] = None) -> list:
 
 class _NumpyEncoder(json.JSONEncoder):
     def default(self, obj):
+        """Convert NumPy scalar/array objects into JSON-serialisable types."""
         if isinstance(obj, np.integer):
             return int(obj)
         if isinstance(obj, np.floating):
@@ -160,6 +162,7 @@ def _load_p2_npz_lists(
     but looks for ``sub-{id}_hybrid_dspte_connectivity.npz``.
     """
     def _load(subject_ids):
+        """Load one list of subject `.npz` files, returning `None` when missing."""
         results = []
         for sid in subject_ids:
             fpath = conn_dir / f"sub-{sid}_hybrid_dspte_connectivity.npz"
@@ -182,6 +185,21 @@ def _load_group_p2_npz_as_dict(path: Path) -> dict:
 
 
 def _p2_window_summary(subject_ids, npz_list):
+    """
+    Summarise available trial/window counts per subject.
+
+    Parameters
+    ----------
+    subject_ids : list[str]
+        Subjects corresponding to `npz_list`.
+    npz_list : list[dict | None]
+        Loaded per-subject dicts or `None` for missing files.
+
+    Returns
+    -------
+    dict
+        Mapping subject -> status/shape summary used in `hybrid_group_summary.json`.
+    """
     out = {}
     for sid, d in zip(subject_ids, npz_list):
         if d is None:
@@ -419,6 +437,7 @@ def build_p2_group_arrays_subject_mean(
     n_trials = _N_TRIALS_CANONICAL
 
     def _build_mean_array(subject_ids, npz_list):
+        """Build `(n_subjects, 20, n_trials)` array using per-trial window means."""
         n_subs = len(subject_ids)
         arr = np.full((n_subs, n_conn, n_trials), np.nan)
         for sub_idx, npz_data in enumerate(npz_list):
@@ -518,6 +537,7 @@ def build_p2_group_arrays_first_window(
     n_trials = _N_TRIALS_CANONICAL
 
     def _build_fw_array(subject_ids, npz_list):
+        """Build `(n_subjects, 20, n_trials)` array using Win_1 only."""
         n_subs = len(subject_ids)
         arr = np.full((n_subs, n_conn, n_trials), np.nan)
         for sub_idx, npz_data in enumerate(npz_list):
@@ -762,9 +782,11 @@ def test_within_trial_stability_p2(
     n_conn = len(conn_labels)
 
     def _round(v, n=6):
+        """Round numeric values for CSV output while preserving NaNs."""
         return round(float(v), n) if not np.isnan(v) else np.nan
 
     def _apply_fdr(p_values):
+        """Apply FDR correction on valid p-values; keep NaN slots unchanged."""
         p_fdr = np.full_like(p_values, np.nan)
         q_vals = np.full_like(p_values, np.nan)
         valid = ~np.isnan(p_values)
@@ -896,9 +918,11 @@ def test_across_trial_stability_p2(
     all_trial_ids = sorted(set(B_Exp.keys()) | set(B_Nov.keys()))
 
     def _round(v, n=6):
+        """Round numeric values for CSV output while preserving NaNs."""
         return round(float(v), n) if not np.isnan(v) else np.nan
 
     def _apply_fdr(p_values):
+        """Apply FDR correction on valid p-values; keep NaN slots unchanged."""
         p_fdr = np.full_like(p_values, np.nan)
         q_vals = np.full_like(p_values, np.nan)
         valid = ~np.isnan(p_values)

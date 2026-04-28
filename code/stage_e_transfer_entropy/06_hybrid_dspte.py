@@ -587,7 +587,6 @@ def compress_conditioners_pca(
 def symbolise_pca_conditioner(
     projected: np.ndarray,
     codebook: np.ndarray,
-    into the same symbolic alphabet as S_x and S_y, we quantise it using the
 ) -> np.ndarray:
     """
     Symbolise a PCA-projected conditioning channel using the shared codebook.

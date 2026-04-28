@@ -84,6 +84,7 @@ _ABS_THRESHOLD = 0.005    # |Δ| > 0.005 nat → scientifically meaningful magni
 # ---------------------------------------------------------------------------
 
 def _p2_viz_dir(config: Optional[dict] = None) -> Path:
+    """Return Phase 2 visualization output directory (create if missing)."""
     from utils_te import get_te_output_dir  # noqa
     d = get_te_output_dir("phase_2_viz", config=config)
     d.mkdir(parents=True, exist_ok=True)
@@ -91,16 +92,19 @@ def _p2_viz_dir(config: Optional[dict] = None) -> Path:
 
 
 def _p2_conn_dir(config: Optional[dict] = None) -> Path:
+    """Return Phase 2 per-subject connectivity directory."""
     from utils_te import get_te_output_dir  # noqa
     return get_te_output_dir("phase_2_connectivity", config=config)
 
 
 def _p1_conn_dir(config: Optional[dict] = None) -> Path:
+    """Return Phase 1 per-subject connectivity directory."""
     from utils_te import get_te_output_dir  # noqa
     return get_te_output_dir("phase_1_connectivity", config=config)
 
 
 def _lag_profile_dir(config: Optional[dict] = None) -> Path:
+    """Return lag-profile comparison subdirectory under Phase 2 visualizations."""
     d = _p2_viz_dir(config) / "lag_profile_comparison"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -186,11 +190,13 @@ def _subject_mean_per_connection(
 
 
 def _get_connection_labels(config: Optional[dict] = None) -> list[str]:
+    """Return canonical 20 directed connection labels."""
     from utils_te import get_connection_labels  # noqa
     return get_connection_labels()
 
 
 def _get_subject_group(subject_id: str, config: Optional[dict] = None) -> str:
+    """Return subject group label ('Expert' or 'Novice')."""
     from utils_te import get_subject_group  # noqa
     return get_subject_group(subject_id, config=config)
 
@@ -1325,10 +1331,13 @@ Examples:
 
             class _FakeNpz:
                 def __init__(self, d):
+                    """Store dict-like arrays for smoke-test compatibility."""
                     self._d = d
                 def __getitem__(self, k):
+                    """Return array for key `k`."""
                     return self._d[k]
                 def __contains__(self, k):
+                    """Return True when key `k` exists."""
                     return k in self._d
 
             mv = _subject_mean_per_connection(_FakeNpz(synthetic))
