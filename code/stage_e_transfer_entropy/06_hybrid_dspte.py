@@ -1564,6 +1564,7 @@ def _compute_windowed_hybrid_dspte(
     config: "dict | None" = None,
     subject_id: str = "",
     trial_id: str = "",
+    first_window_only: bool = False,
 ) -> dict:
     """
     Sliding window loop for Phase 2 hybrid-dSPTE.
@@ -1593,6 +1594,8 @@ def _compute_windowed_hybrid_dspte(
         Parsed config.yaml.
     subject_id, trial_id : str
         For logging only.
+    first_window_only : bool
+        If True, process only the first available window for this trial.
 
     Returns
     -------
@@ -1654,6 +1657,9 @@ def _compute_windowed_hybrid_dspte(
             elapsed_win,
         )
 
+        if first_window_only:
+            break
+
     return windows
 
 
@@ -1662,6 +1668,7 @@ def process_subject_hybrid_dspte(
     study: str = "expert_novice",
     config: "_Optional_p2[dict]" = None,
     overwrite: bool = True,
+    first_window_only: bool = False,
 ) -> dict:
     """
     Run the full Phase 2 Hybrid-dSPTE pipeline for one subject.
@@ -1691,6 +1698,8 @@ def process_subject_hybrid_dspte(
         Parsed config.yaml. Loaded if None.
     overwrite : bool
         If False and the output .npz already exists, return cached result.
+    first_window_only : bool
+        If True, process only the first available window per trial.
 
     Returns
     -------
@@ -1839,6 +1848,7 @@ def process_subject_hybrid_dspte(
             config=config,
             subject_id=subject_id,
             trial_id=trial_id,
+            first_window_only=first_window_only,
         )
 
         trial_result: dict = {}
@@ -1913,6 +1923,7 @@ def process_subject_hybrid_dspte(
         "narrowband_filter_f_hi": filt_f_hi if filter_enabled else None,
         "narrowband_filter_order": filt_order if filter_enabled else None,
         "n_connections": 20,
+        "first_window_only": bool(first_window_only),
         "elapsed_s": round(elapsed_subject, 1),
         "mean_conditional_k0": round(float(np.mean(all_k0_vals)), 2) if all_k0_vals else float("nan"),
         "mean_sparsity_fallback_rate": round(float(np.mean(all_fallback_rates)), 4) if all_fallback_rates else float("nan"),
@@ -2125,6 +2136,7 @@ def run_batch_hybrid_dspte(
     subjects: "_Optional_p2[list[str]]" = None,
     config: "_Optional_p2[dict]" = None,
     overwrite: bool = False,
+    first_window_only: bool = False,
 ) -> dict:
     """
     Batch-process all subjects with Phase 2 Hybrid-dSPTE.
@@ -2145,6 +2157,8 @@ def run_batch_hybrid_dspte(
         Parsed config.yaml.
     overwrite : bool
         If False, skip subjects whose .npz already exists.
+    first_window_only : bool
+        If True, process only the first available window per trial.
 
     Returns
     -------
@@ -2188,6 +2202,7 @@ def run_batch_hybrid_dspte(
         "study": study,
         "phase": "phase_2_hybrid_dspte",
         "n_subjects": len(subjects),
+        "first_window_only": bool(first_window_only),
         "subjects": {},
     }
 
@@ -2200,7 +2215,11 @@ def run_batch_hybrid_dspte(
 
         try:
             result = process_subject_hybrid_dspte(
-                subject_id, study=study, config=config, overwrite=overwrite
+                subject_id,
+                study=study,
+                config=config,
+                overwrite=overwrite,
+                first_window_only=first_window_only,
             )
 
             if result is None:
@@ -2381,6 +2400,11 @@ Examples:
         help="Recompute and overwrite even if sub-{id}_hybrid_dspte_connectivity.npz already exists.",
     )
     p.add_argument(
+        "--first-window-only",
+        action="store_true",
+        help="Process only the first available window per trial (matches IDTxl fast-compare mode).",
+    )
+    p.add_argument(
         "--test",
         action="store_true",
         help="Run unit smoke tests (synthetic data, no real subjects required).",
@@ -2414,6 +2438,7 @@ Examples:
             study="expert_novice",
             config=config,
             overwrite=args.overwrite,
+            first_window_only=args.first_window_only,
         )
         n_wins = sum(len(v) for v in result.values()) if result else 0
         logger.info(
@@ -2429,6 +2454,7 @@ Examples:
             subjects=None,
             config=config,
             overwrite=args.overwrite,
+            first_window_only=args.first_window_only,
         )
         summary = batch_log.get("summary", {})
         logger.info(

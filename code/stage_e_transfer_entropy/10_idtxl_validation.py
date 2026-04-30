@@ -537,7 +537,8 @@ def run_subject_idtxl(
     all_meta: list = []
 
     for trial_idx, (start_s, end_s) in enumerate(segments):
-        trial_key = f"Trial_{trial_idx + 1}"
+        # Match Phase 2 trial key schema for direct compare alignment.
+        trial_key = f"Tr_{trial_idx + 1}"
         trial_data = Data_Reg[:, start_s:end_s]
         if trial_data.shape[1] < win_len:
             continue
@@ -624,9 +625,6 @@ def run_subject_idtxl(
         else:
             conn_array = np.empty((len(conn_labels), 0), dtype=np.float64)
         save_dict[f"{trial_key}_connectivity"] = conn_array
-
-        if first_window_only:
-            break
 
     # Save .npz
     trial_ids = sorted(
@@ -748,6 +746,18 @@ def run_batch_idtxl(
         else:
             mean_te = 0.0
             n_sig = 0
+        if n_wins == 0:
+            logger.warning(
+                "run_batch_idtxl [%s]: no valid windows were produced (elapsed=%.1f s).",
+                subject_id, elapsed_subj,
+            )
+            return {
+                "status": "FAILED",
+                "error": "no_valid_windows",
+                "n_trials": len(result),
+                "n_windows_total": 0,
+                "elapsed_s": elapsed_subj,
+            }
         logger.info(
             "run_batch_idtxl [%s]: OK — trials=%d  wins=%d  mean_te=%.4f  n_sig=%d  elapsed=%.1f s",
             subject_id, len(result), n_wins, mean_te, n_sig, elapsed_subj,
@@ -949,7 +959,17 @@ def compare_symbolic_vs_idtxl(
 
         for trial_id in trial_ids:
             p2_conn = p2_data.get(f"{trial_id}_connectivity")
+
+            # Primary: exact trial key match.
             it_conn = it_data.get(f"{trial_id}_connectivity")
+            # Backward compatibility for legacy IDTxl files using Trial_* keys.
+            if it_conn is None and trial_id.startswith("Tr_"):
+                legacy_trial_id = f"Trial_{trial_id.split('_', 1)[1]}"
+                it_conn = it_data.get(f"{legacy_trial_id}_connectivity")
+            # Backward compatibility in the opposite direction.
+            if it_conn is None and trial_id.startswith("Trial_"):
+                alt_trial_id = f"Tr_{trial_id.split('_', 1)[1]}"
+                it_conn = it_data.get(f"{alt_trial_id}_connectivity")
             if p2_conn is None or it_conn is None:
                 continue
             if p2_conn.ndim != 2 or it_conn.ndim != 2:
@@ -1325,6 +1345,9 @@ def _cli_main() -> None:
                         help="Override IDTxl max_lag_sources for speed control")
     parser.add_argument("--idtxl-num-threads", type=str, default=None,
                         help="Override IDTxl estimator num_threads (e.g., 1, 2, USE_ALL)")
+    parser.add_argument("--idtxl-n-perm", type=int, default=None,
+                        help="Override all IDTxl permutation counts (max/min/omnibus/max_seq). "
+                             "Must be > 1/alpha (for alpha=0.05, use >=21).")
     parser.add_argument("--idtxl-fast", action="store_true",
                         help="Use faster IDTxl permutation settings for exploratory runs")
     args = parser.parse_args()
@@ -1355,11 +1378,25 @@ def _cli_main() -> None:
     if args.idtxl_num_threads is not None:
         v = args.idtxl_num_threads.strip()
         idtxl_cfg["num_threads"] = int(v) if v.lstrip("-").isdigit() else v
+    if args.idtxl_n_perm is not None:
+        n_perm = int(max(1, args.idtxl_n_perm))
+        # IDTxl requires 1/n_perm < alpha (strict). With alpha=0.05, n_perm=20 fails.
+        if n_perm <= 20:
+            logger.warning(
+                "--idtxl-n-perm=%d is too small for alpha=0.05; bumping to 21.",
+                n_perm,
+            )
+            n_perm = 21
+        idtxl_cfg["n_perm_max_stat"] = n_perm
+        idtxl_cfg["n_perm_min_stat"] = n_perm
+        idtxl_cfg["n_perm_omnibus"] = n_perm
+        idtxl_cfg["n_perm_max_seq"] = n_perm
     if args.idtxl_fast:
-        idtxl_cfg["n_perm_max_stat"] = 20
-        idtxl_cfg["n_perm_min_stat"] = 20
-        idtxl_cfg["n_perm_omnibus"] = 40
-        idtxl_cfg["n_perm_max_seq"] = 20
+        # Keep "fast" but valid for alpha=0.05 (strictly requires >20 perms).
+        idtxl_cfg["n_perm_max_stat"] = 21
+        idtxl_cfg["n_perm_min_stat"] = 21
+        idtxl_cfg["n_perm_omnibus"] = 41
+        idtxl_cfg["n_perm_max_seq"] = 21
 
     if args.subject:
         logger.info("=== IDTxl Validation: subject %s ===", args.subject)

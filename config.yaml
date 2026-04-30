@@ -480,6 +480,8 @@ stage_e_transfer_entropy:
   # --------------------------------------------------------------------------
   narrowband_filter:
     enabled: true
+    apply_to_phase: true   # Phase branch toggle (default: true when enabled)
+    apply_to_amplitude: false  # Amplitude branch toggle (default: false; use raw HbO amplitude)
     f_lo: 0.01      # Hz — high-pass cutoff (Lobier 2014 default; change to 0.01 for Wang 2020)
     f_hi: 0.10      # Hz — low-pass  cutoff (Lobier 2014 default; change to 0.10 for Wang 2020)
     order: 3        # Butterworth order (effective order = 2×order after zero-phase filtfilt)
@@ -600,8 +602,8 @@ stage_e_transfer_entropy:
   # --------------------------------------------------------------------------
   phase_3:
     fusion_mode: "fixed"    # "fixed" = use weights below; "optimise" = PSO on training windows
-    w_phase: 0.7            # weight for phase-branch TE
-    w_amplitude: 0.3        # weight for amplitude-branch TE
+    w_phase: 0.0            # weight for phase-branch TE
+    w_amplitude: 1        # weight for amplitude-branch TE
 
   # --------------------------------------------------------------------------
   # Output subdirectories (relative to output_root/expert-novice/)
