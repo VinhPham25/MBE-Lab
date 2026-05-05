@@ -606,6 +606,39 @@ stage_e_transfer_entropy:
     w_amplitude: 1        # weight for amplitude-branch TE
 
   # --------------------------------------------------------------------------
+  # Phase 4 — Multivariate conditional amplitude dSPTE parameters
+  #
+  # This phase replaces the phase component entirely. The Hilbert amplitude
+  # envelope of the broadband ROI signal is used directly as the TE input.
+  # A shared NG codebook is fit over all ROIs' amplitude delay embeddings
+  # (same algorithm as Phase 2 but on amplitude instead of phase).
+  # Conditional TE suppresses indirect connections via PCA-compressed
+  # conditioning on the remaining ROIs' amplitude symbols.
+  # --------------------------------------------------------------------------
+  phase_4:
+    # NG codebook parameters (amplitude-specific; may differ from phase after calibration)
+    k0_max: 20                  # maximum number of NG prototypes; tune with nDis diagnostic
+    ndis_threshold: 0.05        # NG convergence criterion (normalised quantisation error)
+
+    # Envelope preprocessing: z-score each ROI's amplitude envelope per window
+    # before delay embedding. Guards against HRF amplitude magnitude differences
+    # across windows dominating the shared codebook geometry.
+    envelope_normalize: true
+
+    # PCA conditioning compression — same role as in Phase 2:
+    # compresses the n_z=3 conditioning ROIs to n_components PCA components
+    # before symbolisation to avoid contingency table sparsity.
+    conditional_pca:
+      enabled: true
+      n_components: 1           # 1 → 4D table (k^4 cells); increase cautiously
+      min_explained_var_warning_pct: 60  # warn if PC1 < 60% of amplitude embedding variance
+
+    # Sparsity fallback threshold: if any cell in the conditional contingency
+    # table has < min_samples_per_cell expected occupancy, fall back to
+    # bivariate amplitude TE for that pair (identical to Phase 2 fallback).
+    min_samples_per_cell: 5
+
+  # --------------------------------------------------------------------------
   # Output subdirectories (relative to output_root/expert-novice/)
   # --------------------------------------------------------------------------
   output_subdirs:
@@ -624,6 +657,10 @@ stage_e_transfer_entropy:
     phase_3_group:        "expert-novice/phase_3_bimodal_dspte/group"
     phase_3_statistics:   "expert-novice/phase_3_bimodal_dspte/statistics"
     phase_3_viz:          "expert-novice/phase_3_bimodal_dspte/visualizations"
+    phase_4_connectivity: "expert-novice/phase_4_amplitude_dspte/te_connectivity"
+    phase_4_group:        "expert-novice/phase_4_amplitude_dspte/group"
+    phase_4_statistics:   "expert-novice/phase_4_amplitude_dspte/statistics"
+    phase_4_viz:          "expert-novice/phase_4_amplitude_dspte/visualizations"
     cross_phase:          "expert-novice/cross_phase_comparison"
 
 # ==============================================================================

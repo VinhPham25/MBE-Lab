@@ -66,13 +66,13 @@ from typing import Optional
 
 import numpy as np
 
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 _PROJECT_ROOT = _CODE_ROOT.parent
-_STAGE_E_ROOT = Path(__file__).parent
 
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
-# utils_te lives in the same directory as this file
+# utils_te lives in stage_e_transfer_entropy/ (one level up from phase_1/)
 if str(_STAGE_E_ROOT) not in sys.path:
     sys.path.insert(0, str(_STAGE_E_ROOT))
 

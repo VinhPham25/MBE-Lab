@@ -49,9 +49,9 @@ from typing import Optional
 
 import numpy as np
 
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 _PROJECT_ROOT = _CODE_ROOT.parent
-_STAGE_E_ROOT = Path(__file__).parent
 
 for _p in [str(_CODE_ROOT), str(_STAGE_E_ROOT)]:
     if _p not in sys.path:
@@ -88,7 +88,7 @@ def _get_core_module():
     global _CORE_MODULE
     if _CORE_MODULE is None:
         spec = importlib.util.spec_from_file_location(
-            "dspte_core", _STAGE_E_ROOT / "01_dspte_core.py"
+            "dspte_core", _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

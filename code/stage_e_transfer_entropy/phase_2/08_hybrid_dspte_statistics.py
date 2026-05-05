@@ -62,9 +62,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-_CODE_ROOT     = Path(__file__).parent.parent
-_PROJECT_ROOT  = _CODE_ROOT.parent
-_STAGE_E_ROOT  = Path(__file__).parent
+_CODE_ROOT    = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent          # stage_e_transfer_entropy/
+_PROJECT_ROOT = _CODE_ROOT.parent
 
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
@@ -87,7 +87,7 @@ _N_TRIALS_CANONICAL = 5   # canonical trial count (R4 has 4; R9 has 2 — padded
 
 def _import_p1_stats():
     """Return the 04_dspte_statistics module via importlib."""
-    p = _STAGE_E_ROOT / "04_dspte_statistics.py"
+    p = _STAGE_E_ROOT / "phase_1" / "04_dspte_statistics.py"
     spec = importlib.util.spec_from_file_location("dspte_statistics_p1", p)
     mod  = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

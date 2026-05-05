@@ -66,12 +66,14 @@ from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from scipy.stats import pearsonr, spearmanr
 
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 _PROJECT_ROOT = _CODE_ROOT.parent
-_STAGE_E_ROOT = Path(__file__).parent
 
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
+if str(_STAGE_E_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STAGE_E_ROOT))
 if str(_STAGE_E_ROOT) not in sys.path:
     sys.path.insert(0, str(_STAGE_E_ROOT))
 

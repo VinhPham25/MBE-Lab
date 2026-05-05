@@ -33,8 +33,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-_CODE_ROOT = Path(__file__).parent.parent
-_STAGE_E_ROOT = Path(__file__).parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
@@ -57,7 +57,7 @@ def _import_p1_stats():
     module
         Loaded `04_dspte_statistics.py` module object.
     """
-    p = _STAGE_E_ROOT / "04_dspte_statistics.py"
+    p = _STAGE_E_ROOT / "phase_1" / "04_dspte_statistics.py"
     spec = importlib.util.spec_from_file_location("dspte_statistics_p1_for_p3", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

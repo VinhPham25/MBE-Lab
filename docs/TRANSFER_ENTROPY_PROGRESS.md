@@ -933,23 +933,74 @@ Functions currently implemented in `code/stage_e_transfer_entropy/11_bimodal_dsp
 
 ---
 
-### SECTION 9: CROSS-PHASE COMPARISON
+### SECTION 9: PHASE 4 — MULTIVARIATE CONDITIONAL AMPLITUDE dSPTE
 
-Functions in `code/stage_e_transfer_entropy/08_cross_phase_comparison.py`.
+**Novel contribution:** This phase replaces the phase component entirely and builds a multivariate conditional symbolic TE operating on the Hilbert amplitude envelope of broadband fNIRS signals. It adapts the Phase 2 hybrid-dSPTE machinery (shared NG codebook, PCA-compressed conditioning, multi-lag conditional TE) to the amplitude domain, producing the first symbolic NG-based amplitude TE with multivariate conditioning for fNIRS. This sits at the intersection of Wang (2020) — phase NG-symbolic TE — and Wang (2022) MTENUE — amplitude multivariate TE with KSG — and advances beyond both: noise-robust symbolic encoding on the quantity that is actually information-rich in broadband fNIRS, with indirect-connection suppression via conditioning.
 
-- [ ] **9.1** Implement `compile_all_methods_summary()`. Loads Stage D GC and all three TE phase connectivity vectors. For each subject × trial × window × connection: records GC, dSPTE, hybrid-dSPTE, bimodal values. Saves to `cross_phase_comparison/all_methods_connectivity_summary.csv`.
+**New files:**
+- `code/stage_e_transfer_entropy/14_amplitude_dspte.py` — core functions + subject pipeline
+- `code/stage_e_transfer_entropy/15_amplitude_dspte_group.py` — group aggregation
+- `code/stage_e_transfer_entropy/16_amplitude_dspte_visualization.py` — visualization
 
-- [ ] **9.2** Implement `plot_method_correlation_matrix()`. Computes pairwise Pearson correlation between the 20-connection vectors of each method, averaged across subjects × windows. Renders as 4×4 correlation heatmap (GC vs dSPTE vs hybrid vs bimodal). High correlation = methods agree; low = they capture different aspects of connectivity.
+**New config block:** `stage_e_transfer_entropy.phase_4` (amplitude-specific NG parameters, envelope normalization toggle, PCA conditioning).
 
-- [ ] **9.3** Implement `plot_expert_novice_delta_comparison()`. For each method, compute `Expert_mean - Novice_mean` per connection (same subject-averaged estimator as Stage D). Display all 4 methods side-by-side for the same 20 connections. This is the primary figure for the long-term GC-vs-TE comparison goal.
+**New output directories:** `phase_4_amplitude_dspte/{te_connectivity, group, statistics, visualizations}/`
 
 ---
 
-### SECTION 10: BATCH RUNNER
+- [ ] **9.1** Document method rationale at the top of `14_amplitude_dspte.py`. Cite Wang (2020) for the NG-symbolic framework, Wang (2022) for amplitude multivariate TE precedent, and the 2024 Frontiers fMRI paper for phase/magnitude decomposition in symbolic TE. State the gap: no published method applies NG symbolization to fNIRS Hilbert amplitude with multivariate conditioning. Note deviation from Phase 3: no phase computation anywhere in this pipeline — `extract_phase_signal()`, `compute_hybrid_dspte_matrix()`, and narrowband filtering are explicitly excluded.
 
-- [ ] **10.1** Create `09_run_te_pipeline.py`. CLI batch script accepting `--study`, `--subjects`, `--phase` (`1`, `2`, `3`, or `all`) flags. Runs the full pipeline end-to-end for the specified phase(s). Writes `te_provenance.json` with all parameters, timestamps, per-subject success/failure, and phase-specific notes.
+- [ ] **9.2** Implement `extract_amplitude_matrix(Y_win, config) -> tuple[np.ndarray, list[int]]` in `14_amplitude_dspte.py`. Takes an `(n_rois, T)` ROI window of broadband HbO. For each ROI row: (a) compute Hilbert amplitude via `core.extract_amplitude_signal()`; (b) optionally z-score the envelope per window (controlled by `phase_4.envelope_normalize` in config — guards against HRF amplitude magnitude dominating the NG codebook geometry across windows); (c) estimate per-ROI embedding delay τ via `core.compute_embedding_delay()` on the amplitude envelope. Returns `(A_win: np.ndarray shape (n_rois, T), taus: list[int])`. No narrowband filter applied.
 
-- [ ] **10.2** Add `--validate` flag to `09_run_te_pipeline.py` that runs: (a) Wang 2020 simulation validation (Section 3.4.4), (b) shape assertions on group arrays, (c) all-values-non-negative check, (d) diagonal-zero check, (e) connectivity vector length = 20. Print PASS/FAIL per check.
+- [ ] **9.3** Implement `symbolise_multivariate_amplitude(A_win, taus, config) -> tuple` in `14_amplitude_dspte.py`. Adapts `symbolise_multivariate()` from `06_hybrid_dspte.py`. Uses `A_win` (amplitude matrix, `[0, ∞)^d` embedding space) instead of `Phi_win` (phase matrix, `[-π, π]^d`). Algorithm is identical: align to `τ_min` across ROIs, build stacked delay embeddings `(T', n_rois × d)`, fit a single shared NG codebook via `fit_neural_gas_codebook()` with `k0_max` and `ndis_threshold` from `phase_4` config block, quantise each ROI to symbol sequence. Returns `(S: np.ndarray shape (n_rois, T'), codebook_meta)`. Key reason this works without algorithmic change: NG operates in Euclidean distance in embedding space — signal domain (`[0,∞)` vs `[-π,π]`) is irrelevant to the algorithm.
+
+- [ ] **9.4** Implement `compute_amplitude_conditional_dspte_matrix(A_win, config, roi_names) -> tuple` in `14_amplitude_dspte.py`. Adapts `compute_hybrid_dspte_matrix()` from `06_hybrid_dspte.py`:
+  - Calls `extract_amplitude_matrix()` then `symbolise_multivariate_amplitude()` to obtain symbol sequences
+  - For each directed pair `(src, tgt)`: conditioning set `Z` = all other ROIs' amplitude symbols; compute `dSPTE_{src→tgt | Z}` via frequency counting (reuse `compute_conditional_dspte_at_lag()` unchanged — it only sees integer symbol arrays)
+  - PCA compression of conditioners: reuse `conditional_pca` logic from Phase 2 (controlled by `phase_4.conditional_pca` config block)
+  - Sparsity fallback: if contingency table occupancy < threshold, fall back to bivariate amplitude TE for that pair
+  - Multi-lag search `u = 1..u_max`, take argmax TE
+  - Returns `(EC_matrix, delay_matrix, metadata)` — identical output schema to Phase 1/2
+
+- [ ] **9.5** Implement `process_subject_amplitude_dspte(subject_id, study, config, overwrite) -> dict` in `14_amplitude_dspte.py`. Subject-level pipeline:
+  - Load ROI signals via `load_or_extract_roi_signals()` (same Stage D cache as all prior phases)
+  - Load trial segments via `get_trial_segments(raw, config)` for window boundaries
+  - For each trial × window: extract `Y_win`, call `compute_amplitude_conditional_dspte_matrix()`
+  - Accumulate per-trial window lists; compute trial-level aggregates (mean EC across windows)
+  - Save per-subject `.npz` to `phase_4_connectivity` output dir with keys matching Phase 1/2/3 schema
+  - **No call to `compute_hybrid_dspte_matrix()` or any phase-related function** — amplitude pipeline is fully self-contained
+
+- [ ] **9.6** Implement `run_batch_amplitude_dspte(subject_ids, study, config, overwrite) -> list[dict]` in `14_amplitude_dspte.py`. Batch runner with per-subject error isolation and JSON batch log. Mirrors `run_batch_bimodal_dspte()` from `11_bimodal_dspte.py` structure. Reports per-subject status, window counts, and mean EC norms.
+
+- [ ] **9.7** Implement group aggregation in `15_amplitude_dspte_group.py`. Loads all per-subject Phase 4 `.npz` files; splits by Expert/Novice; builds `B_Exp_amplitude` and `B_Nov_amplitude` group arrays `(n_subjects, 20, n_windows)` per trial. Saves group `.npz` and `amplitude_group_summary.json` to `phase_4_group`. Mirrors `12_bimodal_dspte_group.py` structure.
+
+- [ ] **9.8** Run statistics on Phase 4 outputs using existing `04_dspte_statistics.py`. Add `phase_4` as a supported input mode (pass `phase_4_group` output dir). Run: H0 within-trial stability, H1 Expert vs Novice (Mann-Whitney U with FDR correction), HIV across-trial stability. Save CSV and JSON to `phase_4_statistics`. Compare H1 p-values against Phase 3 amplitude branch results to quantify whether multivariate conditioning sharpens Expert vs Novice separation.
+
+- [ ] **9.9** Implement visualization in `16_amplitude_dspte_visualization.py`:
+  - Directed connectivity matrix heatmaps (Expert mean, Novice mean, per trial)
+  - Expert vs Novice delta bar chart (20 connections × groups, analogous to Stage D GC figure)
+  - Bivariate-vs-multivariate conditioning comparison: overlay Phase 3 amplitude branch TE (bivariate) against Phase 4 (multivariate conditional) per connection — quantifies indirect-connection suppression; expected ~40–50% TE reduction as seen in Phase 1→2 transition
+  - Save all figures to `phase_4_visualizations`
+
+---
+
+### SECTION 10: CROSS-PHASE COMPARISON
+
+Functions in `code/stage_e_transfer_entropy/08_cross_phase_comparison.py`.
+
+- [ ] **10.1** Implement `compile_all_methods_summary()`. Loads Stage D GC and all four TE connectivity results (Phase 1 bivariate phase dSPTE, Phase 2 multivariate phase dSPTE, Phase 3 bimodal, Phase 4 multivariate amplitude dSPTE). For each subject × trial × window × connection: records GC, dSPTE, hybrid-dSPTE, bimodal, and amplitude-dSPTE values. Saves to `cross_phase_comparison/all_methods_connectivity_summary.csv`.
+
+- [ ] **10.2** Implement `plot_method_correlation_matrix()`. Computes pairwise Pearson correlation between the 20-connection vectors of each method, averaged across subjects × windows. Renders as 5×5 correlation heatmap (GC vs Phase 1 vs Phase 2 vs Phase 3 vs Phase 4). High correlation = methods agree; low = they capture different aspects of connectivity.
+
+- [ ] **10.3** Implement `plot_expert_novice_delta_comparison()`. For each method, compute `Expert_mean - Novice_mean` per connection (same subject-averaged estimator as Stage D). Display all 5 methods side-by-side for the same 20 connections. This is the primary figure for the long-term GC-vs-TE comparison goal.
+
+---
+
+### SECTION 11: BATCH RUNNER
+
+- [ ] **11.1** Create `09_run_te_pipeline.py`. CLI batch script accepting `--study`, `--subjects`, `--phase` (`1`, `2`, `3`, `4`, or `all`) flags. Runs the full pipeline end-to-end for the specified phase(s). Writes `te_provenance.json` with all parameters, timestamps, per-subject success/failure, and phase-specific notes.
+
+- [ ] **11.2** Add `--validate` flag to `09_run_te_pipeline.py` that runs: (a) Wang 2020 simulation validation (Section 3.4.4), (b) shape assertions on group arrays, (c) all-values-non-negative check, (d) diagonal-zero check, (e) connectivity vector length = 20. Print PASS/FAIL per check.
 
 ---
 
@@ -997,10 +1048,10 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 
 ## 📊 COMPLETION METRICS
 
-- **Total Tasks:** 50
+- **Total Tasks:** 61
 - **Completed:** 42
 - **In Progress:** 0
-- **Remaining:** 8
+- **Remaining:** 19
 - **Extensions:** PCA conditioning compression added (2026-04-08) — toggleable via `phase_2.conditional_pca.enabled` in config.yaml
 
 ### By Section
@@ -1012,8 +1063,9 @@ Phase 1 and Phase 2 both use uniform time-delay embedding with a fixed τ per si
 - **Section 6 (Phase 1 Viz):** 5/5 ✅ Complete (2026-03-26)
 - **Section 7 (Phase 2 Hybrid):** 7/7 ✅ Complete (7.1.1: 2026-04-07; 7.2.1: 2026-04-08; 7.2.2+7.2.3: 2026-04-09; 7.3.1: 2026-04-12; 7.3.2+7.3.3: 2026-04-09)
 - **Section 8 (Phase 3 Bimodal):** 5/5 ✅ Complete (8.3 completed 2026-04-28)
-- **Section 9 (Cross-Phase):** 0/3
-- **Section 10 (Batch Runner):** 0/2
+- **Section 9 (Phase 4 Amplitude dSPTE):** 0/9
+- **Section 10 (Cross-Phase):** 0/3
+- **Section 11 (Batch Runner):** 0/2
 
 ---
 

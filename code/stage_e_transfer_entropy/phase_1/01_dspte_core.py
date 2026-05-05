@@ -39,9 +39,12 @@ from typing import Optional
 import numpy as np
 from scipy.signal import hilbert, butter, sosfiltfilt
 
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
+if str(_STAGE_E_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STAGE_E_ROOT))
 
 logger = logging.getLogger(__name__)
 

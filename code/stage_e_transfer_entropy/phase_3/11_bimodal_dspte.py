@@ -22,9 +22,12 @@ from typing import Optional
 
 import numpy as np
 
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
+if str(_STAGE_E_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STAGE_E_ROOT))
 
 logger = logging.getLogger(__name__)
 
@@ -34,36 +37,35 @@ _HYBRID_MOD = None
 _SEG_MOD = None
 
 
-def _load_module(name: str, rel_path: str):
-    """Load a module from `code/stage_e_transfer_entropy/<rel_path>`."""
-    mod_path = Path(__file__).parent / rel_path
-    spec = importlib.util.spec_from_file_location(name, mod_path)
+def _load_module(name: str, abs_path: "Path"):
+    """Load a module from an absolute path."""
+    spec = importlib.util.spec_from_file_location(name, abs_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
 def _get_core_module():
-    """Return cached import of `01_dspte_core.py`."""
+    """Return cached import of `phase_1/01_dspte_core.py`."""
     global _CORE_MOD
     if _CORE_MOD is None:
-        _CORE_MOD = _load_module("dspte_core_bimodal", "01_dspte_core.py")
+        _CORE_MOD = _load_module("dspte_core_bimodal", _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py")
     return _CORE_MOD
 
 
 def _get_pipeline_module():
-    """Return cached import of `02_dspte_pipeline.py`."""
+    """Return cached import of `phase_1/02_dspte_pipeline.py`."""
     global _PIPELINE_MOD
     if _PIPELINE_MOD is None:
-        _PIPELINE_MOD = _load_module("dspte_pipeline_bimodal", "02_dspte_pipeline.py")
+        _PIPELINE_MOD = _load_module("dspte_pipeline_bimodal", _STAGE_E_ROOT / "phase_1" / "02_dspte_pipeline.py")
     return _PIPELINE_MOD
 
 
 def _get_hybrid_module():
-    """Return cached import of `06_hybrid_dspte.py`."""
+    """Return cached import of `phase_2/06_hybrid_dspte.py`."""
     global _HYBRID_MOD
     if _HYBRID_MOD is None:
-        _HYBRID_MOD = _load_module("hybrid_dspte_bimodal", "06_hybrid_dspte.py")
+        _HYBRID_MOD = _load_module("hybrid_dspte_bimodal", _STAGE_E_ROOT / "phase_2" / "06_hybrid_dspte.py")
     return _HYBRID_MOD
 
 
@@ -893,10 +895,12 @@ def process_subject_bimodal_dspte(
     stride = int(win_cfg.get("stride_samples", 1350))
     u_max = int(sig_cfg.get("u_max", 50))
     filter_enabled = bool(filt_cfg.get("enabled", True))
-    # New split-control toggles (defaults preserve previous behavior):
-    # phase uses narrowband filtering when enabled; amplitude defaults to raw.
-    phase_filter_enabled = bool(filt_cfg.get("apply_to_phase", filter_enabled))
-    amplitude_filter_enabled = bool(filt_cfg.get("apply_to_amplitude", False))
+    # Master override behavior:
+    # `narrowband_filter.enabled` hard-disables filtering for both branches.
+    phase_filter_requested = bool(filt_cfg.get("apply_to_phase", True))
+    amplitude_filter_requested = bool(filt_cfg.get("apply_to_amplitude", False))
+    phase_filter_enabled = bool(filter_enabled and phase_filter_requested)
+    amplitude_filter_enabled = bool(filter_enabled and amplitude_filter_requested)
     f_lo = float(filt_cfg.get("f_lo", 0.04))
     f_hi = float(filt_cfg.get("f_hi", 0.15))
     filt_order = int(filt_cfg.get("order", 3))
@@ -1056,9 +1060,15 @@ def process_subject_bimodal_dspte(
         "narrowband_filter_enabled": filter_enabled,
         "phase_filter_enabled": phase_filter_enabled,
         "amplitude_filter_enabled": amplitude_filter_enabled,
-        "narrowband_filter_f_lo": f_lo if filter_enabled else None,
-        "narrowband_filter_f_hi": f_hi if filter_enabled else None,
-        "narrowband_filter_order": filt_order if filter_enabled else None,
+        "narrowband_filter_f_lo": (
+            f_lo if (phase_filter_enabled or amplitude_filter_enabled) else None
+        ),
+        "narrowband_filter_f_hi": (
+            f_hi if (phase_filter_enabled or amplitude_filter_enabled) else None
+        ),
+        "narrowband_filter_order": (
+            filt_order if (phase_filter_enabled or amplitude_filter_enabled) else None
+        ),
         "elapsed_s": round(elapsed_subj, 2),
     }
     try:

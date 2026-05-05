@@ -53,10 +53,10 @@ from scipy.stats import trim_mean
 # ---------------------------------------------------------------------------
 # Path setup
 # ---------------------------------------------------------------------------
-_SCRIPT_DIR   = Path(__file__).parent
-_CODE_ROOT    = _SCRIPT_DIR.parent
-_PROJECT_ROOT = _CODE_ROOT.parent
-_STAGE_E_ROOT = _SCRIPT_DIR
+_SCRIPT_DIR   = Path(__file__).parent              # phase_2/
+_STAGE_E_ROOT = _SCRIPT_DIR.parent                # stage_e_transfer_entropy/
+_CODE_ROOT    = _STAGE_E_ROOT.parent              # code/
+_PROJECT_ROOT = _CODE_ROOT.parent                 # repo root
 
 for _p in [str(_CODE_ROOT), str(_STAGE_E_ROOT)]:
     if _p not in sys.path:
@@ -120,7 +120,7 @@ def load_subject_trials(subject_id: str, config: dict) -> dict | None:
     """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        utils_te = _load_mod("utils_te_diag", "utils_te.py")
+        utils_te = _load_mod("utils_te_diag", "utils_te.py")  # at stage_e_transfer_entropy/ root
 
         # Load ROI signals from Stage D cache
         try:
@@ -271,7 +271,7 @@ def _get_hybrid_cached():
     """Return cached import of `06_hybrid_dspte.py` to avoid repeated reloads."""
     global _HYBRID_MODULE_CACHE
     if _HYBRID_MODULE_CACHE is None:
-        _HYBRID_MODULE_CACHE = _load_mod("hybrid_diag", "06_hybrid_dspte.py")
+        _HYBRID_MODULE_CACHE = _load_mod("hybrid_diag", "phase_2/06_hybrid_dspte.py")
         # Suppress any loggers registered inside the freshly loaded module
         for name in list(logging.Logger.manager.loggerDict.keys()):
             logging.getLogger(name).setLevel(logging.CRITICAL)

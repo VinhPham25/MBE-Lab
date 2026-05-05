@@ -73,7 +73,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 from utils_te import fit_neural_gas_codebook, quantise_to_symbols  # noqa
 import importlib.util as _ilu
 
-_core_spec = _ilu.spec_from_file_location("dspte_core", _HERE / "01_dspte_core.py")
+_core_spec = _ilu.spec_from_file_location("dspte_core", _HERE / "phase_1" / "01_dspte_core.py")
 _core_mod = _ilu.module_from_spec(_core_spec)
 _core_spec.loader.exec_module(_core_mod)
 

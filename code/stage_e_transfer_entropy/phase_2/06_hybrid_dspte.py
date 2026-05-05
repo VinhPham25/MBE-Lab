@@ -34,9 +34,12 @@ from typing import Optional
 
 import numpy as np
 
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
+if str(_STAGE_E_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STAGE_E_ROOT))
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +237,7 @@ def symbolise_multivariate(
     # -----------------------------------------------------------------
     # Import Phase 1 core utilities via importlib (same pattern used across Stage E)
     import importlib.util as _ilu
-    _core_path = Path(__file__).parent / "01_dspte_core.py"
+    _core_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
     _spec = _ilu.spec_from_file_location("dspte_core", _core_path)
     _core = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_core)
@@ -275,7 +278,7 @@ def symbolise_multivariate(
 
     # Use the same fit_neural_gas_codebook function from utils_te
     # (avoids duplicating the NG search logic)
-    _utils_te_path = Path(__file__).parent / "utils_te.py"
+    _utils_te_path = _STAGE_E_ROOT / "utils_te.py"
     _utils_spec = _ilu.spec_from_file_location("utils_te_mod", _utils_te_path)
     _utils_te = _ilu.module_from_spec(_utils_spec)
     _utils_spec.loader.exec_module(_utils_te)
@@ -871,7 +874,7 @@ def compute_conditional_dspte_at_lag(
         )
         # Fall back to the Phase 1 bivariate dSPTE for this pair at this lag.
         # Import compute_dspte_at_lag from 01_dspte_core via importlib.
-        _core_path = Path(__file__).parent / "01_dspte_core.py"
+        _core_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
         _spec = _ilu.spec_from_file_location("dspte_core_fb", _core_path)
         _core_fb = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_core_fb)
@@ -1320,7 +1323,7 @@ def compute_hybrid_dspte_matrix(
     # These are needed for pca_compress=True path in compute_conditional_dspte_multidelay
     if pca_compress and n_valid >= 3:
         import importlib.util as _ilu_embed
-        _core_path = Path(__file__).parent / "01_dspte_core.py"
+        _core_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
         _spec_e = _ilu_embed.spec_from_file_location("dspte_core_emb", _core_path)
         _core_e = _ilu_embed.module_from_spec(_spec_e)
         _spec_e.loader.exec_module(_core_e)
@@ -1457,7 +1460,7 @@ def _get_hybrid_module_dependencies():
 
     spec = _importlib_util_p2.spec_from_file_location(
         "trial_segmentation_p2",
-        Path(__file__).parent.parent / "stage_d_granger" / "02_trial_segmentation.py",
+        _CODE_ROOT / "stage_d_granger" / "02_trial_segmentation.py",
     )
     mod = _importlib_util_p2.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -1465,7 +1468,7 @@ def _get_hybrid_module_dependencies():
 
     spec2 = _importlib_util_p2.spec_from_file_location(
         "dspte_pipeline_p2",
-        Path(__file__).parent / "02_dspte_pipeline.py",
+        _STAGE_E_ROOT / "phase_1" / "02_dspte_pipeline.py",
     )
     mod2 = _importlib_util_p2.module_from_spec(spec2)
     spec2.loader.exec_module(mod2)
@@ -1473,7 +1476,7 @@ def _get_hybrid_module_dependencies():
 
     spec3 = _importlib_util_p2.spec_from_file_location(
         "dspte_core_p2",
-        Path(__file__).parent / "01_dspte_core.py",
+        _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py",
     )
     mod3 = _importlib_util_p2.module_from_spec(spec3)
     spec3.loader.exec_module(mod3)
@@ -1726,7 +1729,7 @@ def process_subject_hybrid_dspte(
 
     # Import utils_te helpers
     import sys as _sys_p2
-    _stage_e_root = Path(__file__).parent
+    _stage_e_root = _STAGE_E_ROOT
     if str(_stage_e_root) not in _sys_p2.path:
         _sys_p2.path.insert(0, str(_stage_e_root))
 
@@ -2012,7 +2015,7 @@ def _save_subject_hybrid_dspte_npz(
     connection_labels, n_trials, params_json.
     """
     import sys as _sys_save
-    _stage_e_root_save = Path(__file__).parent
+    _stage_e_root_save = _STAGE_E_ROOT
     if str(_stage_e_root_save) not in _sys_save.path:
         _sys_save.path.insert(0, str(_stage_e_root_save))
 
@@ -2095,7 +2098,7 @@ def _load_subject_hybrid_dspte(
     Returns ``{trial_id: {win_id: conn_vec_20}}`` or None if file not found.
     """
     import sys as _sys_load
-    _stage_e_root_load = Path(__file__).parent
+    _stage_e_root_load = _STAGE_E_ROOT
     if str(_stage_e_root_load) not in _sys_load.path:
         _sys_load.path.insert(0, str(_stage_e_root_load))
     from utils_te import get_te_output_dir  # noqa
@@ -2174,7 +2177,7 @@ def run_batch_hybrid_dspte(
             config = {}
 
     import sys as _sys_batch
-    _stage_e_root_batch = Path(__file__).parent
+    _stage_e_root_batch = _STAGE_E_ROOT
     if str(_stage_e_root_batch) not in _sys_batch.path:
         _sys_batch.path.insert(0, str(_stage_e_root_batch))
 
@@ -2748,7 +2751,7 @@ def _run_smoke_tests() -> None:
     # With no conditioning channels, the formula reduces to:
     #   I(Y_t ; X_{t-u} | Y_{t-1})  =  Phase 1 bivariate dSPTE
     import importlib.util as _ilu_t
-    _core_p = Path(__file__).parent / "01_dspte_core.py"
+    _core_p = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
     _spec_t = _ilu_t.spec_from_file_location("dspte_core_t", _core_p)
     _core_t = _ilu_t.module_from_spec(_spec_t)
     _spec_t.loader.exec_module(_core_t)
@@ -2815,10 +2818,10 @@ def _run_smoke_tests() -> None:
 
     # Symbolise via Phase 1 pair approach (for speed — no shared codebook needed here)
     import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).parent))
+    _sys.path.insert(0, str(_STAGE_E_ROOT))
     from utils_te import fit_neural_gas_codebook as _fngc, quantise_to_symbols as _qts  # noqa
     import importlib.util as _ilu2
-    _core2_path = Path(__file__).parent / "01_dspte_core.py"
+    _core2_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
     _spec2 = _ilu2.spec_from_file_location("dc2", _core2_path)
     _core2 = _ilu2.module_from_spec(_spec2)
     _spec2.loader.exec_module(_core2)
@@ -2877,7 +2880,7 @@ def _run_smoke_tests() -> None:
     # Re-run symbolisation to get embedded_list (symbol_sequences from Test 1
     # came from the shared codebook; we need the raw embedded matrices).
     import importlib.util as _ilu_pca
-    _core_pca_path = Path(__file__).parent / "01_dspte_core.py"
+    _core_pca_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
     _spec_pca = _ilu_pca.spec_from_file_location("dspte_core_pca", _core_pca_path)
     _core_pca = _ilu_pca.module_from_spec(_spec_pca)
     _spec_pca.loader.exec_module(_core_pca)
@@ -3106,7 +3109,7 @@ def _run_smoke_tests() -> None:
     print("Test 18: te_profiles dict compatible with _extract_canonical_lag_profiles_p2")
     # Simulate calling the helper (same as Phase 1 pipeline would)
     import sys as _sys_p2_t
-    _stage_e_path_t = Path(__file__).parent
+    _stage_e_path_t = _STAGE_E_ROOT
     if str(_stage_e_path_t) not in _sys_p2_t.path:
         _sys_p2_t.path.insert(0, str(_stage_e_path_t))
     from utils_te import get_connection_labels as _gcl  # noqa

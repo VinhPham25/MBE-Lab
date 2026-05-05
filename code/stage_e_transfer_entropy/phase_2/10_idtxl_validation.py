@@ -60,12 +60,13 @@ import numpy as np
 # ---------------------------------------------------------------------------
 # Project root
 # ---------------------------------------------------------------------------
-_CODE_ROOT = Path(__file__).parent.parent
+_CODE_ROOT = Path(__file__).parent.parent.parent   # code/
+_STAGE_E_ROOT = Path(__file__).parent.parent       # stage_e_transfer_entropy/
 _PROJECT_ROOT = _CODE_ROOT.parent
 if str(_CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(_CODE_ROOT))
-if str(Path(__file__).parent) not in sys.path:
-    sys.path.insert(0, str(Path(__file__).parent))
+if str(_STAGE_E_ROOT) not in sys.path:
+    sys.path.insert(0, str(_STAGE_E_ROOT))
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +138,7 @@ else:
 def write_idtxl_eval_md(out_path: Optional[Path] = None) -> Path:
     """Write IDTXL_EVAL.md documenting IDTxl availability status."""
     if out_path is None:
-        out_path = Path(__file__).parent / "IDTXL_EVAL.md"
+        out_path = _STAGE_E_ROOT / "IDTXL_EVAL.md"
 
     status = "AVAILABLE" if _IDTXL_AVAILABLE else "UNAVAILABLE"
     import datetime
@@ -462,7 +463,7 @@ def run_subject_idtxl(
         get_subject_group,
     )
     import importlib.util as _ilu
-    _core_path = Path(__file__).parent / "06_hybrid_dspte.py"
+    _core_path = Path(__file__).parent / "06_hybrid_dspte.py"  # sibling in phase_2/
     _spec = _ilu.spec_from_file_location("hybrid_dspte_mod", _core_path)
     _hybrid_mod = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_hybrid_mod)
@@ -513,7 +514,7 @@ def run_subject_idtxl(
         logger.error("run_subject_idtxl [%s]: fif load failed: %s", subject_id, exc)
         return None
 
-    _seg_path = _CODE_ROOT / "stage_d_granger" / "02_trial_segmentation.py"
+    _seg_path = _CODE_ROOT / "stage_d_granger" / "02_trial_segmentation.py"  # _CODE_ROOT = code/
     _spec_seg = _ilu2.spec_from_file_location("trial_segmentation_idtxl", _seg_path)
     _seg_mod = _ilu2.module_from_spec(_spec_seg)
     _spec_seg.loader.exec_module(_seg_mod)
