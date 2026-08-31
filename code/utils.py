@@ -5,6 +5,7 @@ Configuration loader and common helper functions for the fNIRS preprocessing pip
 Created: 2026-01-19
 """
 
+import os
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -99,6 +100,85 @@ def enable_plot_timestamps():
 
 # Activate timestamped savefig globally for all plotting scripts importing utils.
 enable_plot_timestamps()
+
+
+# ---------------------------------------------------------------------------
+# pyswarms report.log redirect
+# ---------------------------------------------------------------------------
+# pyswarms' internal Reporter (used by ps.single.GlobalBestPSO, called from
+# stage_e_transfer_entropy/phase_3/11_bimodal_dspte.py for PSO weight
+# optimisation) defaults to writing `report.log` (+ up to 20 rotated
+# `report.log.N` backups) into the current working directory every time it's
+# instantiated. Reporter only lets you override that path via a YAML file
+# referenced by the `LOG_CFG` environment variable, so we generate one that
+# points at `report_logs/` at the project root instead of polluting the repo
+# root / cwd.
+_PYSWARMS_LOG_CFG_ENV = "LOG_CFG"
+_PYSWARMS_LOGGING_CONFIGURED = False
+
+
+def configure_pyswarms_logging() -> Path:
+    """
+    Redirect pyswarms' Reporter log output from `<cwd>/report.log` to
+    `report_logs/report.log` at the project root.
+
+    Safe to call multiple times (and from multiple scripts/processes) —
+    subsequent calls are no-ops once `LOG_CFG` is already set for this
+    process. Call this before any code path that may instantiate
+    `pyswarms.single.GlobalBestPSO` (or any other pyswarms optimizer).
+
+    Returns
+    -------
+    Path
+        Directory that pyswarms log files are written to (`report_logs/`).
+    """
+    global _PYSWARMS_LOGGING_CONFIGURED
+
+    report_logs_dir = PROJECT_ROOT / 'report_logs'
+    report_logs_dir.mkdir(parents=True, exist_ok=True)
+
+    if _PYSWARMS_LOGGING_CONFIGURED or os.environ.get(_PYSWARMS_LOG_CFG_ENV):
+        return report_logs_dir
+
+    log_config_path = report_logs_dir / '.pyswarms_log_config.yaml'
+    log_config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'standard': {
+                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            }
+        },
+        'handlers': {
+            'default': {
+                'level': 'INFO',
+                'class': 'logging.StreamHandler',
+                'formatter': 'standard',
+            },
+            'file_default': {
+                'level': 'INFO',
+                'formatter': 'standard',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': str(report_logs_dir / 'report.log'),
+                'encoding': 'utf8',
+                'maxBytes': 10485760,
+                'backupCount': 20,
+            },
+        },
+        'loggers': {
+            '': {
+                'handlers': ['default', 'file_default'],
+                'level': 'INFO',
+                'propagate': True,
+            }
+        },
+    }
+    with open(log_config_path, 'w') as f:
+        yaml.safe_dump(log_config, f)
+
+    os.environ[_PYSWARMS_LOG_CFG_ENV] = str(log_config_path)
+    _PYSWARMS_LOGGING_CONFIGURED = True
+    return report_logs_dir
 
 
 def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
