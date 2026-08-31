@@ -1252,4 +1252,18 @@ def run_all_visualizations(study: str = "expert_novice") -> None:
 
 
 if __name__ == "__main__":
-    run_all_visualizations()
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Stage D — Generate all Linear GC visualizations "
+                     "(heatmaps, group bar charts, brain topology diagrams)."
+    )
+    parser.add_argument(
+        "--study",
+        default="expert_novice",
+        help="Study/dataset key from config.yaml (default: expert_novice). "
+             "Note: Stage D Linear GC is currently only validated for expert_novice.",
+    )
+    args = parser.parse_args()
+
+    run_all_visualizations(study=args.study)

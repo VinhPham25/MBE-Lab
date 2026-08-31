@@ -756,6 +756,40 @@ def _save_group_npz(
 # ===========================================================================
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Stage D — Batch-process all subjects through the Linear GC "
+                     "pipeline, then build Expert/Novice group arrays. This is a "
+                     "combined driver + validation script (Section 5.3): it runs "
+                     "a single-subject sanity check on A1, then the full batch."
+    )
+    parser.add_argument(
+        "--study",
+        default="expert_novice",
+        help="Study/dataset key from config.yaml (default: expert_novice). "
+             "Stage D Linear GC subject lists and validation assertions "
+             "(7 Experts, 6 Novices) are currently hardcoded to expert_novice "
+             "in config.yaml — other studies are not yet supported here.",
+    )
+    parser.set_defaults(overwrite=True)
+    parser.add_argument(
+        "--overwrite", dest="overwrite", action="store_true",
+        help="Recompute and overwrite cached .npz files (default).",
+    )
+    parser.add_argument(
+        "--no-overwrite", dest="overwrite", action="store_false",
+        help="Skip subjects that already have a cached .npz file.",
+    )
+    args = parser.parse_args()
+
+    if args.study != "expert_novice":
+        raise SystemExit(
+            f"Stage D Linear GC only supports --study expert_novice today "
+            f"(got '{args.study}'). See CLAUDE.md Section 1 / config.yaml "
+            f"stage_d_granger.linear_gc.subjects."
+        )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(levelname)-7s  %(message)s",
@@ -775,7 +809,7 @@ if __name__ == "__main__":
 
     print("\n[1] Running process_subject_gc('A1') ...")
     t0 = time.time()
-    result_A1 = process_subject_gc("A1", study="expert_novice", config=cfg)
+    result_A1 = process_subject_gc("A1", study=args.study, config=cfg, overwrite=args.overwrite)
     elapsed = time.time() - t0
     print(f"  Completed in {elapsed:.1f} s")
 
@@ -871,7 +905,7 @@ if __name__ == "__main__":
         t_sub = time.time()
         print(f"  [{sid}] processing ...", end="", flush=True)
         try:
-            res = process_subject_gc(sid, study="expert_novice", config=cfg)
+            res = process_subject_gc(sid, study=args.study, config=cfg, overwrite=args.overwrite)
             n_trials = len(res)
             total_w = sum(len(v) for v in res.values())
             elapsed_s = time.time() - t_sub
@@ -954,7 +988,7 @@ if __name__ == "__main__":
     print("=" * 70)
 
     print("\n[Building B_Exp and B_Nov ...]")
-    B_Exp, B_Nov = build_group_arrays(study="expert_novice", config=cfg)
+    B_Exp, B_Nov = build_group_arrays(study=args.study, config=cfg)
 
     print("\n  Group array shapes:")
     for trial_id in sorted(B_Exp.keys(), key=lambda k: int(k.split("_")[1])):

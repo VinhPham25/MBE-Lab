@@ -786,4 +786,18 @@ def _print_summary(results: dict, conn_labels: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    run_all_statistics(study="expert_novice")
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Stage D — Run all Linear GC statistical tests "
+                     "(normality, H1 Expert-vs-Novice, H0, HIV)."
+    )
+    parser.add_argument(
+        "--study",
+        default="expert_novice",
+        help="Study/dataset key from config.yaml (default: expert_novice). "
+             "Note: Stage D Linear GC is currently only validated for expert_novice.",
+    )
+    args = parser.parse_args()
+
+    run_all_statistics(study=args.study)
