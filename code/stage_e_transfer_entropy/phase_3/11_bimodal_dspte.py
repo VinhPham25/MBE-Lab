@@ -3,9 +3,25 @@ Stage E — Phase 3: Bimodal dSPTE (Sections 8.1, 8.2)
 
 Implements:
   - 8.1.1 `symbolise_amplitude_pair`
-  - 8.1.2 `compute_amplitude_dspte_matrix`
+  - 8.1.2 `compute_amplitude_dspte_matrix`   (bivariate; kept as baseline reference)
   - 8.2.1 `compute_bimodal_dspte_matrix`
   - 8.2.2 `process_subject_bimodal_dspte` + `run_batch_bimodal_dspte`
+
+Conditioning design (both branches are now multivariate)
+---------------------------------------------------------
+Phase branch   — `phase_2/06_multivariate_dspte.compute_multivariate_dspte_matrix()`:
+    Multivariate conditional phase dSPTE with PCA-compressed conditioning on
+    the n-2 remaining ROIs' phase symbols.
+
+Amplitude branch — `phase_4/14_amplitude_dste.compute_amplitude_conditional_dste_matrix()`:
+    Multivariate conditional amplitude dSTE.  Applies Hilbert amplitude +
+    z-score internally (no narrowband filter), fits a shared Neural-Gas
+    codebook on all ROIs, then conditions each (src, tgt) pair on the
+    PCA-compressed amplitude symbols of the remaining n-2 ROIs — identical
+    structural design to the phase branch.
+
+    `compute_amplitude_dspte_matrix()` (bivariate pairwise) is retained in
+    this file as a legacy baseline for diagnostic comparisons.
 """
 
 from __future__ import annotations
@@ -33,8 +49,9 @@ logger = logging.getLogger(__name__)
 
 _CORE_MOD = None
 _PIPELINE_MOD = None
-_HYBRID_MOD = None
+_MULTIVARIATE_MOD = None
 _SEG_MOD = None
+_P4_MOD = None
 
 
 def _load_module(name: str, abs_path: "Path"):
@@ -46,27 +63,27 @@ def _load_module(name: str, abs_path: "Path"):
 
 
 def _get_core_module():
-    """Return cached import of `phase_1/01_dspte_core.py`."""
+    """Return cached import of `phase_1/01_bivariate_dspte_core.py`."""
     global _CORE_MOD
     if _CORE_MOD is None:
-        _CORE_MOD = _load_module("dspte_core_bimodal", _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py")
+        _CORE_MOD = _load_module("bivariate_dspte_core_bimodal", _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py")
     return _CORE_MOD
 
 
 def _get_pipeline_module():
-    """Return cached import of `phase_1/02_dspte_pipeline.py`."""
+    """Return cached import of `phase_1/02_bivariate_dspte_pipeline.py`."""
     global _PIPELINE_MOD
     if _PIPELINE_MOD is None:
-        _PIPELINE_MOD = _load_module("dspte_pipeline_bimodal", _STAGE_E_ROOT / "phase_1" / "02_dspte_pipeline.py")
+        _PIPELINE_MOD = _load_module("bivariate_dspte_pipeline_bimodal", _STAGE_E_ROOT / "phase_1" / "02_bivariate_dspte_pipeline.py")
     return _PIPELINE_MOD
 
 
-def _get_hybrid_module():
-    """Return cached import of `phase_2/06_hybrid_dspte.py`."""
-    global _HYBRID_MOD
-    if _HYBRID_MOD is None:
-        _HYBRID_MOD = _load_module("hybrid_dspte_bimodal", _STAGE_E_ROOT / "phase_2" / "06_hybrid_dspte.py")
-    return _HYBRID_MOD
+def _get_multivariate_module():
+    """Return cached import of `phase_2/06_multivariate_dspte.py`."""
+    global _MULTIVARIATE_MOD
+    if _MULTIVARIATE_MOD is None:
+        _MULTIVARIATE_MOD = _load_module("multivariate_dspte_bimodal", _STAGE_E_ROOT / "phase_2" / "06_multivariate_dspte.py")
+    return _MULTIVARIATE_MOD
 
 
 def _get_seg_module():
@@ -81,6 +98,22 @@ def _get_seg_module():
         spec.loader.exec_module(mod)
         _SEG_MOD = mod
     return _SEG_MOD
+
+
+def _get_p4_module():
+    """Return cached import of `phase_4/14_amplitude_dste.py`.
+
+    Provides `compute_amplitude_conditional_dste_matrix()` — the multivariate
+    conditional amplitude dSTE function that replaces the bivariate
+    `compute_amplitude_dspte_matrix()` in both branches of this module.
+    """
+    global _P4_MOD
+    if _P4_MOD is None:
+        _P4_MOD = _load_module(
+            "amplitude_dste_p4_bimodal",
+            _STAGE_E_ROOT / "phase_4" / "14_amplitude_dste.py",
+        )
+    return _P4_MOD
 
 
 def _load_config_if_none(config: Optional[dict]) -> dict:
@@ -405,6 +438,8 @@ def optimise_bimodal_weights(
     }
 
     try:
+        from utils import configure_pyswarms_logging
+        configure_pyswarms_logging()  # redirect pyswarms' report.log into report_logs/
         import pyswarms as ps
     except Exception as exc:
         logger.warning("optimise_bimodal_weights: pyswarms unavailable: %s", exc)
@@ -580,7 +615,7 @@ def compute_amplitude_dspte_matrix(
                 config=config,
             )
             k0 = int(sym_meta["k0"])
-            max_te, opt_delay, te_profile = core.compute_dspte_multidelay(
+            max_te, opt_delay, te_profile = core.compute_bivariate_dspte_multidelay(
                 S_src, S_tgt, k0=k0, u_max=u_max
             )
 
@@ -612,12 +647,19 @@ def compute_bimodal_dspte_matrix(
     """
     Compute fused bimodal TE matrix for one window (Section 8.2.1).
 
+    Both branches use multivariate conditioning:
+      - Phase branch: `compute_multivariate_dspte_matrix()` conditions on the n-2
+        remaining ROIs' phase symbols (PCA-compressed).
+      - Amplitude branch: `compute_amplitude_conditional_dste_matrix()`
+        conditions on the n-2 remaining ROIs' amplitude symbols (PCA-compressed).
+
     Fusion:
       `EC_final = w_phase * EC_phase + w_amplitude * EC_amplitude`
     """
     config = _load_config_if_none(config)
     core = _get_core_module()
-    hybrid = _get_hybrid_module()
+    multivariate = _get_multivariate_module()
+    p4 = _get_p4_module()
 
     Y_window = np.asarray(Y_window, dtype=np.float64)
     if Y_window.ndim != 2:
@@ -638,15 +680,18 @@ def compute_bimodal_dspte_matrix(
                 f"compute_bimodal_dspte_matrix: Phi_win shape {Phi_win.shape} != Y_window shape {Y_window.shape}"
             )
 
-    phase_ec, _phase_delay, phase_meta = hybrid.compute_hybrid_dspte_matrix(
+    phase_ec, _phase_delay, phase_meta = multivariate.compute_multivariate_dspte_matrix(
         Phi_win=Phi_win,
         taus=taus,
         config=config,
         roi_names=roi_names,
     )
-    amp_ec, _amp_delay, amp_meta = compute_amplitude_dspte_matrix(
-        Y_window=Y_window,
+    # Amplitude branch: multivariate conditional dSTE (Phase 4).
+    # Y_window is raw broadband HbO — Phase 4 applies Hilbert amplitude internally.
+    amp_ec, _amp_delay, amp_meta = p4.compute_amplitude_conditional_dste_matrix(
+        A_win=Y_window,
         config=config,
+        roi_names=roi_names,
     )
 
     if weights is None:
@@ -864,7 +909,8 @@ def process_subject_bimodal_dspte(
     """
     config = _load_config_if_none(config)
     core = _get_core_module()
-    hybrid = _get_hybrid_module()
+    multivariate = _get_multivariate_module()
+    p4_mod = _get_p4_module()
     pipeline = _get_pipeline_module()
     seg_mod = _get_seg_module()
     from stage_e_transfer_entropy.utils_te import (
@@ -964,15 +1010,20 @@ def process_subject_bimodal_dspte(
             else:
                 Phi_win, taus_win = _compute_phase_window_and_taus(Y_win, core)
 
-            phase_ec, phase_delay, phase_meta = hybrid.compute_hybrid_dspte_matrix(
+            phase_ec, phase_delay, phase_meta = multivariate.compute_multivariate_dspte_matrix(
                 Phi_win=Phi_win,
                 taus=taus_win,
                 config=config,
                 roi_names=valid_roi_names,
             )
-            amp_ec, amp_delay, amp_meta = compute_amplitude_dspte_matrix(
-                Y_window=Y_win_amp,
+            # Amplitude branch: multivariate conditional dSTE (Phase 4).
+            # Y_win_amp is raw broadband HbO (or narrowband-filtered when
+            # amplitude_filter_enabled=True).  Phase 4 applies Hilbert amplitude
+            # internally — do NOT pre-extract amplitudes before this call.
+            amp_ec, amp_delay, amp_meta = p4_mod.compute_amplitude_conditional_dste_matrix(
+                A_win=Y_win_amp,
                 config=config,
+                roi_names=valid_roi_names,
             )
 
             if trial_id in {"Tr_1", "Tr_2"}:
@@ -1053,6 +1104,8 @@ def process_subject_bimodal_dspte(
         "w_phase": float(w_phase),
         "w_amplitude": float(w_amp),
         "optimisation": opt_meta,
+        "phase_branch_mode": "multivariate_conditional",
+        "amplitude_branch_mode": "multivariate_conditional",
         "window_size_samples": window_size,
         "stride_samples": stride,
         "u_max": u_max,
@@ -1260,6 +1313,11 @@ def _run_smoke_tests() -> None:
     assert delay_fused.shape == (3, 3)
     assert np.all(np.diag(ec_fused) == 0.0)
     assert "phase_metadata" in m_fused and "amplitude_metadata" in m_fused
+    # Amplitude branch should now come from Phase 4 multivariate conditioning.
+    amp_meta_keys = set(m_fused["amplitude_metadata"].keys())
+    assert "conditioning_mode" in amp_meta_keys, (
+        "amplitude_metadata missing 'conditioning_mode' — Phase 4 multivariate path not active"
+    )
 
     wp, wa, opt = optimise_bimodal_weights(
         phase_mats=[np.abs(ec_amp), np.abs(ec_amp * 0.8)],

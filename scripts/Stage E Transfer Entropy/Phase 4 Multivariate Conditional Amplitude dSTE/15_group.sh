@@ -4,9 +4,9 @@
 # Wraps: code/stage_e_transfer_entropy/phase_4/15_amplitude_dste_group.py
 #
 # Usage:
-#   ./15_group.sh                          # all strategies (default)
+#   ./15_group.sh                          # all strategies, rebuilds by default
 #   ./15_group.sh --strategy subject_mean
-#   ./15_group.sh --overwrite
+#   ./15_group.sh --no-overwrite           # use cached group arrays instead
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"

@@ -1,11 +1,11 @@
 """
-Stage E — Phase 4: Multivariate Conditional Amplitude dSPTE (Section 9)
+Stage E — Phase 4: Multivariate Conditional Amplitude dSTE (Section 9)
 
 **Method Rationale (Section 9.1)**
 ===================================
 
 This module implements a novel Multivariate Conditional Amplitude-domain Symbolic
-Phase Transfer Entropy (MCA-dSPTE) for fNIRS effective connectivity analysis.
+Transfer Entropy (MCA-dSTE) for fNIRS effective connectivity analysis.
 
 **Theoretical gap addressed:**
 Phase 1–3 of this pipeline operate primarily on the Hilbert *phase* of narrowband-
@@ -38,7 +38,7 @@ conditioning — a combination that has not appeared in the published literature
 
 **Explicit exclusions (distinguishing Phase 4 from all prior phases):**
 - ``extract_phase_signal()`` is NEVER called in this module
-- ``compute_hybrid_dspte_matrix()`` (Phase 2 phase-domain) is NEVER called
+- ``compute_multivariate_dspte_matrix()`` (Phase 2 phase-domain) is NEVER called
 - Narrowband bandpass filtering (0.01–0.15 Hz) is NEVER applied to the input
   signal — Phase 4 operates on the raw broadband HbO amplitude envelope directly
 
@@ -84,7 +84,7 @@ guard limits the conditional case to k₀=4.
 
 **Connection to Phase 3 amplitude branch:**
 Phase 3's amplitude branch (``11_bimodal_dspte.py`` Section 8.1.2) is BIVARIATE —
-it uses ``compute_dspte_matrix()`` (Phase 1) on amplitude sequences, with one
+it uses ``compute_bivariate_dspte_matrix()`` (Phase 1) on amplitude sequences, with one
 codebook per (src, tgt) pair and no conditioning.  Phase 4 conditions on all
 other ROIs' amplitude symbols, which is expected to suppress indirect connections
 by 40–50% (consistent with the Phase 1 → Phase 2 suppression ratio observed in
@@ -130,19 +130,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Module-level lazy imports (load once, reuse across calls)
 # ---------------------------------------------------------------------------
-_CORE_MOD = None       # phase_1/01_dspte_core.py
+_CORE_MOD = None       # phase_1/01_bivariate_dspte_core.py
 _UTILS_TE_MOD = None   # utils_te.py
-_HYBRID_MOD = None     # phase_2/06_hybrid_dspte.py  (for compute_conditional_dspte_multidelay)
-_PIPELINE_MOD = None   # phase_1/02_dspte_pipeline.py (extract_connectivity_vector)
+_MULTIVARIATE_MOD = None  # phase_2/06_multivariate_dspte.py  (for compute_conditional_dspte_multidelay)
+_PIPELINE_MOD = None   # phase_1/02_bivariate_dspte_pipeline.py (extract_connectivity_vector)
 _SEG_MOD = None        # stage_d_granger/02_trial_segmentation.py (get_trial_segments)
 
 
 def _get_core() -> object:
-    """Return cached phase_1/01_dspte_core module."""
+    """Return cached phase_1/01_bivariate_dspte_core module."""
     global _CORE_MOD
     if _CORE_MOD is None:
         spec = _ilu.spec_from_file_location(
-            "dspte_core_p4", _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
+            "bivariate_dspte_core_p4", _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
         )
         mod = _ilu.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -163,26 +163,26 @@ def _get_utils_te() -> object:
     return _UTILS_TE_MOD
 
 
-def _get_hybrid() -> object:
-    """Return cached phase_2/06_hybrid_dspte module."""
-    global _HYBRID_MOD
-    if _HYBRID_MOD is None:
+def _get_multivariate() -> object:
+    """Return cached phase_2/06_multivariate_dspte module."""
+    global _MULTIVARIATE_MOD
+    if _MULTIVARIATE_MOD is None:
         spec = _ilu.spec_from_file_location(
-            "hybrid_dspte_p4", _STAGE_E_ROOT / "phase_2" / "06_hybrid_dspte.py"
+            "multivariate_dspte_p4", _STAGE_E_ROOT / "phase_2" / "06_multivariate_dspte.py"
         )
         mod = _ilu.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        _HYBRID_MOD = mod
-    return _HYBRID_MOD
+        _MULTIVARIATE_MOD = mod
+    return _MULTIVARIATE_MOD
 
 
 def _get_pipeline_mod() -> object:
-    """Return cached phase_1/02_dspte_pipeline module (extract_connectivity_vector)."""
+    """Return cached phase_1/02_bivariate_dspte_pipeline module (extract_connectivity_vector)."""
     global _PIPELINE_MOD
     if _PIPELINE_MOD is None:
         spec = _ilu.spec_from_file_location(
-            "dspte_pipeline_p4",
-            _STAGE_E_ROOT / "phase_1" / "02_dspte_pipeline.py",
+            "bivariate_dspte_pipeline_p4",
+            _STAGE_E_ROOT / "phase_1" / "02_bivariate_dspte_pipeline.py",
         )
         mod = _ilu.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -354,7 +354,7 @@ def symbolise_multivariate_amplitude(
     """
     Symbolise all ROI amplitude trajectories using a shared Neural-Gas codebook.
 
-    Adapts ``symbolise_multivariate()`` from Phase 2 (``06_hybrid_dspte.py``)
+    Adapts ``symbolise_multivariate()`` from Phase 2 (``06_multivariate_dspte.py``)
     to operate on Hilbert amplitude envelopes instead of narrowband Hilbert phase.
     The algorithm is **identical** — Neural-Gas operates on Euclidean distances in
     embedding space, making the signal domain ([0, ∞) amplitude vs [-π, π] phase)
@@ -383,7 +383,7 @@ def symbolise_multivariate_amplitude(
     conditional contingency table (4D with PCA 1PC conditioning) has k₀^4 cells:
       k₀=4 → 256 cells → ~5.2 samp/cell at T'≈1343  (adequate threshold: ≥ 5)
       k₀=5 → 625 cells → ~2.1 samp/cell              (below threshold)
-    The sparsity fallback in ``compute_amplitude_conditional_dspte_matrix``
+    The sparsity fallback in ``compute_amplitude_conditional_dste_matrix``
     automatically degrades to bivariate amplitude TE when the 4D table is too sparse.
     This design lets the NG find the natural convergence point for amplitude data
     and relies on the sparsity guard for downstream quality control — rather than
@@ -551,7 +551,7 @@ def symbolise_multivariate_amplitude(
     #   k₀=5 → 625 cells → 2.1 samp/cell (marginal — sparsity guard will fire)
     # Unlike Phase 2 (hard k₀=4 pre-clamp), Phase 4 allows the NG to select
     # higher k₀ and relies on the sparsity guard in
-    # compute_amplitude_conditional_dspte_matrix for downstream quality control.
+    # compute_amplitude_conditional_dste_matrix for downstream quality control.
     # We still clamp at k0_max as an absolute ceiling.
     # ------------------------------------------------------------------
     clamped = False
@@ -669,19 +669,19 @@ def symbolise_multivariate_amplitude(
 
 
 # ===========================================================================
-# Section 9.4 — compute_amplitude_conditional_dspte_matrix
+# Section 9.4 — compute_amplitude_conditional_dste_matrix
 # ===========================================================================
 
-def compute_amplitude_conditional_dspte_matrix(
+def compute_amplitude_conditional_dste_matrix(
     A_win: np.ndarray,
     config: "dict | None" = None,
     roi_names: "list[str] | None" = None,
 ) -> tuple[np.ndarray, np.ndarray, dict]:
     """
-    Compute the multivariate conditional amplitude dSPTE matrix for one window.
+    Compute the multivariate conditional amplitude dSTE matrix for one window.
 
     This is the Phase 4 drop-in replacement for Phase 2's
-    ``compute_hybrid_dspte_matrix()``.  It adapts the complete Phase 2 pipeline
+    ``compute_multivariate_dspte_matrix()``.  It adapts the complete Phase 2 pipeline
     to the amplitude domain:
 
     1. ``extract_amplitude_matrix()``      — Hilbert amplitude + z-score + τ per ROI
@@ -692,7 +692,7 @@ def compute_amplitude_conditional_dspte_matrix(
     **Critical design exclusions:**
     - ``extract_phase_signal()`` is NEVER called.
     - No narrowband filter is applied anywhere in this function or its callees.
-    - ``compute_hybrid_dspte_matrix()`` (Phase 2) is NOT called as a subroutine.
+    - ``compute_multivariate_dspte_matrix()`` (Phase 2) is NOT called as a subroutine.
 
     **Conditioning strategy (identical to Phase 2):**
     For a 5-ROI system and pair (src, tgt), the conditioning set Z contains the
@@ -722,7 +722,7 @@ def compute_amplitude_conditional_dspte_matrix(
     Returns
     -------
     EC_matrix : np.ndarray, shape (n_rois, n_rois), float64
-        ``EC_matrix[src, tgt]`` = maximum conditional amplitude dSPTE across
+        ``EC_matrix[src, tgt]`` = maximum conditional amplitude dSTE across
         lags u ∈ {1, …, u_max}.  Diagonal = 0.  Bad channel rows/cols = 0.
     delay_matrix : np.ndarray, shape (n_rois, n_rois), int
         Optimal lag (samples) for each directed connection.
@@ -749,7 +749,7 @@ def compute_amplitude_conditional_dspte_matrix(
         - ``'sparsity_info'``: str — codebook sparsity summary from symbolisation
     """
     config = _load_config_if_none(config)
-    hybrid = _get_hybrid()
+    multivariate = _get_multivariate()
 
     te_cfg = config.get("stage_e_transfer_entropy", {})
     sig_cfg = te_cfg.get("signal", {})
@@ -795,7 +795,7 @@ def compute_amplitude_conditional_dspte_matrix(
 
     if n_valid < 2:
         logger.warning(
-            "compute_amplitude_conditional_dspte_matrix: fewer than 2 valid ROIs "
+            "compute_amplitude_conditional_dste_matrix: fewer than 2 valid ROIs "
             "(%d) — returning zero matrices.", n_valid
         )
         return EC_matrix, delay_matrix, {
@@ -811,6 +811,10 @@ def compute_amplitude_conditional_dspte_matrix(
             "conditioning_mode": "bivariate",
             "envelope_normalize": envelope_normalize,
             "sparsity_info": "",
+            "symbol_seqs": [], "valid_indices": valid_indices, "codebook": None,
+            # Section 10.2 (Stage 2 fix) -- no conditioning is even attempted
+            # here (< 2 valid ROIs), so there is no composite for any pair.
+            "z_composite_per_pair": {}, "conditioning_config_hash": None,
         }
 
     # ------------------------------------------------------------------
@@ -844,12 +848,18 @@ def compute_amplitude_conditional_dspte_matrix(
     codebook = sym_meta["codebook"]
 
     # ------------------------------------------------------------------
-    # Step 4: Conditional amplitude dSPTE for each ordered pair
+    # Step 4: Conditional amplitude dSTE for each ordered pair
     # ------------------------------------------------------------------
     all_sparsity: list[float] = []
     all_mean_count_occupied: list[float] = []
     n_pairs_fallback = 0
     n_pairs_total = 0
+    # Section 10.2 (Stage 2 fix) -- per-pair PCA composite Z symbol sequence,
+    # keyed by (src_v, tgt_v) in local valid-ROI index space (same indexing
+    # convention as te_profiles). Only populated for pairs where the real
+    # pipeline actually used genuine multivariate PCA conditioning (did NOT
+    # majority-fall-back to bivariate across the lag sweep).
+    z_composite_per_pair: dict = {}
 
     for src_v in range(n_valid):
         for tgt_v in range(n_valid):
@@ -873,7 +883,7 @@ def compute_amplitude_conditional_dspte_matrix(
                 embedded_z_list = None
 
             max_te, optimal_delay, te_profile, pair_meta = (
-                hybrid.compute_conditional_dspte_multidelay(
+                multivariate.compute_conditional_dspte_multidelay(
                     S_x=S_x,
                     S_y=S_y,
                     S_z_list=S_z_list,
@@ -903,6 +913,12 @@ def compute_amplitude_conditional_dspte_matrix(
             all_mean_count_occupied.append(pair_meta["mean_count_occupied"])
             if pair_meta["majority_fallback"]:
                 n_pairs_fallback += 1
+            elif pair_meta.get("z_composite") is not None:
+                # Genuine multivariate conditioning: persist the exact
+                # composite this pair's EC_matrix entry was computed from,
+                # so the ETE core can reuse it unchanged (not reconstruct it
+                # from raw per-ROI symbols, not recompute PCA).
+                z_composite_per_pair[(src_v, tgt_v)] = pair_meta["z_composite"]
 
     # ------------------------------------------------------------------
     # Window-level fallback summary
@@ -912,10 +928,10 @@ def compute_amplitude_conditional_dspte_matrix(
     )
     if majority_pairs_fallback:
         logger.warning(
-            "compute_amplitude_conditional_dspte_matrix: Majority of pairs fell "
+            "compute_amplitude_conditional_dste_matrix: Majority of pairs fell "
             "back to bivariate — %d/%d.  k₀=%d → 4D table has %d cells (%.2f "
             "samp/cell at T'=%d).  Consider reducing k₀_max in config or "
-            "using bivariate-only amplitude dSPTE (Phase 3 amplitude branch).",
+            "using bivariate-only amplitude dSTE (Phase 3 amplitude branch).",
             n_pairs_fallback, n_pairs_total, k0, k0**4,
             (sym_meta["T_prime"] / max(1, k0**4)), sym_meta["T_prime"],
         )
@@ -937,7 +953,7 @@ def compute_amplitude_conditional_dspte_matrix(
         conditioning_mode = f"full_nz{n_valid - 2}"
 
     logger.info(
-        "compute_amplitude_conditional_dspte_matrix: k0=%d  n_valid=%d  "
+        "compute_amplitude_conditional_dste_matrix: k0=%d  n_valid=%d  "
         "conditioning=%s  pairs_fallback=%d/%d  mean_sparsity=%.1f%%  "
         "mean_count_occupied=%.2f",
         k0, n_valid, conditioning_mode, n_pairs_fallback, n_pairs_total,
@@ -946,6 +962,8 @@ def compute_amplitude_conditional_dspte_matrix(
         if not np.isnan(mean_count_occupied_win)
         else float("nan"),
     )
+
+    from utils_te import compute_conditioning_config_hash  # noqa
 
     metadata = {
         "k0": sym_meta["k0"],
@@ -966,13 +984,32 @@ def compute_amplitude_conditional_dspte_matrix(
         "conditioning_mode": conditioning_mode,
         "envelope_normalize": envelope_normalize,
         "sparsity_info": sym_meta.get("sparsity_info", ""),
+        # ------------------------------------------------------------------
+        # Section 10.2 — additive keys for the Effective TE (ETE) surrogate
+        # core (11_symbolic_ete_core.py).  Purely additive: zero behaviour
+        # change for existing callers.  Mirrors the identical addition to
+        # Phase 2's compute_multivariate_dspte_matrix() — see that function's
+        # docstring for the full rationale.
+        # ------------------------------------------------------------------
+        "symbol_seqs": symbol_seqs,
+        "valid_indices": valid_indices,
+        "codebook": codebook,
+        # ------------------------------------------------------------------
+        # Section 10.2 (Stage 2 fix, 2026-08-30) — additive keys, mirrors the
+        # identical addition to Phase 2's compute_multivariate_dspte_matrix()
+        # — see that function's docstring for the full rationale.
+        # ------------------------------------------------------------------
+        "z_composite_per_pair": z_composite_per_pair,
+        "conditioning_config_hash": compute_conditioning_config_hash(
+            config, "phase_4", k0
+        ),
     }
 
     return EC_matrix, delay_matrix, metadata
 
 
 # ===========================================================================
-# Section 9.5 — Per-Subject Amplitude dSPTE Pipeline
+# Section 9.5 — Per-Subject Amplitude dSTE Pipeline
 # ===========================================================================
 
 # Canonical ROI order shared across all Stage E phases
@@ -996,7 +1033,7 @@ def _extract_canonical_lag_profiles_p4(
     ----------
     te_profiles : dict
         ``{(src_v, tgt_v): np.ndarray(u_max,)}`` from
-        ``compute_amplitude_conditional_dspte_matrix`` metadata.
+        ``compute_amplitude_conditional_dste_matrix`` metadata.
         Keys use *local* (valid-ROI-only) indices.
     roi_names : list[str]
         Valid ROI names (e.g. ['LPFC', 'CPFC', ...]) in the same order
@@ -1033,7 +1070,7 @@ def _extract_canonical_lag_profiles_p4(
     return profiles
 
 
-def _save_subject_amplitude_dspte_npz(
+def _save_subject_amplitude_dste_npz(
     subject_id: str,
     result: dict,
     delays_result: dict,
@@ -1044,7 +1081,7 @@ def _save_subject_amplitude_dspte_npz(
     config: dict,
 ) -> None:
     """
-    Save per-subject Phase 4 amplitude dSPTE connectivity to .npz.
+    Save per-subject Phase 4 amplitude dSTE connectivity to .npz.
 
     Schema (schema-compatible with Phase 1/2/3 for cross-phase comparison):
         Tr_N_connectivity   : shape (20, n_wins)      float64
@@ -1108,12 +1145,12 @@ def _save_subject_amplitude_dspte_npz(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez(out_path, **save_dict)
     logger.info(
-        "_save_subject_amplitude_dspte_npz [%s]: saved %d trials → %s",
+        "_save_subject_amplitude_dste_npz [%s]: saved %d trials → %s",
         subject_id, len(trial_ids), out_path,
     )
 
 
-def _load_subject_amplitude_dspte_npz(path: "Path") -> "dict | None":
+def _load_subject_amplitude_dste_npz(path: "Path") -> "dict | None":
     """
     Load per-subject Phase 4 .npz into {trial_id: {win_id: vec20}} dict.
 
@@ -1135,14 +1172,14 @@ def _load_subject_amplitude_dspte_npz(path: "Path") -> "dict | None":
     return result
 
 
-def process_subject_amplitude_dspte(
+def process_subject_amplitude_dste(
     subject_id: str,
     study: str = "expert_novice",
     config: "dict | None" = None,
     overwrite: bool = False,
 ) -> dict:
     """
-    Run the Phase 4 multivariate conditional amplitude dSPTE pipeline for one subject.
+    Run the Phase 4 multivariate conditional amplitude dSTE pipeline for one subject.
 
     This is the per-subject orchestrator for Section 9.5.  It mirrors
     ``process_subject_bimodal_dspte()`` from Phase 3 but is strictly
@@ -1151,7 +1188,7 @@ def process_subject_amplitude_dspte(
     - **No narrowband filter** — broadband HbO amplitude is the input signal
     - **No phase extraction** — ``extract_phase_signal()`` is never called
     - **No phase branch** — single output file per subject
-    - Calls ``compute_amplitude_conditional_dspte_matrix()`` per window on
+    - Calls ``compute_amplitude_conditional_dste_matrix()`` per window on
       the raw broadband ``Y_win`` slice directly
 
     Pipeline steps:
@@ -1159,7 +1196,7 @@ def process_subject_amplitude_dspte(
       2. Load trial segments via Stage D's ``get_trial_segments()``
       3. For each trial × window:
          - Slice ``Y_win = Y_trial[:, ws:we+1]`` (1351 samples, same as all phases)
-         - Call ``compute_amplitude_conditional_dspte_matrix(Y_win, config)``
+         - Call ``compute_amplitude_conditional_dste_matrix(Y_win, config)``
          - Extract 20-element connectivity vector and delay vector
          - Store lag profiles for visualisation
       4. Save per-subject .npz with Phase 1/2/3-compatible schema
@@ -1179,7 +1216,7 @@ def process_subject_amplitude_dspte(
     -------
     dict
         ``{trial_id: {win_id: conn_vec_20}}`` where ``conn_vec_20`` is a
-        20-element float64 array of amplitude dSPTE connectivity values.
+        20-element float64 array of amplitude dSTE connectivity values.
     """
     config = _load_config_if_none(config)
     utils_te = _get_utils_te()
@@ -1193,16 +1230,17 @@ def process_subject_amplitude_dspte(
     window_size = int(win_cfg.get("size_samples", 1350))
     stride = int(win_cfg.get("stride_samples", 1350))
     u_max = int(sig_cfg.get("u_max", 50))
+    embedding_dimension = int(sig_cfg.get("embedding_dimension", 2))
 
     out_dir = utils_te.get_te_output_dir("phase_4_connectivity", config=config)
-    out_path = out_dir / f"sub-{subject_id}_amplitude_dspte_connectivity.npz"
+    out_path = out_dir / f"sub-{subject_id}_amplitude_dste_connectivity.npz"
 
     if not overwrite and out_path.exists():
         logger.info(
-            "process_subject_amplitude_dspte [%s]: cache hit → %s",
+            "process_subject_amplitude_dste [%s]: cache hit → %s",
             subject_id, out_path,
         )
-        cached = _load_subject_amplitude_dspte_npz(out_path)
+        cached = _load_subject_amplitude_dste_npz(out_path)
         return cached if cached is not None else {}
 
     t0_subj = time.perf_counter()
@@ -1234,7 +1272,7 @@ def process_subject_amplitude_dspte(
 
         if Y_trial.shape[1] < (window_size + 1):
             logger.warning(
-                "process_subject_amplitude_dspte [%s %s]: trial too short "
+                "process_subject_amplitude_dste [%s %s]: trial too short "
                 "(%d < %d + 1) — skipping.",
                 subject_id, trial_id, Y_trial.shape[1], window_size,
             )
@@ -1254,7 +1292,7 @@ def process_subject_amplitude_dspte(
             Y_win = Y_trial[:, ws: we + 1]   # shape (n_rois, 1351)
 
             t_win = time.perf_counter()
-            EC_mat, delay_mat, meta = compute_amplitude_conditional_dspte_matrix(
+            EC_mat, delay_mat, meta = compute_amplitude_conditional_dste_matrix(
                 A_win=Y_win,   # raw broadband HbO — no pre-processing by caller
                 config=config,
                 roi_names=valid_roi_names,
@@ -1263,13 +1301,13 @@ def process_subject_amplitude_dspte(
 
             if elapsed_win > 120.0:
                 logger.warning(
-                    "process_subject_amplitude_dspte [%s %s %s]: window took "
+                    "process_subject_amplitude_dste [%s %s %s]: window took "
                     "%.1f s (> 120 s threshold).",
                     subject_id, trial_id, win_id, elapsed_win,
                 )
             else:
                 logger.info(
-                    "process_subject_amplitude_dspte [%s %s %s]: "
+                    "process_subject_amplitude_dste [%s %s %s]: "
                     "k₀=%d  conditioning=%s  mean_EC=%.5f  elapsed=%.1f s",
                     subject_id, trial_id, win_id,
                     meta.get("k0", 0), meta.get("conditioning_mode", "?"),
@@ -1293,7 +1331,7 @@ def process_subject_amplitude_dspte(
             profiles_result[trial_id][win_id] = profiles_20
 
         logger.info(
-            "process_subject_amplitude_dspte [%s %s]: %d windows",
+            "process_subject_amplitude_dste [%s %s]: %d windows",
             subject_id, trial_id, win_num - 1,
         )
 
@@ -1307,8 +1345,22 @@ def process_subject_amplitude_dspte(
     except ValueError:
         group = "Unknown"
 
+    # -----------------------------------------------------------------
+    # Params snapshot — captured from config.yaml AT THE TIME OF THIS RUN.
+    #
+    # This is deliberately embedded in the per-subject .npz (rather than
+    # read fresh from config.yaml at plot time) so that visualizations
+    # always caption the parameters that actually produced the data on
+    # disk, even if config.yaml is edited afterward without re-running
+    # this pipeline. See 15_amplitude_dste_group.py::consolidate_p4_run_metadata()
+    # for how these are aggregated across subjects, and
+    # 16_amplitude_dste_visualization.py::_add_params_caption() for how
+    # they are rendered on figures.
+    # -----------------------------------------------------------------
+    p4_cfg = te_cfg.get("phase_4", {})
+    pca_cfg = p4_cfg.get("conditional_pca", {})
     params = {
-        "phase": "phase_4_amplitude_dspte",
+        "phase": "phase_4_amplitude_dste",
         "study": study,
         "group": group,
         "window_size_samples": window_size,
@@ -1316,13 +1368,23 @@ def process_subject_amplitude_dspte(
         "u_max": u_max,
         "sfreq": float(sfreq),
         "narrowband_filter": False,
-        "envelope_normalize": bool(
-            te_cfg.get("phase_4", {}).get("envelope_normalize", True)
+        "envelope_normalize": bool(p4_cfg.get("envelope_normalize", True)),
+        # Curated fields most likely to change between runs and affect
+        # the resulting TE values (2026-08-28 caption feature; extended
+        # 2026-08-28 to also cover embedding_dimension/narrowband_filter,
+        # which were omitted from the original curated set):
+        "embedding_dimension": embedding_dimension,
+        "k0_max": int(p4_cfg.get("k0_max", 20)),
+        "ndis_threshold": float(p4_cfg.get("ndis_threshold", 0.05)),
+        "conditional_pca_enabled": bool(pca_cfg.get("enabled", True)),
+        "conditional_pca_n_components": int(pca_cfg.get("n_components", 1)),
+        "sparsity_fallback_threshold": float(
+            p4_cfg.get("sparsity_fallback_threshold", 0.95)
         ),
         "elapsed_s": round(elapsed_subj, 2),
     }
 
-    _save_subject_amplitude_dspte_npz(
+    _save_subject_amplitude_dste_npz(
         subject_id=subject_id,
         result=result,
         delays_result=delays_result,
@@ -1335,7 +1397,7 @@ def process_subject_amplitude_dspte(
 
     total_wins = sum(len(v) for v in result.values())
     logger.info(
-        "process_subject_amplitude_dspte [%s]: DONE  trials=%d  windows=%d  "
+        "process_subject_amplitude_dste [%s]: DONE  trials=%d  windows=%d  "
         "elapsed=%.1f s",
         subject_id, len(result), total_wins, elapsed_subj,
     )
@@ -1346,14 +1408,14 @@ def process_subject_amplitude_dspte(
 # Section 9.6 — Batch Runner
 # ===========================================================================
 
-def run_batch_amplitude_dspte(
+def run_batch_amplitude_dste(
     study: str = "expert_novice",
     subjects: "list[str] | None" = None,
     config: "dict | None" = None,
     overwrite: bool = False,
 ) -> dict:
     """
-    Batch-process all ASTaUND subjects for Phase 4 amplitude dSPTE (Section 9.6).
+    Batch-process all ASTaUND subjects for Phase 4 amplitude dSTE (Section 9.6).
 
     Mirrors ``run_batch_bimodal_dspte()`` from Phase 3.  Iterates over the
     Expert + Novice subject lists from config (R10 excluded by default).
@@ -1370,20 +1432,20 @@ def run_batch_amplitude_dspte(
     config : dict or None
         Parsed config.yaml. Loaded from disk if None.
     overwrite : bool
-        Pass-through to ``process_subject_amplitude_dspte()``.
+        Pass-through to ``process_subject_amplitude_dste()``.
 
     Returns
     -------
     dict
         Batch log with keys:
         - ``'run_timestamp'`` : ISO timestamp
-        - ``'phase'`` : 'phase_4_amplitude_dspte'
+        - ``'phase'`` : 'phase_4_amplitude_dste'
         - ``'study'`` : study name
         - ``'n_subjects'`` : int
         - ``'subjects'`` : per-subject status dicts
         - ``'summary'`` : {n_success, n_failed, total_elapsed_s}
 
-        Saved to ``phase_4_group/amplitude_dspte_batch_log.json``.
+        Saved to ``phase_4_group/amplitude_dste_batch_log.json``.
     """
     config = _load_config_if_none(config)
     utils_te = _get_utils_te()
@@ -1397,7 +1459,7 @@ def run_batch_amplitude_dspte(
     from datetime import datetime as _dt
     batch_log: dict = {
         "run_timestamp": _dt.now().isoformat(),
-        "phase": "phase_4_amplitude_dspte",
+        "phase": "phase_4_amplitude_dste",
         "study": study,
         "n_subjects": len(subjects),
         "subjects": {},
@@ -1405,9 +1467,9 @@ def run_batch_amplitude_dspte(
 
     for sid in subjects:
         t_sub = time.perf_counter()
-        logger.info("run_batch_amplitude_dspte: processing subject %s …", sid)
+        logger.info("run_batch_amplitude_dste: processing subject %s …", sid)
         try:
-            res = process_subject_amplitude_dspte(
+            res = process_subject_amplitude_dste(
                 subject_id=sid,
                 study=study,
                 config=config,
@@ -1438,7 +1500,7 @@ def run_batch_amplitude_dspte(
                 "elapsed_s": round(time.perf_counter() - t_sub, 2),
             }
             logger.error(
-                "run_batch_amplitude_dspte [%s]: FAILED — %s", sid, exc, exc_info=True
+                "run_batch_amplitude_dste [%s]: FAILED — %s", sid, exc, exc_info=True
             )
 
     n_ok = sum(
@@ -1452,12 +1514,12 @@ def run_batch_amplitude_dspte(
 
     group_dir = utils_te.get_te_output_dir("phase_4_group", config=config)
     group_dir.mkdir(parents=True, exist_ok=True)
-    log_path = group_dir / "amplitude_dspte_batch_log.json"
+    log_path = group_dir / "amplitude_dste_batch_log.json"
     with open(log_path, "w") as fh:
         json.dump(batch_log, fh, indent=2)
 
     logger.info(
-        "run_batch_amplitude_dspte: DONE  %d/%d subjects succeeded  "
+        "run_batch_amplitude_dste: DONE  %d/%d subjects succeeded  "
         "total=%.1f s  log → %s",
         n_ok, len(subjects), batch_log["summary"]["total_elapsed_s"], log_path,
     )
@@ -1465,7 +1527,7 @@ def run_batch_amplitude_dspte(
 
 
 # ===========================================================================
-# Smoke tests (run via  python3 14_amplitude_dspte.py --smoke-test)
+# Smoke tests (run via  python3 14_amplitude_dste.py --smoke-test)
 # ===========================================================================
 
 def _run_smoke_tests() -> None:
@@ -1477,9 +1539,9 @@ def _run_smoke_tests() -> None:
     Test 1 — extract_amplitude_matrix: shape, finite values, τ > 0, z-score.
     Test 2 — extract_amplitude_matrix: NaN row handling.
     Test 3 — symbolise_multivariate_amplitude: symbol range, entropy, meta keys.
-    Test 4 — compute_amplitude_conditional_dspte_matrix: EC shape, diagonal=0,
+    Test 4 — compute_amplitude_conditional_dste_matrix: EC shape, diagonal=0,
               delay shape, metadata keys.
-    Test 5 — compute_amplitude_conditional_dspte_matrix: directionality on AR model.
+    Test 5 — compute_amplitude_conditional_dste_matrix: directionality on AR model.
     """
     import logging as _lg
     _lg.basicConfig(
@@ -1621,12 +1683,12 @@ def _run_smoke_tests() -> None:
         n_fail += 1
 
     # ------------------------------------------------------------------
-    # Test 4: compute_amplitude_conditional_dspte_matrix — shapes, diagonal=0
+    # Test 4: compute_amplitude_conditional_dste_matrix — shapes, diagonal=0
     # ------------------------------------------------------------------
     log.info("=" * 60)
-    log.info("Test 4: compute_amplitude_conditional_dspte_matrix — matrix shapes")
+    log.info("Test 4: compute_amplitude_conditional_dste_matrix — matrix shapes")
     try:
-        EC, delay, meta4 = compute_amplitude_conditional_dspte_matrix(
+        EC, delay, meta4 = compute_amplitude_conditional_dste_matrix(
             Y_test, config=_cfg_smoke, roi_names=ROI_NAMES
         )
         assert EC.shape == (N_ROIS, N_ROIS), f"EC shape {EC.shape}"
@@ -1724,7 +1786,7 @@ def _run_smoke_tests() -> None:
             _cfg_dir["stage_e_transfer_entropy"]
         )
 
-        EC_dir, _, meta_dir = compute_amplitude_conditional_dspte_matrix(
+        EC_dir, _, meta_dir = compute_amplitude_conditional_dste_matrix(
             Y_2roi, config=_cfg_dir, roi_names=["X", "Y"]
         )
 
@@ -1779,7 +1841,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(
-        description="Stage E Phase 4 — Multivariate Conditional Amplitude dSPTE"
+        description="Stage E Phase 4 — Multivariate Conditional Amplitude dSTE"
     )
     grp = parser.add_mutually_exclusive_group(required=True)
     grp.add_argument(
@@ -1799,10 +1861,17 @@ if __name__ == "__main__":
         help="Run Phase 4 pipeline for all subjects in config",
     )
     parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite existing output files",
+        "--no-overwrite",
+        dest="overwrite",
+        action="store_false",
+        help=(
+            "Use cached output files instead of reprocessing (default: "
+            "reprocess/overwrite every run, since stale cached .npz files "
+            "silently miss newly-added params_json fields — see "
+            "2026-08-28 params-caption incident)."
+        ),
     )
+    parser.set_defaults(overwrite=True)
     args = parser.parse_args()
 
     _cfg = _load_config_if_none(None)
@@ -1810,7 +1879,7 @@ if __name__ == "__main__":
     if args.smoke_test:
         _run_smoke_tests()
     elif args.subject:
-        _res = process_subject_amplitude_dspte(
+        _res = process_subject_amplitude_dste(
             subject_id=args.subject.strip(),
             config=_cfg,
             overwrite=args.overwrite,
@@ -1820,5 +1889,5 @@ if __name__ == "__main__":
             "subject=%s  trials=%d  windows=%d", args.subject, len(_res), _wins
         )
     elif args.batch:
-        _log = run_batch_amplitude_dspte(config=_cfg, overwrite=args.overwrite)
+        _log = run_batch_amplitude_dste(config=_cfg, overwrite=args.overwrite)
         logger.info("batch done: %s", _log.get("summary", {}))
