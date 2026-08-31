@@ -1,6 +1,7 @@
 Raw/
 BIDS/
 .venv/
+.pip_deps/
 __pycache__/
 techval_branch/
 outputs/
