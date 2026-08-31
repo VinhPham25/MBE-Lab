@@ -608,7 +608,8 @@ FDR-significant, small-cohort attributed).
 
 #### `18_asymmetry.sh` — wraps `18_asymmetry_index_statistics.py`
 Asymmetry Index (AI = TE(X→Y) − TE(Y→X)) diagnostics vs. GC directionality —
-current interpretive focus.
+current interpretive focus. This is the **raw-magnitude** Phase 4 AI track;
+ETE-floor-corrected AI is `21_ete_asymmetry.sh`.
 
 **Args**
 - `--test {all,per-connection,cross-pair,lm1}` — which statistical test to run (default: `all`)
@@ -619,6 +620,71 @@ current interpretive focus.
 ```bash
 ./18_asymmetry.sh
 ./18_asymmetry.sh --test per-connection --n-permutations 5000
+```
+
+#### `19_ete_process.sh` — wraps `phase_4/19_amplitude_ete.py`
+Effective Transfer Entropy: circular-shift surrogate floor-correction of the
+Phase 4 multivariate conditional amplitude dSTE. Surrogates are conditioned
+on the same PCA composite the raw pipeline used (not bivariate). Raw
+connectivity is still computed once per window; this adds the surrogate
+layer on top.
+
+**Args** (one required)
+- `--batch` — run ETE for all Expert+Novice subjects (R10 excluded)
+- `--subject ID` — run ETE for one subject, e.g. `A1`
+- `--benchmark ID` — time N windows for one subject (use with `--n-windows`)
+- `--n-windows N` — windows to time in `--benchmark` mode (default: `1`)
+- `--no-overwrite` — skip subjects that already have a cached `.npz` (**underlying default is overwrite**)
+
+> The wrapper defaults to `--batch` when called with no arguments. Full
+> cohort is ~4 min at `n_surrogates=500` (13 subjects, 120 windows).
+
+```bash
+./19_ete_process.sh
+./19_ete_process.sh --subject A1
+./19_ete_process.sh --benchmark A1 --n-windows 5
+./19_ete_process.sh --batch --no-overwrite
+```
+
+#### `20_ete_group_stats_viz.sh` — wraps `15_ete_group_stats_viz.py`
+Method-parameterized ETE group arrays + statistics + diagnostic plots
+(`ete_diagnostics.png`: null histograms, floor-vs-signal bars, Expert/Novice
+ETE delta). Numbered 20 here because `15_group.sh` already wraps the raw-dSTE
+group builder.
+
+**Args**
+- `--method METHOD` — registry key (default in Python: `phase_4`; also `phase_2` once that ETE batch exists)
+- `--step {group,statistics,visualizations,all}` — which stage to run (default: `all`)
+- `--overwrite` — rebuild even if cached files exist
+- `--no-overwrite` — use cached outputs when present (Python default)
+
+> The wrapper defaults to `--method phase_4 --step all --overwrite` when
+> called with no arguments, because ETE group/stats/viz caches from a prior
+> surrogate design are stale after a `19_ete_process.sh` re-run.
+
+```bash
+./20_ete_group_stats_viz.sh
+./20_ete_group_stats_viz.sh --step visualizations
+./20_ete_group_stats_viz.sh --method phase_2 --step all --overwrite
+```
+
+#### `21_ete_asymmetry.sh` — wraps `12_asymmetry_index_core.py`
+Asymmetry Index on the **floor-corrected ETE** track (`method_key=phase_4_ete`).
+Must follow `20_ete_group_stats_viz.sh` so the ETE subject-mean group arrays
+exist. Distinct from `18_asymmetry.sh` (raw dSTE AI).
+
+**Args**
+- `--method METHOD` — registry key (wrapper default: `phase_4_ete`)
+- `--all` — run every registered `ai_track` instead of one method
+- `--overwrite` / `--no-overwrite`
+
+> The wrapper defaults to `--method phase_4_ete --overwrite` when called
+> with no arguments.
+
+```bash
+./21_ete_asymmetry.sh
+./21_ete_asymmetry.sh --no-overwrite
+./21_ete_asymmetry.sh --all --overwrite
 ```
 
 #### `debug.sh` — wraps `phase_4_debug.py`
@@ -637,7 +703,11 @@ NG convergence diagnostic for the amplitude embedding space.
 
 #### `run_all.sh`
 Runs `14_process.sh` → `15_group.sh` → `16_visualize.sh` →
-`17_statistics.sh` → `18_asymmetry.sh` in order, no args accepted.
+`17_statistics.sh` → `18_asymmetry.sh` → `19_ete_process.sh` →
+`20_ete_group_stats_viz.sh` → `21_ete_asymmetry.sh` in order, no args
+accepted. That is the full Phase 4 sequence including ETE. To re-run
+**only** ETE after a surrogate-design change (raw dSTE unchanged), call
+`19` → `20` → `21` individually instead.
 
 ```bash
 ./run_all.sh
@@ -652,10 +722,15 @@ Runs `14_process.sh` → `15_group.sh` → `16_visualize.sh` →
 cat CLAUDE.md
 tail -100 docs/TRANSFER_ENTROPY_PROGRESS.md
 
-# 2. Re-run the current primary method end to end
+# 2. Re-run the current primary method end to end (raw dSTE + ETE)
 "scripts/Stage E Transfer Entropy/Phase 4 Multivariate Conditional Amplitude dSTE/run_all.sh"
 
-# 3. Or just re-generate one thing, e.g. the asymmetry-index stats
+# 3. Or just re-run ETE after a surrogate-design change (raw dSTE unchanged)
+"scripts/Stage E Transfer Entropy/Phase 4 Multivariate Conditional Amplitude dSTE/19_ete_process.sh"
+"scripts/Stage E Transfer Entropy/Phase 4 Multivariate Conditional Amplitude dSTE/20_ete_group_stats_viz.sh"
+"scripts/Stage E Transfer Entropy/Phase 4 Multivariate Conditional Amplitude dSTE/21_ete_asymmetry.sh"
+
+# 4. Or just re-generate one thing, e.g. the raw asymmetry-index stats
 "scripts/Stage E Transfer Entropy/Phase 4 Multivariate Conditional Amplitude dSTE/18_asymmetry.sh" --test all --overwrite
 ```
 
@@ -665,8 +740,14 @@ tail -100 docs/TRANSFER_ENTROPY_PROGRESS.md
   `pipeline_combo_audit.py`) — cross-stage diagnostic tools that don't
   belong to a single stage. No `scripts/Audit/` folder exists yet; add one
   if these get used regularly.
-- Stage E Section 10 (cross-phase comparison) and Section 11 (batch runner)
-  don't exist in `code/` yet, so there's nothing to wrap.
+- Stage E Section 10 cross-phase comparison (`08_cross_phase_comparison.py`)
+  and Section 11 (unified batch runner) don't exist in `code/` yet, so
+  there's nothing to wrap. Phase 4 ETE wrappers (`19`/`20`/`21`) do exist.
+- Phase 2 ETE (`phase_2/12_multivariate_ete.py`) is wired but not batch-run;
+  add a Phase 2 wrapper analogous to `19_ete_process.sh` when that deferred
+  run is triggered (`15_ete_group_stats_viz.py --method phase_2`).
+- `16_cross_method_significance.py` has no wrapper yet — re-run it manually
+  after ETE AI if you want the cross-method table/figure refreshed.
 - `run_all.sh` scripts don't forward arguments to the steps they call — if
   you want e.g. a global `--overwrite` applied to every step, edit the
   relevant `run_all.sh` or run the steps individually.

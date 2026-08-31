@@ -848,7 +848,7 @@ stage_e_transfer_entropy:
       ete_connectivity_dir: "phase_4_ete_connectivity"
       ete_group_dir: "phase_4_ete_group"
       executed_raw: true                 # raw amplitude dSTE already batch-computed (Section 9)
-      executed_ete_or_significance: false  # flip to true once 10.5's batch run completes
+      executed_ete_or_significance: true   # Phase 4 ETE batch re-run 2026-08-30 (PCA-conditioned multivariate surrogates)
       # Backward-compat alias only (18_asymmetry_index_statistics.py's legacy
       # CLI calls run_ai_for_method("phase_4", ...)) — identical data/dirs to
       # "phase_4_raw" below.  ai_track: false so run_ai_all_methods() doesn't
