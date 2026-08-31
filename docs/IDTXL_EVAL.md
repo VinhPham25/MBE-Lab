@@ -99,7 +99,7 @@ Implemented in `code/stage_e_transfer_entropy/10_idtxl_validation.py`:
 - `compare_symbolic_vs_idtxl()` — Section 7.4.3 scatter + JSON
 
 ### Output Files
-- `phase_2_hybrid_dspte/idtxl_validation/sub-{id}_idtxl_ec.npz` — per-subject
-- `phase_2_hybrid_dspte/idtxl_validation/idtxl_batch_log.json` — batch log
-- `phase_2_hybrid_dspte/idtxl_validation/idtxl_comparison_summary.json` — comparison
-- `phase_2_hybrid_dspte/visualizations/symbolic_vs_idtxl_scatter.png` — scatter plot
+- `phase_2_multivariate_dspte/idtxl_validation/sub-{id}_idtxl_ec.npz` — per-subject
+- `phase_2_multivariate_dspte/idtxl_validation/idtxl_batch_log.json` — batch log
+- `phase_2_multivariate_dspte/idtxl_validation/idtxl_comparison_summary.json` — comparison
+- `phase_2_multivariate_dspte/visualizations/symbolic_vs_idtxl_scatter.png` — scatter plot

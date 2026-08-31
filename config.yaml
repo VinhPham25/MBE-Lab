@@ -504,7 +504,7 @@ stage_e_transfer_entropy:
     ndis_threshold: 0.05           # 5% — Wang (2020) Section 3.2
     k0_min: 2                      # minimum codebook size to test
     k0_max_bivariate: 35           # guard against codebook explosion (bivariate)
-    k0_max_multivariate: 2         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
+    k0_max_multivariate: 4         # sample-scarcity guard for 4D+ contingency tables (Phase 2); at k₀=3: 3⁴=81 cells → ~16.5 samp/cell at T'≈1341
     ng_max_iterations: 500         # Neural-Gas training iterations per k
     ng_learning_rate_i: 0.5        # initial learning rate λ_i
     ng_learning_rate_f: 0.01       # final learning rate λ_f
@@ -547,7 +547,7 @@ stage_e_transfer_entropy:
     # all_windows:   all windows NaN-padded (used for H0/HIV only)
 
   # --------------------------------------------------------------------------
-  # Phase 2 — Hybrid-dSPTE (Multivariate Conditioning) parameters
+  # Phase 2 — Multivariate dSPTE (Multivariate Conditioning) parameters
   # See TRANSFER_ENTROPY_PROGRESS.md Section 7.1 for design rationale.
   # --------------------------------------------------------------------------
   phase_2:
@@ -594,7 +594,7 @@ stage_e_transfer_entropy:
       min_explained_var_warning_pct: 60   # warn if PC1 explains < 60% variance
 
     # Output paths (relative to output_root/expert-novice/)
-    batch_log_filename: "hybrid_te_batch_log.json"
+    batch_log_filename: "multivariate_te_batch_log.json"
     window_slow_threshold_s: 120    # warn if a single window takes longer than this (seconds)
 
   # --------------------------------------------------------------------------
@@ -602,66 +602,384 @@ stage_e_transfer_entropy:
   # --------------------------------------------------------------------------
   phase_3:
     fusion_mode: "fixed"    # "fixed" = use weights below; "optimise" = PSO on training windows
-    w_phase: 0.0            # weight for phase-branch TE
-    w_amplitude: 1        # weight for amplitude-branch TE
+    w_phase: 0.3            # weight for phase-branch TE
+    w_amplitude: 0.7        # weight for amplitude-branch TE
 
   # --------------------------------------------------------------------------
-  # Phase 4 — Multivariate conditional amplitude dSPTE parameters
+  # Phase 4 — Multivariate conditional amplitude dSTE parameters
   #
-  # This phase replaces the phase component entirely. The Hilbert amplitude
-  # envelope of the broadband ROI signal is used directly as the TE input.
-  # A shared NG codebook is fit over all ROIs' amplitude delay embeddings
-  # (same algorithm as Phase 2 but on amplitude instead of phase).
-  # Conditional TE suppresses indirect connections via PCA-compressed
-  # conditioning on the remaining ROIs' amplitude symbols.
+  # Novel contribution: replaces the phase component entirely with the Hilbert
+  # amplitude envelope of broadband (unfiltered) HbO signals.  The shared
+  # Neural-Gas codebook is fit on amplitude delay embeddings; multivariate
+  # conditioning (PCA-compressed) suppresses indirect connections.
+  #
+  # k₀ analysis for amplitude data (Hilbert envelope, z-scored, d=2):
+  #   nDis floor for uniform data: nDis_floor(k, d=2) = 0.5/k
+  #   → k=10 reaches nDis=0.05 exactly for uniform 2D data
+  #   Amplitude data is NOT quasi-uniform (HRF clustering); convergence
+  #   expected at k₀=5–10.  k0_max=20 allows the NG to find the natural
+  #   convergence point (no need to raise higher — d=2 is much better than
+  #   the d=3 phase case that required k0_max=35).
+  #
+  # Contingency table sparsity limits (T'≈1343 samples/window):
+  #   Bivariate 3D: k₀=6 → 216 cells → ~6.2 samp/cell  (adequate ≥5 ✓)
+  #   Conditional 4D (PCA 1PC): k₀=4 → 256 cells → ~5.2 samp/cell  ✓
+  #                              k₀=5 → 625 cells → ~2.1 samp/cell  ✗
+  # The sparsity fallback fires automatically when the 4D table is too dense;
+  # no hard pre-clamp is applied in Phase 4 (unlike Phase 2's forced k₀=4).
   # --------------------------------------------------------------------------
   phase_4:
-    # NG codebook parameters (amplitude-specific; may differ from phase after calibration)
-    k0_max: 20                  # maximum number of NG prototypes; tune with nDis diagnostic
-    ndis_threshold: 0.05        # NG convergence criterion (normalised quantisation error)
+    # NG codebook search ceiling for amplitude data.
+    #
+    # The binding constraint is the 4D conditional contingency table (after PCA
+    # compression to 1 PC).  At T'≈1350 samples/window:
+    #   k₀=4 → 4⁴=256 cells  → ~5.3 samp/cell  ✓ (adequate ≥5)
+    #   k₀=5 → 5⁴=625 cells  → ~2.2 samp/cell  ✗ (sparse → fallback)
+    #   k₀=6 → 6⁴=1296 cells → ~1.0 samp/cell  ✗ (catastrophic sparsity)
+    #
+    # With k0_max=20, amplitude NG converges at k₀≈20 (nDis floor=0.025<0.05),
+    # giving 20⁴=160,000 cells → 99.8% empty → sparsity fallback fires on every
+    # lag of every pair → multivariate conditioning never activates.
+    #
+    # Set to 4 (matching symbolisation.k0_max_multivariate for Phase 2) so the
+    # conditional 4D table stays tractable.  nDis will be ~0.125 at k₀=4
+    # (above the 0.05 threshold), meaning the NG is stopped early by the ceiling
+    # rather than by convergence — this is intentional and identical to Phase 2's
+    # design.  Bivariate 3D table at k₀=4: 64 cells → ~21 samp/cell ✓.
+    # Set k0_max to 20 for Phase 4 branch only, set k0_max to 4 for Phase 2/3 branch
+    k0_max: 4                   # conditional 4D table constraint: k₀=4 → 256 cells → ~5.3 samp/cell ✓
 
-    # Envelope preprocessing: z-score each ROI's amplitude envelope per window
-    # before delay embedding. Guards against HRF amplitude magnitude differences
-    # across windows dominating the shared codebook geometry.
+    ndis_threshold: 0.05        # Wang (2020) Eq. 11 convergence criterion (5%)
+
+    # Envelope preprocessing: z-score each ROI's amplitude per window.
+    # Normalises HRF magnitude differences across windows and subjects,
+    # ensuring the shared NG codebook captures shape rather than scale.
+    # Strongly recommended; set false only for diagnostic comparisons.
+   
     envelope_normalize: true
 
-    # PCA conditioning compression — same role as in Phase 2:
-    # compresses the n_z=3 conditioning ROIs to n_components PCA components
-    # before symbolisation to avoid contingency table sparsity.
+    # PCA conditioning compression:
+    # Compresses n_z=3 conditioning ROIs to 1 PC before symbolisation.
+    # Result: 4D contingency table (k₀^4 cells) instead of 6D (k₀^6 cells).
+    # At k₀=4: 256 cells → ~5.2 samples/cell (adequate threshold ≥5).
     conditional_pca:
       enabled: true
-      n_components: 1           # 1 → 4D table (k^4 cells); increase cautiously
-      min_explained_var_warning_pct: 60  # warn if PC1 < 60% of amplitude embedding variance
+      n_components: 1           # 1 → 4D table; increase to 2 only if T' > 3000
+      min_explained_var_warning_pct: 60  # warn if PC1 < 60% amplitude embedding variance
 
-    # Sparsity fallback threshold: if any cell in the conditional contingency
-    # table has < min_samples_per_cell expected occupancy, fall back to
-    # bivariate amplitude TE for that pair (identical to Phase 2 fallback).
+    # Sparsity fallback threshold (fraction of zero cells in conditional table).
+    # Mirrors phase_2.sparsity_fallback_threshold.  When exceeded, the pair
+    # falls back to bivariate amplitude TE (Phase 3 amplitude branch logic).
+    sparsity_fallback_threshold: 0.95
+
+    # Minimum samples per occupied cell in the conditional table.
+    # Used for the mean_count_occupied diagnostic log; does not trigger fallback
+    # (the sparsity_fallback_threshold above controls fallback logic).
     min_samples_per_cell: 5
+
+    # Symbol entropy threshold below which an ROI's symbolic sequence is
+    # flagged as degenerate (all samples mapping to ≤2 codewords).
+    # Degenerate sequences produce TE ≈ 0 regardless of true coupling.
+    # For amplitude data, max entropy at k₀=8 is log(8)=2.08 nat;
+    # threshold 1.0 nat is equivalent to ~30% of max — a conservative guard.
+    degenerate_entropy_threshold: 1.0
+
+    # τ divergence check: warn if max(τ)/min(τ) exceeds this ratio across ROIs.
+    # For broadband amplitude, τ (HRF decorrelation time) should be similar
+    # across ROIs (~100–250 samples at 25 Hz).  Values > 3× signal issues.
+    tau_divergence_ratio: 3.0
+
+    # ------------------------------------------------------------------------
+    # Section 10 — Effective TE (ETE) surrogate parameters.
+    # phase_2.ete (added when 10.4b is activated) should default to these same
+    # values pending review — see the "Deferred Work Runbook" at the end of
+    # TRANSFER_ENTROPY_PROGRESS.md Section 10.
+    #
+    # Design (TRENTOOL / Lindner et al. circular-shift convention):
+    #   ETE = TE_raw - mean(TE_surrogate_null)
+    # The lag u_opt is FIXED from the real-data multidelay search (not
+    # re-searched per surrogate) — this is the standard surrogate-testing
+    # convention: it avoids the upward bias that re-maximising over u_max
+    # independent lags on every one of 500 null realisations would introduce.
+    # ------------------------------------------------------------------------
+    ete:
+      n_surrogates: 500              # circular-shift surrogates per pair per window
+      surrogate_method: "circular_shift"
+      min_shift_fraction: 0.05       # min |shift| as a fraction of T' (avoids near-zero shifts that leave S_x nearly unchanged)
+      fixed_lag_from_raw: true       # u_opt taken from the real-data delay_matrix, never re-searched per surrogate
+      floor_estimator: "mean"        # null floor = mean(null_distribution); alternative: "median"
+      clip_negative: false           # ETE stays signed (negative ETE is informative: raw TE was AT or BELOW the chance floor)
+      p_value_alternative: "greater" # one-sided: fraction of null >= raw_te
+      random_seed_base: 42           # per (subject, trial, window, pair) seed = base + deterministic offset (see 11_symbolic_ete_core.py)
+
+  # --------------------------------------------------------------------------
+  # IDTxl validation parameters (Section 7.4)
+  # These are read by run_idtxl_multivariate_te() and can all be overridden
+  # via CLI flags without touching this file.
+  #
+  # Speed guide (per IDTxl call on T=1350, 5 ROIs, 25 Hz fNIRS):
+  #   max_lag_sources=10, kraskov_k=4, n_perm=50   → ~30–60 min/call
+  #   max_lag_sources=3,  kraskov_k=2, n_perm=21   → ~3–8 min/call  ← fast mode
+  #
+  # With --first-trial-only (1 call total for --subject):
+  #   fast mode → ~3–8 min total for a single-subject cross-check
+  # --------------------------------------------------------------------------
+  idtxl_validation:
+    max_lag_sources: 10       # samples; override with --idtxl-max-lag (use 3 for fast mode)
+    max_lag_target: 10        # samples; auto-clamped to max_lag_sources if larger
+    kraskov_k: 4              # KNN neighbours; override with --idtxl-knn (use 2 for fast mode)
+    n_perm_max_stat: 50       # permutations; override with --idtxl-n-perm or --idtxl-fast
+    n_perm_min_stat: 50
+    n_perm_omnibus: 100
+    n_perm_max_seq: 50
+    num_threads: "USE_ALL"    # passed to IDTxl settings; effect depends on estimator
+
+  # --------------------------------------------------------------------------
+  # SECTION 10 — Effective Transfer Entropy (ETE) & Extensible Cross-Method
+  # Significance Layer.  See TRANSFER_ENTROPY_PROGRESS.md Section 10 for the
+  # full design rationale (Marschinski & Kantz 2002 for ETE; Geweke 1982 for
+  # the GC-native analytic equivalent).
+  #
+  # Method registry — the whole point of this block is that a 4th method
+  # (real or synthetic — see 10.12's extensibility proof) should be addable
+  # by appending ONE entry here plus one small loader function, with ZERO
+  # changes to 11_symbolic_ete_core.py, 12_asymmetry_index_core.py, or
+  # 16_cross_method_significance.py.
+  #
+  # Fields:
+  #   label                       — human-readable name for tables/figures
+  #   kind                        — "symbolic_te" (NG-symbolic, has raw_matrix_fn
+  #                                  + can run ETE) or "gc" (continuous VAR/
+  #                                  frequency-domain, analytic significance only)
+  #   raw_matrix_fn                — "module_path:function" for the raw compute_*
+  #                                  callback (symbolic methods only; null for gc)
+  #   has_ete                      — bool, whether a surrogate-based ETE track exists
+  #   has_analytic_significance    — bool, whether a Geweke-style analytic test exists
+  #   connectivity_dir / group_dir — output_subdirs keys for this method's raw outputs
+  #                                  (null → resolved via Stage D's own utils_gc
+  #                                  output_subdirs instead, for kind: "gc")
+  #   ete_connectivity_dir/ete_group_dir — output_subdirs keys for ETE outputs
+  #                                  (symbolic methods only)
+  #   significance_dir              — output_subdirs key for analytic-significance
+  #                                  outputs (gc only)
+  #   executed_raw                 — bool, has the raw connectivity actually been
+  #                                  batch-computed? (updated as tasks complete)
+  #   executed_ete_or_significance — bool, has ETE / Geweke actually been run?
+  #                                  (updated as tasks complete — see the runbook)
+  # --------------------------------------------------------------------------
+  # ai_loader / ai_track / ai_stats_dir / ai_viz_dir (added 10.9-10.10):
+  # power the method-agnostic Asymmetry Index core (12_asymmetry_index_core.py).
+  #   ai_loader.kind   — "symbolic_mean_npz" (load a pre-built B_{Exp,Nov}
+  #                       subject-mean .npz pair straight off disk — the
+  #                       generic case, covers raw TE/dSTE/dSPTE AND ETE
+  #                       tracks alike since both are already-materialized
+  #                       (n_subs, 20, n_trials) mean arrays) or
+  #                       "gc_windowed" (GC group arrays are per-window,
+  #                       shape (n_subs, 20, n_windows) per trial key, and
+  #                       need trial-averaging before use — the one place
+  #                       GC's on-disk schema differs from the symbolic
+  #                       methods').  Adding a new symbolic method (10.12)
+  #                       requires zero new loader code, only a new
+  #                       "symbolic_mean_npz" entry below.
+  #   ai_track          — true → included in run_ai_all_methods()'s loop.
+  #                        false → registered for other purposes (raw
+  #                        connectivity, ETE, Geweke) but not looped as its
+  #                        own AI track (used for the "phase_4" alias, which
+  #                        exists only so 18_asymmetry_index_statistics.py's
+  #                        legacy CLI keeps working — its actual AI track is
+  #                        "phase_4_raw", identical data, explicit name).
+  #   ai_stats_dir/ai_viz_dir — output_subdirs keys for this track's AI CSVs
+  #                        /figures.
+  significance_methods:
+    gc:
+      label: "Stage D Linear GC"
+      kind: "gc"
+      raw_matrix_fn: null
+      has_ete: false
+      has_analytic_significance: true
+      connectivity_dir: null            # resolved via stage_d_granger.utils_gc.get_gc_output_dir("gc_connectivity")
+      group_dir: null                   # resolved via stage_d_granger.utils_gc.get_gc_output_dir("group")
+      significance_dir: "gc_significance"
+      executed_raw: true                 # Stage D GC batch already computed (Section 4)
+      executed_ete_or_significance: false  # 13_gc_significance.py is WIRE ONLY this pass (10.7)
+      ai_loader:
+        kind: "gc_windowed"
+      ai_track: true
+      ai_stats_dir: "gc_ai_statistics"
+      ai_viz_dir: "gc_ai_viz"
+      h1_loader:
+        kind: "stage_d_csv"
+        dir_key: "statistics"
+        filename: "H1_expert_vs_novice.csv"
+
+    phase_2:
+      label: "Phase 2 — Multivariate dSPTE (phase)"
+      kind: "symbolic_te"
+      raw_matrix_fn: "phase_2/06_multivariate_dspte.py:compute_multivariate_dspte_matrix"
+      has_ete: true
+      has_analytic_significance: false
+      connectivity_dir: "phase_2_connectivity"
+      group_dir: "phase_2_group"
+      ete_connectivity_dir: "phase_2_ete_connectivity"
+      ete_group_dir: "phase_2_ete_group"
+      executed_raw: true                 # raw multivariate dSPTE already batch-computed (Section 7.2.3/7.3.1)
+      executed_ete_or_significance: false  # phase_2/12_multivariate_ete.py is WIRE ONLY this pass (10.4b)
+      ai_loader:
+        kind: "symbolic_mean_npz"
+        group_dir: "phase_2_group"
+        exp_filename: "B_Exp_multivariate_mean.npz"
+        nov_filename: "B_Nov_multivariate_mean.npz"
+      ai_track: true
+      ai_stats_dir: "phase_2_ai_statistics"
+      ai_viz_dir: "phase_2_ai_viz"
+      h1_loader:
+        kind: "output_subdir_csv"
+        dir_key: "phase_2_statistics"
+        filename: "H1_expert_vs_novice.csv"
+
+    phase_4:
+      label: "Phase 4 — Multivariate Conditional Amplitude dSTE"
+      kind: "symbolic_te"
+      raw_matrix_fn: "phase_4/14_amplitude_dste.py:compute_amplitude_conditional_dste_matrix"
+      has_ete: true
+      has_analytic_significance: false
+      connectivity_dir: "phase_4_connectivity"
+      group_dir: "phase_4_group"
+      ete_connectivity_dir: "phase_4_ete_connectivity"
+      ete_group_dir: "phase_4_ete_group"
+      executed_raw: true                 # raw amplitude dSTE already batch-computed (Section 9)
+      executed_ete_or_significance: false  # flip to true once 10.5's batch run completes
+      # Backward-compat alias only (18_asymmetry_index_statistics.py's legacy
+      # CLI calls run_ai_for_method("phase_4", ...)) — identical data/dirs to
+      # "phase_4_raw" below.  ai_track: false so run_ai_all_methods() doesn't
+      # double-count it alongside "phase_4_raw".
+      ai_loader:
+        kind: "symbolic_mean_npz"
+        group_dir: "phase_4_group"
+        exp_filename: "B_Exp_amplitude_mean.npz"
+        nov_filename: "B_Nov_amplitude_mean.npz"
+      ai_track: false
+      ai_stats_dir: "phase_4_statistics"
+      ai_viz_dir: "phase_4_viz"
+
+    phase_4_raw:
+      label: "Phase 4 — Amplitude dSTE (raw magnitude)"
+      kind: "symbolic_te"
+      has_ete: false
+      has_analytic_significance: false
+      ai_loader:
+        kind: "symbolic_mean_npz"
+        group_dir: "phase_4_group"
+        exp_filename: "B_Exp_amplitude_mean.npz"
+        nov_filename: "B_Nov_amplitude_mean.npz"
+      ai_track: true
+      ai_stats_dir: "phase_4_statistics"
+      ai_viz_dir: "phase_4_viz"
+      h1_loader:
+        kind: "output_subdir_csv"
+        dir_key: "phase_4_statistics"
+        filename: "H1_expert_vs_novice.csv"
+
+    phase_4_ete:
+      label: "Phase 4 — Amplitude dSTE (ETE, floor-corrected)"
+      kind: "symbolic_te"
+      has_ete: false
+      has_analytic_significance: false
+      ai_loader:
+        kind: "symbolic_mean_npz"
+        group_dir: "phase_4_ete_group"
+        exp_filename: "B_Exp_ete_mean_ete_connectivity.npz"
+        nov_filename: "B_Nov_ete_mean_ete_connectivity.npz"
+      ai_track: true
+      ai_stats_dir: "phase_4_ete_statistics"
+      ai_viz_dir: "phase_4_ete_viz"
+      h1_loader:
+        kind: "output_subdir_csv"
+        dir_key: "phase_4_ete_statistics"
+        filename: "ete_H1_expert_vs_novice.csv"
+
+    # --------------------------------------------------------------------
+    # TEMPORARY TEMPLATE — Section 10.12 extensibility proof. Registered, run, and
+    # verified (see TRANSFER_ENTROPY_PROGRESS.md's 10.12 result note for the
+    # captured log evidence), then this entry + its scratch output dirs were
+    # removed. Data generated by
+    # code/stage_e_transfer_entropy/_dummy_method_10_12_proof.py.
+    # Uses ONLY the pre-existing "symbolic_mean_npz" ai_loader.kind — zero
+    # new code was added to 11_symbolic_ete_core.py, 12_asymmetry_index_core.py,
+    # or 16_cross_method_significance.py to make this track work.
+    # --------------------------------------------------------------------
+    # dummy_test_method:
+    #   label: "Dummy Test Method (Section 10.12 extensibility proof)"
+    #   kind: "symbolic_te"
+    #   has_ete: false
+    #   has_analytic_significance: false
+    #   ai_loader:
+    #     kind: "symbolic_mean_npz"
+    #     group_dir: "dummy_method_group"
+    #     exp_filename: "B_Exp_dummy_mean.npz"
+    #     nov_filename: "B_Nov_dummy_mean.npz"
+    #   ai_track: true
+    #   ai_stats_dir: "dummy_method_ai_statistics"
+    #   ai_viz_dir: "dummy_method_ai_viz"
 
   # --------------------------------------------------------------------------
   # Output subdirectories (relative to output_root/expert-novice/)
   # --------------------------------------------------------------------------
   output_subdirs:
     roi_signals:          "expert-novice/roi_signals"
-    phase_1_raw:          "expert-novice/phase_1_dspte/te_raw"
-    phase_1_connectivity: "expert-novice/phase_1_dspte/te_connectivity"
-    phase_1_codebook:     "expert-novice/phase_1_dspte/codebook"
-    phase_1_group:        "expert-novice/phase_1_dspte/group"
-    phase_1_statistics:   "expert-novice/phase_1_dspte/statistics"
-    phase_1_viz:          "expert-novice/phase_1_dspte/visualizations"
-    phase_2_connectivity: "expert-novice/phase_2_hybrid_dspte/te_connectivity"
-    phase_2_group:        "expert-novice/phase_2_hybrid_dspte/group"
-    phase_2_statistics:   "expert-novice/phase_2_hybrid_dspte/statistics"
-    phase_2_viz:          "expert-novice/phase_2_hybrid_dspte/visualizations"
+    phase_1_raw:          "expert-novice/phase_1_bivariate_dspte/te_raw"
+    phase_1_connectivity: "expert-novice/phase_1_bivariate_dspte/te_connectivity"
+    phase_1_codebook:     "expert-novice/phase_1_bivariate_dspte/codebook"
+    phase_1_group:        "expert-novice/phase_1_bivariate_dspte/group"
+    phase_1_statistics:   "expert-novice/phase_1_bivariate_dspte/statistics"
+    phase_1_viz:          "expert-novice/phase_1_bivariate_dspte/visualizations"
+    phase_2_connectivity: "expert-novice/phase_2_multivariate_dspte/te_connectivity"
+    phase_2_group:        "expert-novice/phase_2_multivariate_dspte/group"
+    phase_2_statistics:   "expert-novice/phase_2_multivariate_dspte/statistics"
+    phase_2_viz:          "expert-novice/phase_2_multivariate_dspte/visualizations"
     phase_3_connectivity: "expert-novice/phase_3_bimodal_dspte/te_connectivity"
     phase_3_group:        "expert-novice/phase_3_bimodal_dspte/group"
     phase_3_statistics:   "expert-novice/phase_3_bimodal_dspte/statistics"
     phase_3_viz:          "expert-novice/phase_3_bimodal_dspte/visualizations"
-    phase_4_connectivity: "expert-novice/phase_4_amplitude_dspte/te_connectivity"
-    phase_4_group:        "expert-novice/phase_4_amplitude_dspte/group"
-    phase_4_statistics:   "expert-novice/phase_4_amplitude_dspte/statistics"
-    phase_4_viz:          "expert-novice/phase_4_amplitude_dspte/visualizations"
+    phase_4_connectivity: "expert-novice/phase_4_amplitude_dste/te_connectivity"
+    phase_4_group:        "expert-novice/phase_4_amplitude_dste/group"
+    phase_4_statistics:   "expert-novice/phase_4_amplitude_dste/statistics"
+    phase_4_viz:          "expert-novice/phase_4_amplitude_dste/visualizations"
     cross_phase:          "expert-novice/cross_phase_comparison"
+
+    # Section 10 — Effective TE (ETE) + cross-method significance layer.
+    # phase_4_ete_* populated now (10.4a/10.5/10.6 RUN NOW).
+    # phase_2_ete_* directories created empty by the wiring (10.4b WIRE ONLY);
+    # populated only once the deferred batch run (10.13 runbook) is triggered.
+    phase_4_ete_connectivity: "expert-novice/phase_4_amplitude_dste/ete_connectivity"
+    phase_4_ete_group:        "expert-novice/phase_4_amplitude_dste/ete_group"
+    phase_4_ete_statistics:   "expert-novice/phase_4_amplitude_dste/ete_statistics"
+    phase_4_ete_viz:          "expert-novice/phase_4_amplitude_dste/ete_visualizations"
+    phase_2_ete_connectivity: "expert-novice/phase_2_multivariate_dspte/ete_connectivity"
+    phase_2_ete_group:        "expert-novice/phase_2_multivariate_dspte/ete_group"
+    phase_2_ete_statistics:   "expert-novice/phase_2_multivariate_dspte/ete_statistics"
+    phase_2_ete_viz:          "expert-novice/phase_2_multivariate_dspte/ete_visualizations"
+    gc_significance:          "expert-novice/gc_significance"
+    cross_method_significance: "expert-novice/cross_method_significance"
+
+    # Section 10.9-10.10 — Method-agnostic Asymmetry Index (AI) output dirs.
+    # phase_4 / phase_4_raw / phase_4_ete AI tracks reuse existing dirs above
+    # (phase_4_statistics, phase_4_viz, phase_4_ete_statistics, phase_4_ete_viz)
+    # — only gc and phase_2 need new dirs since their AI results weren't
+    # previously written to their own directory (gc's AI was a column inside
+    # phase_4_statistics/ai_*.csv; phase_2 had no AI track at all).
+    gc_ai_statistics:         "expert-novice/gc_significance/ai_statistics"
+    gc_ai_viz:                "expert-novice/gc_significance/ai_visualizations"
+    phase_2_ai_statistics:    "expert-novice/phase_2_multivariate_dspte/ai_statistics"
+    phase_2_ai_viz:           "expert-novice/phase_2_multivariate_dspte/ai_visualizations"
+
+    # Section 10.12 extensibility-proof scratch dirs (TEMPORARY — used only
+    # while stage_e_transfer_entropy.significance_methods.dummy_test_method
+    # is registered below; both are removed together once the proof is
+    # captured in TRANSFER_ENTROPY_PROGRESS.md).
+    dummy_method_group:        "expert-novice/_dummy_method_10_12_proof/group"
+    dummy_method_ai_statistics: "expert-novice/_dummy_method_10_12_proof/ai_statistics"
+    dummy_method_ai_viz:       "expert-novice/_dummy_method_10_12_proof/ai_visualizations"
 
 # ==============================================================================
 # END OF CONFIGURATION
