@@ -20,10 +20,12 @@ TRANSFER_ENTROPY_PROGRESS.md:
       conditioning.  The primary diagnostic run generates all 20 connections
       for subject A1, Trial 1, Window 1.
 
-Output paths (phase_2_multivariate_dspte/visualizations/)
+Output paths (phase_2_multivariate_dspte/visualizations/) — see docs/OUTPUTS.md
 ----------------------------------------------------
-  phase1_vs_phase2_comparison.png
-  lag_profile_comparison/sub-{id}_Tr{N}_Win{M}_{src}_to_{tgt}_lag_comparison.png
+  group_te_heatmap_expert_vs_novice.png
+  group_te_bar_expert_vs_novice.png
+  group_te_bar_bivariate_vs_conditional.png
+  lag_profile_comparison/sub-{id}_Tr{N}_Win{M}_{src}_to_{tgt}_te_lines_lag.png
 
 Style conventions
 -----------------
@@ -262,7 +264,7 @@ def plot_phase1_vs_phase2_comparison(
         )
 
     for p1_path in p1_npz_files:
-        subject_id = p1_path.stem.replace("sub-", "").replace("_dspte_connectivity", "")
+        subject_id = p1_path.stem.removeprefix("sub-").removesuffix("_bivariate_dspte_connectivity")
         p2_path = conn_dir_p2 / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
         if not p2_path.exists():
             logger.warning(
@@ -401,7 +403,7 @@ def plot_phase1_vs_phase2_comparison(
     )
 
     if save:
-        out = _p2_viz_dir(config) / "phase1_vs_phase2_comparison.png"
+        out = _p2_viz_dir(config) / "group_te_bar_bivariate_vs_conditional.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out)
 
@@ -627,7 +629,7 @@ def plot_lag_profile_phase1_vs_phase2(
             win_num = window + 1
             fname = (
                 f"sub-{subject_id}_Tr{tr_num}_Win{win_num}"
-                f"_{src_s}_to_{tgt_s}_lag_comparison.png"
+                f"_{src_s}_to_{tgt_s}_te_lines_lag.png"
             )
             out = _lag_profile_dir(config) / fname
             fig.savefig(out, dpi=300, bbox_inches="tight")
@@ -787,7 +789,7 @@ def plot_group_connectivity_matrix_p2(
 
     Each cell is annotated with the numeric value.  Diagonal is masked (grey '—').
 
-    Saves to ``phase_2_multivariate_dspte/visualizations/group_multivariate_te_connectivity_matrix.png``.
+    Saves to ``phase_2_multivariate_dspte/visualizations/group_te_heatmap_expert_vs_novice.png``.
 
     Parameters
     ----------
@@ -878,7 +880,7 @@ def plot_group_connectivity_matrix_p2(
     fig.tight_layout()
 
     if save:
-        out = _p2_viz_dir(config) / "group_multivariate_te_connectivity_matrix.png"
+        out = _p2_viz_dir(config) / "group_te_heatmap_expert_vs_novice.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -913,7 +915,7 @@ def plot_group_te_comparison_p2(
        corresponding Phase 1 bivariate dSPTE value, so the viewer can see how much
        the conditioning suppressed each connection.
 
-    Saves to ``phase_2_multivariate_dspte/visualizations/group_multivariate_te_comparison.png``.
+    Saves to ``phase_2_multivariate_dspte/visualizations/group_te_bar_expert_vs_novice.png``.
 
     Parameters
     ----------
@@ -1036,7 +1038,7 @@ def plot_group_te_comparison_p2(
     fig.tight_layout()
 
     if save:
-        out = _p2_viz_dir(config) / "group_multivariate_te_comparison.png"
+        out = _p2_viz_dir(config) / "group_te_bar_expert_vs_novice.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -1077,7 +1079,7 @@ def run_all_phase2_visualizations(
     lag_dir = _lag_profile_dir(config)
 
     # 7.3.1 — group connectivity matrix (Expert | Novice | Difference)
-    matrix_path = viz_dir / "group_multivariate_te_connectivity_matrix.png"
+    matrix_path = viz_dir / "group_te_heatmap_expert_vs_novice.png"
     if overwrite or not matrix_path.exists():
         logger.info("Generating 7.3.1 group matrix: Expert | Novice | Expert−Novice …")
         try:
@@ -1090,7 +1092,7 @@ def run_all_phase2_visualizations(
         logger.info("Group matrix already exists (overwrite=False): %s", matrix_path)
 
     # 7.3.1 — Expert vs Novice bar chart
-    bar_path = viz_dir / "group_multivariate_te_comparison.png"
+    bar_path = viz_dir / "group_te_bar_expert_vs_novice.png"
     if overwrite or not bar_path.exists():
         logger.info("Generating 7.3.1 Expert vs Novice bar chart …")
         try:
@@ -1103,7 +1105,7 @@ def run_all_phase2_visualizations(
         logger.info("Group bar chart already exists (overwrite=False): %s", bar_path)
 
     # 7.3.2 — group comparison bar chart (Phase 1 vs Phase 2)
-    comparison_path = viz_dir / "phase1_vs_phase2_comparison.png"
+    comparison_path = viz_dir / "group_te_bar_bivariate_vs_conditional.png"
     if overwrite or not comparison_path.exists():
         logger.info("Generating 7.3.2: Phase 1 vs Phase 2 comparison bar chart …")
         try:
@@ -1131,7 +1133,7 @@ def run_all_phase2_visualizations(
             win_num = p1_vs_p2_window + 1
             fname   = (
                 f"sub-{p1_vs_p2_subject_id}_Tr{tr_num}_Win{win_num}"
-                f"_{src_s}_to_{tgt_s}_lag_comparison.png"
+                f"_{src_s}_to_{tgt_s}_te_lines_lag.png"
             )
             out_path = lag_dir / fname
 

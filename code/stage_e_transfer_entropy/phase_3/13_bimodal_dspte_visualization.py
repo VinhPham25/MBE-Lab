@@ -492,7 +492,7 @@ def plot_phase_vs_amplitude_contribution(
 
     if save:
         viz_dir = _p3_viz_dir(config)
-        fig_path = viz_dir / "phase_vs_amplitude_contribution.png"
+        fig_path = viz_dir / "group_te_bar_phase_vs_amplitude.png"
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
 
         meta_out = {
@@ -502,7 +502,7 @@ def plot_phase_vs_amplitude_contribution(
             "amplitude_contribution_mean": amp_mean.tolist(),
             "final_mean": final_mean.tolist(),
         }
-        with open(viz_dir / "phase_vs_amplitude_contribution_summary.json", "w") as f:
+        with open(viz_dir / "group_te_bar_phase_vs_amplitude_summary.json", "w") as f:
             json.dump(meta_out, f, indent=2)
 
         logger.info("Saved %s", fig_path)
@@ -673,10 +673,10 @@ def plot_phase_vs_amplitude_contribution_by_group(
 
     if save:
         viz_dir = _p3_viz_dir(config)
-        fig_path = viz_dir / "phase_vs_amplitude_contribution_by_group.png"
+        fig_path = viz_dir / "group_te_bar_phase_vs_amplitude_expert_vs_novice.png"
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
 
-        with open(viz_dir / "phase_vs_amplitude_contribution_by_group_summary.json", "w") as f:
+        with open(viz_dir / "group_te_bar_phase_vs_amplitude_expert_vs_novice_summary.json", "w") as f:
             json.dump(out_meta, f, indent=2)
 
         logger.info("Saved %s", fig_path)

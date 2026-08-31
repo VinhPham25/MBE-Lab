@@ -648,8 +648,8 @@ layer on top.
 
 #### `20_ete_group_stats_viz.sh` — wraps `15_ete_group_stats_viz.py`
 Method-parameterized ETE group arrays + statistics + diagnostic plots
-(`ete_diagnostics.png`: null histograms, floor-vs-signal bars, Expert/Novice
-ETE delta). Numbered 20 here because `15_group.sh` already wraps the raw-dSTE
+(`group_ete_panel_null_floor_delta.png`: null histograms, floor-vs-signal bars,
+Expert/Novice ETE delta). Numbered 20 here because `15_group.sh` already wraps the raw-dSTE
 group builder.
 
 **Args**

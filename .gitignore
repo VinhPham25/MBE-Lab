@@ -5,7 +5,8 @@ BIDS/
 .DS_Store
 __pycache__/
 techval_branch/
-outputs/
+outputs/*
+!outputs/README.md
 stage_b_preprocessing/
 stage_c_validation/
 IDTxl/

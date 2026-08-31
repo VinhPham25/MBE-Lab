@@ -911,7 +911,7 @@ def plot_ai_per_subject(
     if config is None:
         config = load_config()
 
-    out_path = _ai_viz_dir(method_key, config) / "ai_per_subject_grouped.png"
+    out_path = _ai_viz_dir(method_key, config) / "group_ai_box_per_subject.png"
     if not overwrite and out_path.exists():
         logger.info("plot_ai_per_subject [%s]: cache hit.", method_key)
         return out_path
@@ -1025,7 +1025,7 @@ def plot_lm1_comparison(
     if config is None:
         config = load_config()
 
-    out_path = _ai_viz_dir(method_key, config) / "ai_lm1_comparison.png"
+    out_path = _ai_viz_dir(method_key, config) / "group_ai_bar_lm1_pairs.png"
     if not overwrite and out_path.exists():
         logger.info("plot_lm1_comparison [%s]: cache hit.", method_key)
         return out_path

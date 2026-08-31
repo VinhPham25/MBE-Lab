@@ -25,7 +25,13 @@ Four plot families are implemented:
    error bars), mirroring the Phase 2 ``plot_group_te_comparison_p2()`` style.
    FDR significance markers loaded from Phase 4 statistics CSV when available.
 
-All figures are saved to ``phase_4_visualizations/``.
+All figures are saved to ``phase_4_amplitude_dste/visualizations/`` using
+the naming convention in ``docs/OUTPUTS.md``:
+
+- ``group_te_heatmap_expert_vs_novice_Tr{N}.png``
+- ``group_te_delta_expert_vs_novice.png``
+- ``group_te_bar_bivariate_vs_conditional.png``
+- ``group_te_bar_expert_vs_novice.png``
 
 **Params caption (2026-08-28, extended 2026-08-28):** every figure gets a
 small caption below the plot summarising the parameters that produced it
@@ -388,7 +394,7 @@ def plot_connectivity_heatmaps_p4(
         _add_params_caption(fig, config)
 
         if save and viz_dir is not None:
-            out = viz_dir / f"p4_connectivity_heatmap_{trial_id}.png"
+            out = viz_dir / f"group_te_heatmap_expert_vs_novice_Tr{t_idx + 1}.png"
             fig.savefig(out, dpi=300, bbox_inches="tight")
             logger.info("plot_connectivity_heatmaps_p4: saved %s", out.name)
 
@@ -479,9 +485,9 @@ def plot_expert_novice_delta_p4(
 
     if save:
         viz_dir = _p4_viz_dir(config)
-        fig_path = viz_dir / "p4_expert_novice_delta.png"
+        fig_path = viz_dir / "group_te_delta_expert_vs_novice.png"
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
-        with open(viz_dir / "p4_expert_novice_delta_summary.json", "w") as fh:
+        with open(viz_dir / "group_te_delta_expert_vs_novice_summary.json", "w") as fh:
             json.dump(metadata, fh, indent=2, cls=_NumpyEncoder)
         logger.info("plot_expert_novice_delta_p4: saved %s", fig_path.name)
 
@@ -687,9 +693,9 @@ def plot_bivariate_vs_multivariate_p4(
 
     if save:
         viz_dir = _p4_viz_dir(config)
-        fig_path = viz_dir / "p4_bivariate_vs_multivariate.png"
+        fig_path = viz_dir / "group_te_bar_bivariate_vs_conditional.png"
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
-        with open(viz_dir / "p4_bivariate_vs_multivariate_summary.json", "w") as fh:
+        with open(viz_dir / "group_te_bar_bivariate_vs_conditional_summary.json", "w") as fh:
             json.dump(metadata, fh, indent=2, cls=_NumpyEncoder)
         logger.info("plot_bivariate_vs_multivariate_p4: saved %s", fig_path.name)
 
@@ -884,9 +890,9 @@ def plot_expert_novice_grouped_p4(
 
     if save:
         viz_dir = _p4_viz_dir(config)
-        fig_path = viz_dir / "p4_expert_novice_grouped.png"
+        fig_path = viz_dir / "group_te_bar_expert_vs_novice.png"
         fig.savefig(fig_path, dpi=300, bbox_inches="tight")
-        with open(viz_dir / "p4_expert_novice_grouped_summary.json", "w") as fh:
+        with open(viz_dir / "group_te_bar_expert_vs_novice_summary.json", "w") as fh:
             json.dump(metadata, fh, indent=2, cls=_NumpyEncoder)
         logger.info("plot_expert_novice_grouped_p4: saved %s", fig_path.name)
 

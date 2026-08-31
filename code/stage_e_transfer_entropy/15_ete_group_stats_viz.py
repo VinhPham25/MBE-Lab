@@ -1089,7 +1089,7 @@ def run_ete_visualizations(
         config = load_config()
 
     viz_dir = _ete_viz_dir(method_key, config)
-    out_path = viz_dir / "ete_diagnostics.png"
+    out_path = viz_dir / "group_ete_panel_null_floor_delta.png"
     if not overwrite and out_path.exists():
         logger.info("run_ete_visualizations [%s]: cache hit -> %s", method_key, out_path)
         return out_path

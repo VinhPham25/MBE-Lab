@@ -94,13 +94,17 @@ MBE-Lab/
 │   ├── stage_b_preprocessing/   # Preprocessing pipeline scripts
 │   └── stage_c_validation/      # Validation and analysis scripts
 │
-├── outputs/
+├── outputs/                     # gitignored; see docs/OUTPUTS.md for naming + catalog
 │   ├── stage_a_qa/              # QA reports, figures, exclusion lists
 │   ├── stage_b_processed/       # Processed .fif files
-│   └── stage_c_validation/      # HRF plots, CNR metrics, statistics
+│   ├── stage_c_validation/      # HRF plots, CNR metrics, statistics
+│   ├── stage_d_granger/         # Linear GC connectivity
+│   └── stage_e_transfer_entropy/  # Transfer Entropy (Phases 1–4)
 │
 ├── config.yaml                  # Pipeline parameters
 ├── requirements.txt             # Python dependencies
+├── CLAUDE.md                    # Agent context (includes output naming, §6)
+├── docs/OUTPUTS.md              # How to read / name everything under outputs/
 ├── PROJECT.md                   # Detailed PRD
 └── PROGRESS.md                  # Implementation tracking
 ```

@@ -353,8 +353,8 @@ def run_phase_entropy_diagnostic(
     -----
     diagnostics/phase_entropy_bias/phase_entropy_results.json
     diagnostics/phase_entropy_bias/phase_entropy_summary.json
-    diagnostics/phase_entropy_bias/phase_entropy_bias_violin.png
-    diagnostics/phase_entropy_bias/phase_entropy_bias_lines.png
+    diagnostics/phase_entropy_bias/group_phase_violin_entropy.png
+    diagnostics/phase_entropy_bias/group_phase_lines_entropy.png
     """
     if config is None:
         config = load_config()
@@ -637,7 +637,7 @@ def _plot_violin(all_results: dict, summary: dict, diag_dir: Path) -> None:
     )
 
     plt.tight_layout()
-    out_path = diag_dir / "phase_entropy_bias_violin.png"
+    out_path = diag_dir / "group_phase_violin_entropy.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info("Saved violin plot → %s", out_path)
@@ -719,7 +719,7 @@ def _plot_subject_lines(all_results: dict, summary: dict, diag_dir: Path) -> Non
     )
 
     plt.tight_layout()
-    out_path = diag_dir / "phase_entropy_bias_lines.png"
+    out_path = diag_dir / "group_phase_lines_entropy.png"
     plt.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     logger.info("Saved subject lines plot → %s", out_path)

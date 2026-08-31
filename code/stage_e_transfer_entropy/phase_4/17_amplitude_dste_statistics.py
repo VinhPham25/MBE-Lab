@@ -27,7 +27,7 @@ Output files
   asymmetry_index.csv                 ← Section 9.8.6
 
 ``phase_4_amplitude_dste/visualizations/``
-  p4_asymmetry_index_vs_gc.png        ← Section 9.8.6
+  group_ai_panel_te_vs_gc.png         ← Section 9.8.6
 
 CLI
 ---
@@ -1137,7 +1137,7 @@ def plot_asymmetry_index_p4(
       Expert TE (dark blue), Novice TE (red), Expert GC (light blue), Novice GC (orange).
       Positive AI → forward direction dominates; negative → reverse.
 
-    Saved to ``phase_4_amplitude_dste/visualizations/p4_asymmetry_index_vs_gc.png``.
+    Saved to ``phase_4_amplitude_dste/visualizations/group_ai_panel_te_vs_gc.png``.
 
     Returns
     -------
@@ -1157,7 +1157,7 @@ def plot_asymmetry_index_p4(
     from utils_te import get_te_output_dir
     viz_dir = get_te_output_dir("phase_4_viz", config=config)
     viz_dir.mkdir(parents=True, exist_ok=True)
-    out_path = viz_dir / "p4_asymmetry_index_vs_gc.png"
+    out_path = viz_dir / "group_ai_panel_te_vs_gc.png"
 
     if not overwrite and out_path.exists():
         logger.info("plot_asymmetry_index_p4: cache hit → %s", out_path)

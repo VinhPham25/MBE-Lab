@@ -34,18 +34,19 @@ Conventions (identical to Stage D)
   Row = Source (y-axis), Column = Target (x-axis)
   20-vector → 5×5 matrix: zeros at diagonal [0, 6, 12, 18, 24], reshape (5,5)
 
-Output paths (phase_1_bivariate_dspte/visualizations/)
+Output paths (phase_1_bivariate_dspte/visualizations/) — see docs/OUTPUTS.md
 --------------------------------------------
-  sub-{id}_{trial}_{window}_te_connectivity.png
-  sub-{id}_{trial}_{window}_delay_matrix.png
-  sub-{id}_{trial}_{window}_gc_vs_te.png
-  group_te_topology_Tr1_Win1.png
-  group_te_topology_Expert_averaged.png
-  group_te_topology_Novice_averaged.png
-  group_te_topology_averaged.png
-  group_te_comparison_averaged.png
-  group_te_connectivity_matrix_averaged.png
-  sub-{id}_{trial}_lag_te_profile_{src}_to_{tgt}.png
+  sub-{id}_Tr{N}_Win{M}_te_heatmap.png
+  sub-{id}_Tr{N}_Win{M}_delay_heatmap.png
+  sub-{id}_Tr{N}_Win{M}_bar_te_vs_gc.png
+  sub-{id}_Tr{N}_te_evolution.png
+  group_te_topology_expert_vs_novice_Tr{N}_Win1.png
+  group_te_topology_expert.png
+  group_te_topology_novice.png
+  group_te_topology_expert_vs_novice.png
+  group_te_bar_expert_vs_novice.png
+  group_te_heatmap_expert_vs_novice.png
+  sub-{id}_Tr{N}_Win{M}_{src}_to_{tgt}_te_lines_lag.png
 """
 
 from __future__ import annotations
@@ -80,6 +81,19 @@ if str(_STAGE_E_ROOT) not in sys.path:
 from utils import load_config  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+def _tr_token(trial: str) -> str:
+    """``Tr_1`` / ``Tr1`` → ``Tr1``."""
+    n = str(trial).replace("Tr_", "").replace("Tr", "")
+    return f"Tr{n}"
+
+
+def _win_token(window) -> str:
+    """``Win_1`` / ``Win1`` / ``1`` → ``Win1``."""
+    s = str(window).replace("Win_", "").replace("Win", "")
+    return f"Win{s}"
+
 
 # ---------------------------------------------------------------------------
 # Constants and style
@@ -318,7 +332,9 @@ def plot_connectivity_matrix_te(
         cbar.set_label("dSPTE", fontsize=8)
         fig.tight_layout()
         if save:
-            out = _viz_dir(config) / f"sub-{subject_id}_{trial}_{window}_te_connectivity.png"
+            out = _viz_dir(config) / (
+                f"sub-{subject_id}_{_tr_token(trial)}_{_win_token(window)}_te_heatmap.png"
+            )
             fig.savefig(out, dpi=300, bbox_inches="tight")
             logger.info("Saved %s", out.name)
     return fig
@@ -499,7 +515,9 @@ def plot_optimal_delay_matrix(
         cbar.set_label(f"Optimal delay (samples @ {sfreq:.0f} Hz)", fontsize=8)
         fig.tight_layout()
         if save:
-            out = _viz_dir(config) / f"sub-{subject_id}_{trial}_{window}_delay_matrix.png"
+            out = _viz_dir(config) / (
+                f"sub-{subject_id}_{_tr_token(trial)}_{_win_token(window)}_delay_heatmap.png"
+            )
             fig.savefig(out, dpi=300, bbox_inches="tight")
             logger.info("Saved %s", out.name)
     return fig
@@ -619,8 +637,9 @@ def plot_gc_vs_te_comparison(
 
     if save:
         win_num = window_idx + 1
-        tr_num = trial.replace("Tr_", "")
-        out = _viz_dir(config) / f"sub-{subject_id}_Tr{tr_num}_Win{win_num}_gc_vs_te.png"
+        out = _viz_dir(config) / (
+            f"sub-{subject_id}_{_tr_token(trial)}_Win{win_num}_bar_te_vs_gc.png"
+        )
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -764,8 +783,9 @@ def plot_group_topology_te(
     )
 
     if save:
-        tr_num = trial.replace("Tr_", "")
-        out = _viz_dir(config) / f"group_te_topology_Tr{tr_num}_Win1.png"
+        out = _viz_dir(config) / (
+            f"group_te_topology_expert_vs_novice_{_tr_token(trial)}_Win1.png"
+        )
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -842,7 +862,7 @@ def plot_group_topology_te_averaged(
 
     if save:
         vd = _viz_dir(config)
-        out = vd / "group_te_topology_averaged.png"
+        out = vd / "group_te_topology_expert_vs_novice.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -869,7 +889,7 @@ def plot_group_topology_te_averaged(
             )
             cbar_s.set_label("dSPTE", fontsize=9)
             fig_s.tight_layout()
-            out_s = vd / f"group_te_topology_{g}_averaged.png"
+            out_s = vd / f"group_te_topology_{g.lower()}.png"
             fig_s.savefig(out_s, dpi=300, bbox_inches="tight")
             plt.close(fig_s)
             logger.info("Saved %s", out_s.name)
@@ -974,7 +994,7 @@ def plot_group_te_comparison_averaged(
     fig.tight_layout()
 
     if save:
-        out = _viz_dir(config) / "group_te_comparison_averaged.png"
+        out = _viz_dir(config) / "group_te_bar_expert_vs_novice.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -1075,7 +1095,7 @@ def plot_group_connectivity_matrix_te_averaged(
     fig.tight_layout()
 
     if save:
-        out = _viz_dir(config) / "group_te_connectivity_matrix_averaged.png"
+        out = _viz_dir(config) / "group_te_heatmap_expert_vs_novice.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -1175,11 +1195,11 @@ def plot_lag_te_profile(
         if save and subject_id:
             src_s = src_roi.replace(" ", "_")
             tgt_s = tgt_roi.replace(" ", "_")
-            tr_num = trial.replace("Tr_", "") if trial else "x"
-            win_num = window.replace("Win_", "") if window else "x"
             fname = (
-                f"sub-{subject_id}_Tr{tr_num}_Win{win_num}"
-                f"_lag_te_profile_{src_s}_to_{tgt_s}.png"
+                f"sub-{subject_id}_"
+                f"{_tr_token(trial) if trial else 'Trx'}_"
+                f"{_win_token(window) if window else 'Winx'}"
+                f"_{src_s}_to_{tgt_s}_te_lines_lag.png"
             )
             out = _viz_dir(config) / fname
             fig.savefig(out, dpi=300, bbox_inches="tight")
@@ -1233,7 +1253,7 @@ def run_all_visualizations_te(
         data = np.load(npz_path, allow_pickle=True)
         group = str(data["group"])
 
-        out_single = vd / f"sub-{subject_id}_Tr_1_Win_1_te_connectivity.png"
+        out_single = vd / f"sub-{subject_id}_Tr1_Win1_te_heatmap.png"
         if overwrite or not out_single.exists():
             if "Tr_1_connectivity" in data and data["Tr_1_connectivity"].shape[1] > 0:
                 fig = plot_connectivity_matrix_te(
@@ -1259,7 +1279,7 @@ def run_all_visualizations_te(
     if a1_path.exists():
         a1_data = np.load(a1_path, allow_pickle=True)
         if "Tr_1_delays" in a1_data and a1_data["Tr_1_delays"].shape[1] > 0:
-            out_delay = vd / "sub-A1_Tr_1_Win_1_delay_matrix.png"
+            out_delay = vd / "sub-A1_Tr1_Win1_delay_heatmap.png"
             if overwrite or not out_delay.exists():
                 fig = plot_optimal_delay_matrix(
                     a1_data["Tr_1_delays"][:, 0],
@@ -1275,7 +1295,7 @@ def run_all_visualizations_te(
         / "expert-novice" / "gc_connectivity" / "sub-A1_gc_connectivity.npz"
     )
     if gc_path.exists() and a1_path.exists():
-        out_gcte = vd / "sub-A1_Tr1_Win1_gc_vs_te.png"
+        out_gcte = vd / "sub-A1_Tr1_Win1_bar_te_vs_gc.png"
         if overwrite or not out_gcte.exists():
             try:
                 fig = plot_gc_vs_te_comparison(
@@ -1290,22 +1310,22 @@ def run_all_visualizations_te(
     # ---- 6.4: Group topology (Tr_1 snapshot + all-trial averaged) ----
     logger.info("6.4 — Group topology diagrams...")
     try:
-        out_topo_tr1 = vd / "group_te_topology_Tr1_Win1.png"
+        out_topo_tr1 = vd / "group_te_topology_expert_vs_novice_Tr1_Win1.png"
         if overwrite or not out_topo_tr1.exists():
             fig = plot_group_topology_te(trial="Tr_1", save=True, config=config)
             plt.close(fig)
 
-        out_topo_avg = vd / "group_te_topology_averaged.png"
+        out_topo_avg = vd / "group_te_topology_expert_vs_novice.png"
         if overwrite or not out_topo_avg.exists():
             fig = plot_group_topology_te_averaged(save=True, config=config)
             plt.close(fig)
 
-        out_bar_avg = vd / "group_te_comparison_averaged.png"
+        out_bar_avg = vd / "group_te_bar_expert_vs_novice.png"
         if overwrite or not out_bar_avg.exists():
             fig = plot_group_te_comparison_averaged(h1_df=h1_df, save=True, config=config)
             plt.close(fig)
 
-        out_mat_avg = vd / "group_te_connectivity_matrix_averaged.png"
+        out_mat_avg = vd / "group_te_heatmap_expert_vs_novice.png"
         if overwrite or not out_mat_avg.exists():
             fig = plot_group_connectivity_matrix_te_averaged(save=True, config=config)
             plt.close(fig)
@@ -1411,8 +1431,8 @@ def _generate_lag_profile_example(
     win_label = f"Win_{window_idx + 1}"
     vd = _viz_dir(config)
     out_fname = (
-        vd / f"sub-{subject_id}_Tr{trial.replace('Tr_', '')}_Win{window_idx + 1}"
-              f"_lag_te_profile_{src_roi}_to_{tgt_roi}.png"
+        vd / f"sub-{subject_id}_{_tr_token(trial)}_Win{window_idx + 1}"
+              f"_{src_roi}_to_{tgt_roi}_te_lines_lag.png"
     )
 
     if not overwrite and out_fname.exists():

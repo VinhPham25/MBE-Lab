@@ -196,12 +196,20 @@ failure, matching the pattern seen in GC and all three prior TE phases.
   tests (Shapiro-Wilk normality, H1 Expert-vs-Novice, H0 within-trial
   stability, HIV across-trial stability) — this is deliberate so results are
   directly comparable across methods without reshaping.
+- **Output filenames follow `docs/OUTPUTS.md`.** Folders already encode stage,
+  cohort, method, and artifact class (`visualizations/`, `statistics/`, …).
+  Figure names must say what the file *contains*, using
+  `{scope}_{measure}_{view}[_{facet}][_Tr{N}][_Win{M}]` (see §6 below). Do not
+  prefix figures with `p4_` / `phase_N_` or vague words like `grouped`. Data
+  files (`.npz`, the four H1/H0/HIV/normality CSVs) keep the frozen schema in
+  `docs/OUTPUTS.md` §2.4 — that schema is shared with Stage D on purpose.
 - **`docs/TRANSFER_ENTROPY_PROGRESS.md`** (~1,377 lines) is the living design
   doc/checklist for Stage E — it has a numbered task list per section with
   `[x]`/`[ ]` checkboxes and a `> **Result (...)**` note under each completed
   task documenting what was actually implemented and why. **This is the
   single best file to read for a deep dive into Stage E** — far more detailed
-  than this CLAUDE.md.
+  than this CLAUDE.md. Progress-doc filenames may be **legacy**; `docs/OUTPUTS.md`
+  wins when names disagree.
 - Progress docs generally follow the pattern: PRD-style task list up front,
   running log of issues/root-cause investigations at the bottom (see "PHASE 3
   AUDIT" section in `TRANSFER_ENTROPY_PROGRESS.md` for a good example of the
@@ -234,3 +242,53 @@ If asked to work on this project without further context, in priority order:
    style and for Stages A–D, but its TE narrative is one generation behind
    the current amplitude-only approach — don't treat its TE conclusions as
    current ground truth.
+6. When adding or renaming anything under `outputs/`, follow §6 and
+   `docs/OUTPUTS.md`. Update the catalog in `docs/OUTPUTS.md` in the same change.
+
+---
+
+## 6. Output naming convention (figures)
+
+Full catalog and worked examples: **`docs/OUTPUTS.md`**. Short pointer in the
+data tree: `outputs/README.md`.
+
+**Folders already say** stage, cohort (`expert-novice`), method
+(`phase_4_amplitude_dste`), and artifact class (`visualizations/`,
+`statistics/`, `group/`, `te_connectivity/`, `ete_*`, `ai_*`).
+
+**Figure filenames must say what the plot is:**
+
+```
+{scope}_{measure}_{view}[_{facet}...][_Tr{N}][_Win{M}].{ext}
+```
+
+| Slot | Values |
+|---|---|
+| `scope` | `group` · `sub-{id}` · `cross_method` |
+| `measure` | `te` `ete` `ai` `gc` `snr` `motion` `hbo` `hbr` `hrf` `cnr` `roi` |
+| `view` | `heatmap` `bar` `delta` `topology` `box` `scatter` `panel` `timeseries` `boxplot` `violin` `lines` `evolution` |
+| `facet` | `expert_vs_novice` `bivariate_vs_conditional` `phase_vs_amplitude` `te_vs_gc` `per_subject` `lm1_pairs` `null_floor_delta` … |
+
+Examples:
+
+- `group_te_bar_expert_vs_novice.png` — paired Expert/Novice TE bars (20 connections)
+- `group_te_delta_expert_vs_novice.png` — Expert − Novice signed bars
+- `group_te_heatmap_expert_vs_novice_Tr1.png` — 5×5 matrices, trial 1
+- `group_ete_panel_null_floor_delta.png` — ETE diagnostic triptych
+- `group_ai_box_per_subject.png` — per-subject AI box+strip
+- `sub-A1_Tr1_Win1_te_heatmap.png` — one subject, one window
+
+**Do not** use `p4_`, `phase_4_`, or a cohort prefix in the filename (the
+parent folders already have those). **Do not** use vague stems (`grouped`,
+`comparison`, `diagnostics` alone). Companion JSON uses the same stem +
+`_summary.json`.
+
+**Data files are a frozen schema** (do not restyle):
+`sub-{id}_{method}_connectivity.npz`, `B_{Exp|Nov}_{method}_{strategy}.npz`,
+`H1_expert_vs_novice.csv` / `H0_within_trial_stability.csv` /
+`HIV_across_trial_stability.csv` / `normality_test.csv` (ETE copies prefix
+`ete_`). See `docs/OUTPUTS.md` §2.4.
+
+If a figure is copied **out of its folder**, optionally prefix the method
+folder (`phase_4_amplitude_dste__group_te_bar_expert_vs_novice.png`). Do not
+store that doubled prefix on disk inside the method folder.
