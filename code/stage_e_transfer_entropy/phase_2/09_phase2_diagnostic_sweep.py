@@ -2,7 +2,7 @@
 Stage E — Phase 2 Diagnostic Parameter Sweep
 
 Tests combinations of Phase 2 hyperparameters to find configurations that
-maximise group differentiation (Expert vs Novice) in hybrid-dSPTE.
+maximise group differentiation (Expert vs Novice) in multivariate dSPTE.
 
 **Ranking policy (recommended shortlist for full-cohort runs):**
   1. **Quality gates** — drop configs with unreliable conditional estimation
@@ -65,8 +65,8 @@ for _p in [str(_CODE_ROOT), str(_STAGE_E_ROOT)]:
 from utils import load_config  # noqa: E402
 
 logging.basicConfig(level=logging.CRITICAL, format="%(levelname)s %(name)s: %(message)s")
-# Suppress all child loggers (hybrid_diag, utils_te_mod, etc.) that fire per-lag warnings
-for _noisy in ["hybrid_diag", "utils_te_mod", "utils_te_diag", "dspte_core_diag"]:
+# Suppress all child loggers (multivariate_diag, utils_te_mod, etc.) that fire per-lag warnings
+for _noisy in ["multivariate_diag", "utils_te_mod", "utils_te_diag", "bivariate_dspte_core_diag"]:
     logging.getLogger(_noisy).setLevel(logging.CRITICAL)
 logger = logging.getLogger("phase2_diag")
 
@@ -208,7 +208,7 @@ def extract_phase_trial(
 
 
 def _compute_tau_1e(signal: np.ndarray, max_lag: int = 300) -> int:
-    """Autocorrelation 1/e embedding delay (mirrors 01_dspte_core logic)."""
+    """Autocorrelation 1/e embedding delay (mirrors 01_bivariate_dspte_core logic)."""
     x = signal - np.nanmean(signal)
     n = len(x)
     var = np.nanvar(x)
@@ -233,7 +233,7 @@ def _make_cfg(k0_max, d, u_max, pca_enabled, pca_n_comp, sparsity_thr) -> dict:
     Returns
     -------
     dict
-        Config subset consumed by `compute_hybrid_dspte_matrix`.
+        Config subset consumed by `compute_multivariate_dspte_matrix`.
     """
     return {
         "stage_e_transfer_entropy": {
@@ -264,18 +264,18 @@ def _make_cfg(k0_max, d, u_max, pca_enabled, pca_n_comp, sparsity_thr) -> dict:
     }
 
 
-_HYBRID_MODULE_CACHE = None
+_MULTIVARIATE_MODULE_CACHE = None
 
 
-def _get_hybrid_cached():
-    """Return cached import of `06_hybrid_dspte.py` to avoid repeated reloads."""
-    global _HYBRID_MODULE_CACHE
-    if _HYBRID_MODULE_CACHE is None:
-        _HYBRID_MODULE_CACHE = _load_mod("hybrid_diag", "phase_2/06_hybrid_dspte.py")
+def _get_multivariate_cached():
+    """Return cached import of `06_multivariate_dspte.py` to avoid repeated reloads."""
+    global _MULTIVARIATE_MODULE_CACHE
+    if _MULTIVARIATE_MODULE_CACHE is None:
+        _MULTIVARIATE_MODULE_CACHE = _load_mod("multivariate_diag", "phase_2/06_multivariate_dspte.py")
         # Suppress any loggers registered inside the freshly loaded module
         for name in list(logging.Logger.manager.loggerDict.keys()):
             logging.getLogger(name).setLevel(logging.CRITICAL)
-    return _HYBRID_MODULE_CACHE
+    return _MULTIVARIATE_MODULE_CACHE
 
 
 def compute_phase2_te_window(
@@ -288,15 +288,15 @@ def compute_phase2_te_window(
     pca_n_comp: int,
     sparsity_thr: float,
 ) -> dict:
-    """Compute hybrid-dSPTE for one window. Returns metrics dict."""
-    hybrid = _get_hybrid_cached()
+    """Compute multivariate dSPTE for one window. Returns metrics dict."""
+    multivariate = _get_multivariate_cached()
     cfg = _make_cfg(k0_max, d, u_max, pca_enabled, pca_n_comp, sparsity_thr)
 
     t0 = time.time()
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            EC_matrix, delay_matrix, meta = hybrid.compute_hybrid_dspte_matrix(
+            EC_matrix, delay_matrix, meta = multivariate.compute_multivariate_dspte_matrix(
                 Phi_win, taus=taus, config=cfg, roi_names=ROI_NAMES,
             )
         elapsed = time.time() - t0

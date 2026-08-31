@@ -267,6 +267,11 @@ def run_idtxl_multivariate_te(
     n_perm_omnibus = int(idtxl_cfg.get("n_perm_omnibus", 100))
     n_perm_max_seq = int(idtxl_cfg.get("n_perm_max_seq", 50))
     idtxl_num_threads = idtxl_cfg.get("num_threads", "USE_ALL")
+    # kraskov_k: number of nearest neighbours for KSG CMI estimation.
+    # Default 4 (IDTxl/Kraskov default). Reducing to 2–3 trades estimator
+    # variance for speed (~1.5–2× faster KDTree queries). Use 2 for
+    # exploratory runs on fNIRS data where T≈1350 is moderate.
+    kraskov_k = int(idtxl_cfg.get("kraskov_k", 4))
     n_rois, T = Y_window.shape
 
     if roi_names is None:
@@ -292,6 +297,7 @@ def run_idtxl_multivariate_te(
         "alpha_min_stat": 0.05,
         "alpha_omnibus": 0.05,
         "alpha_max_seq": 0.05,
+        "kraskov_k": kraskov_k,
         "num_threads": idtxl_num_threads,
         "verbose": False,
     }
@@ -430,6 +436,7 @@ def run_subject_idtxl(
     config: Optional[dict] = None,
     overwrite: bool = False,
     first_window_only: bool = False,
+    first_trial_only: bool = False,
 ) -> Optional[dict]:
     """
     Run IDTxl MultivariateTE for all trials × windows of one subject.
@@ -440,7 +447,7 @@ def run_subject_idtxl(
     analogue of GC.
 
     Saves per-subject result to:
-        ``phase_2_hybrid_dspte/idtxl_validation/sub-{id}_idtxl_ec.npz``
+        ``phase_2_multivariate_dspte/idtxl_validation/sub-{id}_idtxl_ec.npz``
 
     Returns
     -------
@@ -463,10 +470,10 @@ def run_subject_idtxl(
         get_subject_group,
     )
     import importlib.util as _ilu
-    _core_path = Path(__file__).parent / "06_hybrid_dspte.py"  # sibling in phase_2/
-    _spec = _ilu.spec_from_file_location("hybrid_dspte_mod", _core_path)
-    _hybrid_mod = _ilu.module_from_spec(_spec)
-    _spec.loader.exec_module(_hybrid_mod)
+    _core_path = Path(__file__).parent / "06_multivariate_dspte.py"  # sibling in phase_2/
+    _spec = _ilu.spec_from_file_location("multivariate_dspte_mod", _core_path)
+    _multivariate_mod = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_multivariate_mod)
 
     te_cfg = config.get("stage_e_transfer_entropy", {})
     sig_cfg = te_cfg.get("signal", {})
@@ -505,7 +512,7 @@ def run_subject_idtxl(
     n_rois = Data_Reg.shape[0]
     conn_labels = get_connection_labels()
 
-    # Trial segmentation — mirrors process_subject_hybrid_dspte in 06_hybrid_dspte.py:
+    # Trial segmentation — mirrors process_subject_multivariate_dspte in 06_multivariate_dspte.py:
     # load preprocessed fif, then call get_trial_segments(raw, config).
     import importlib.util as _ilu2
     try:
@@ -626,6 +633,13 @@ def run_subject_idtxl(
         else:
             conn_array = np.empty((len(conn_labels), 0), dtype=np.float64)
         save_dict[f"{trial_key}_connectivity"] = conn_array
+
+        if first_trial_only:
+            logger.info(
+                "run_subject_idtxl [%s]: --first-trial-only set — stopping after %s.",
+                subject_id, trial_key,
+            )
+            break
 
     # Save .npz
     trial_ids = sorted(
@@ -935,7 +949,7 @@ def compare_symbolic_vs_idtxl(
     per_subject_r: dict = {}
 
     for subject_id in subjects:
-        p2_path = phase2_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+        p2_path = phase2_dir / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
         it_path = idtxl_dir / f"sub-{subject_id}_idtxl_ec.npz"
 
         if not p2_path.exists():
@@ -1351,6 +1365,13 @@ def _cli_main() -> None:
                              "Must be > 1/alpha (for alpha=0.05, use >=21).")
     parser.add_argument("--idtxl-fast", action="store_true",
                         help="Use faster IDTxl permutation settings for exploratory runs")
+    parser.add_argument("--first-trial-only", action="store_true",
+                        help="Process only the first trial (one IDTxl call total). "
+                             "Fastest option for a quick cross-check on a single subject.")
+    parser.add_argument("--idtxl-knn", type=int, default=None,
+                        help="Override Kraskov KNN neighbour count k (default: 4). "
+                             "Use 2 for fast exploratory runs — trades estimator "
+                             "variance for ~1.5–2× speedup in KDTree queries.")
     args = parser.parse_args()
 
     if args.eval_md:
@@ -1398,6 +1419,10 @@ def _cli_main() -> None:
         idtxl_cfg["n_perm_min_stat"] = 21
         idtxl_cfg["n_perm_omnibus"] = 41
         idtxl_cfg["n_perm_max_seq"] = 21
+    if args.idtxl_knn is not None:
+        knn = int(max(1, args.idtxl_knn))
+        idtxl_cfg["kraskov_k"] = knn
+        logger.info("--idtxl-knn: kraskov_k set to %d", knn)
 
     if args.subject:
         logger.info("=== IDTxl Validation: subject %s ===", args.subject)
@@ -1405,7 +1430,8 @@ def _cli_main() -> None:
             args.subject.strip(),
             config=config,
             overwrite=args.overwrite,
-            first_window_only=True,   # single-subject CLI: first window only
+            first_window_only=True,        # single-subject CLI: first window only
+            first_trial_only=args.first_trial_only,
         )
         if result:
             n_wins = sum(len(v) for v in result.values())

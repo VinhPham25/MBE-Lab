@@ -1,15 +1,16 @@
 """
-Stage E — Step E2: dSPTE Sliding Window Pipeline
+Stage E — Step E2: Bivariate dSPTE Sliding Window Pipeline
 
-Implements the windowed dSPTE computation and connectivity vector extraction
-for one trial's worth of ROI signals.  Mirrors Stage D's ``compute_windowed_gc``
-and the diagonal-removal logic in ``04_subject_gc_pipeline.py``.
+Implements the windowed bivariate dSPTE computation and connectivity vector
+extraction for one trial's worth of ROI signals.  Mirrors Stage D's
+``compute_windowed_gc`` and the diagonal-removal logic in
+``04_subject_gc_pipeline.py``.
 
 Section 4.1 task coverage (TRANSFER_ENTROPY_PROGRESS.md)
 ---------------------------------------------------------
-4.1.1 — compute_windowed_dspte(Y_trial, window_size, stride, config) -> dict
+4.1.1 — compute_windowed_bivariate_dspte(Y_trial, window_size, stride, config) -> dict
            Sliding window loop identical to Stage D's compute_windowed_gc().
-           Each window calls compute_dspte_matrix() and returns the tuple
+           Each window calls compute_bivariate_dspte_matrix() and returns the tuple
            (EC_matrix, delay_matrix, metadata) keyed by 'Win_N' strings.
            Logs wall-clock time per window; alerts if > 60 s.
 
@@ -71,8 +72,8 @@ def _get_core_module():
     global _CORE_MODULE
     if _CORE_MODULE is None:
         spec = importlib.util.spec_from_file_location(
-            "dspte_core",
-            Path(__file__).parent / "01_dspte_core.py",
+            "bivariate_dspte_core",
+            Path(__file__).parent / "01_bivariate_dspte_core.py",
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -84,7 +85,7 @@ def _get_core_module():
 # Section 4.1.1 — Sliding Window Loop
 # ===========================================================================
 
-def compute_windowed_dspte(
+def compute_windowed_bivariate_dspte(
     Y_trial: np.ndarray,
     window_size: int = 1350,
     stride: int = 1350,
@@ -108,21 +109,21 @@ def compute_windowed_dspte(
     Y_trial : np.ndarray, shape (n_rois, T)
         Full ROI signal matrix for one trial (e.g. shape (5, ~6750) for a
         4.5-minute trial at 25 Hz).  May contain all-NaN rows for bad
-        ROI channels (handled gracefully per window by compute_dspte_matrix).
+        ROI channels (handled gracefully per window by compute_bivariate_dspte_matrix).
     window_size : int
         Stride step in samples.  Actual window length is ``window_size + 1``
         to match the MATLAB inclusive slice.  Default 1350 (54 s × 25 Hz).
     stride : int
         Step between consecutive window starts.  Default 1350 (no overlap).
     config : dict or None
-        Parsed ``config.yaml``.  Forwarded to ``compute_dspte_matrix()`` for
+        Parsed ``config.yaml``.  Forwarded to ``compute_bivariate_dspte_matrix()`` for
         embedding dimension, u_max, nDis threshold, and NG hyperparameters.
         Loaded from disk if None.
     Phi_trial : np.ndarray, shape (n_rois, T), optional
         Pre-computed instantaneous phase array for the full trial (Option A:
         narrowband filter → Hilbert on full trial).  When provided, each
         window's phase slice ``Phi_trial[:, w-window_size : w+1]`` is passed
-        directly to ``compute_dspte_matrix`` instead of re-extracting phase
+        directly to ``compute_bivariate_dspte_matrix`` instead of re-extracting phase
         from the raw signal window.  ``None`` entries in ``taus_trial`` are
         preserved as skipped ROIs.
     taus_trial : list of int, length n_rois, optional
@@ -136,14 +137,14 @@ def compute_windowed_dspte(
         ``{'Win_1': (EC_matrix, delay_matrix, metadata),
            'Win_2': (EC_matrix, delay_matrix, metadata), ...}``
 
-        Each value is the 3-tuple returned by ``compute_dspte_matrix()``:
+        Each value is the 3-tuple returned by ``compute_bivariate_dspte_matrix()``:
 
         - ``EC_matrix``:   np.ndarray, shape (n_rois, n_rois) — directed
           connectivity matrix, values ≥ 0, diagonal = 0.
         - ``delay_matrix``: np.ndarray, shape (n_rois, n_rois), dtype int —
           optimal causal delay in samples per pair.
         - ``metadata``:    dict — k0_matrix, ndis_matrix, tau_matrix,
-          te_profiles, skipped_pairs (see compute_dspte_matrix docstring).
+          te_profiles, skipped_pairs (see compute_bivariate_dspte_matrix docstring).
 
         Keys are 1-indexed strings ``'Win_1'``, ``'Win_2'``, … matching
         MATLAB's ``W = sprintf('Win_%d', Wn+1)`` convention.
@@ -154,7 +155,7 @@ def compute_windowed_dspte(
     **Skip logic (identical to Stage D):** A window is skipped *only* if
     every sample of every ROI is all-NaN (completely empty signal matrix).
     Structurally NaN rows for bad individual channels are *not* a skip
-    condition — ``compute_dspte_matrix()`` handles those per-pair.
+    condition — ``compute_bivariate_dspte_matrix()`` handles those per-pair.
 
     **Performance alert:** dSPTE is significantly more expensive than GC
     per window (~30–60 s vs ~2–5 s) due to the Neural-Gas codebook search.
@@ -171,7 +172,7 @@ def compute_windowed_dspte(
         config = load_config()
 
     core = _get_core_module()
-    compute_dspte_matrix = core.compute_dspte_matrix
+    compute_bivariate_dspte_matrix = core.compute_bivariate_dspte_matrix
 
     n_rois, T = Y_trial.shape
     windows: dict = {}
@@ -183,7 +184,7 @@ def compute_windowed_dspte(
         # Skip only if every sample of every ROI is NaN
         if np.all(np.isnan(Y_win)):
             logger.warning(
-                "compute_windowed_dspte: Window %d skipped — all-NaN data "
+                "compute_windowed_bivariate_dspte: Window %d skipped — all-NaN data "
                 "(samples %d–%d).",
                 win_num + 1, w - window_size, w,
             )
@@ -199,13 +200,13 @@ def compute_windowed_dspte(
 
         # Option A: pass pre-computed phase window slices if available.
         # Phi_trial is (n_rois, T); NaN rows remain NaN in the slice and
-        # compute_dspte_matrix's own NaN guard handles them.
+        # compute_bivariate_dspte_matrix's own NaN guard handles them.
         phi_win = (
             [Phi_trial[roi, w - window_size : w + 1] for roi in range(n_rois)]
             if Phi_trial is not None else None
         )
 
-        EC_matrix, delay_matrix, metadata = compute_dspte_matrix(
+        EC_matrix, delay_matrix, metadata = compute_bivariate_dspte_matrix(
             Y_win, config=config,
             phases=phi_win,
             taus=taus_trial,
@@ -227,7 +228,7 @@ def compute_windowed_dspte(
 
         if elapsed > 60.0:
             logger.warning(
-                "compute_windowed_dspte: %s took %.1f s > 60 s threshold. "
+                "compute_windowed_bivariate_dspte: %s took %.1f s > 60 s threshold. "
                 "Consider reducing k0_max_bivariate or u_max in config.yaml.",
                 label, elapsed,
             )
@@ -236,7 +237,7 @@ def compute_windowed_dspte(
         win_num += 1
 
     logger.info(
-        "compute_windowed_dspte: %d windows extracted from trial of %d samples",
+        "compute_windowed_bivariate_dspte: %d windows extracted from trial of %d samples",
         len(windows), T,
     )
     return windows
@@ -274,7 +275,7 @@ def extract_connectivity_vector(
     Parameters
     ----------
     EC_matrix : np.ndarray, shape (n_valid_rois, n_valid_rois)
-        Directed connectivity matrix from ``compute_dspte_matrix()``.
+        Directed connectivity matrix from ``compute_bivariate_dspte_matrix()``.
         Diagonal is 0.  Values ≥ 0.  ``n_valid_rois`` ≤ 5.
     roi_names : list[str]
         ROI names corresponding to rows/columns of ``EC_matrix``, in order.
@@ -356,7 +357,7 @@ def _run_tests() -> None:
     """
     Section 4.1 tests.
 
-    4.1.1  compute_windowed_dspte:
+    4.1.1  compute_windowed_bivariate_dspte:
            (a) 2-ROI synthetic trial → correct number of windows, correct shapes
            (b) Trial shorter than one window → empty dict
            (c) All-NaN window skipped
@@ -433,9 +434,9 @@ def _run_tests() -> None:
     print("  [PASS] 4.1.2 extract_connectivity_vector\n")
 
     # ------------------------------------------------------------------
-    # 4.1.1 — compute_windowed_dspte  (uses compute_dspte_matrix internally)
+    # 4.1.1 — compute_windowed_bivariate_dspte  (uses compute_bivariate_dspte_matrix internally)
     # ------------------------------------------------------------------
-    print("--- 4.1.1  compute_windowed_dspte ---")
+    print("--- 4.1.1  compute_windowed_bivariate_dspte ---")
 
     # Build a fast test config (small u_max, small k0_max, relaxed nDis)
     test_config = {
@@ -465,7 +466,7 @@ def _run_tests() -> None:
 
     print("  (a) 2-ROI synthetic trial, 3 windows (T=4053, window=1350, stride=1350)")
     t0_a = time.perf_counter()
-    windows_a = compute_windowed_dspte(Y_trial_test, window_size=1350, stride=1350,
+    windows_a = compute_windowed_bivariate_dspte(Y_trial_test, window_size=1350, stride=1350,
                                        config=test_config)
     elapsed_a = time.perf_counter() - t0_a
 
@@ -485,7 +486,7 @@ def _run_tests() -> None:
 
     # (b) Trial shorter than one window → empty dict
     Y_short = np.random.randn(2, 500)
-    windows_b = compute_windowed_dspte(Y_short, window_size=1350, stride=1350,
+    windows_b = compute_windowed_bivariate_dspte(Y_short, window_size=1350, stride=1350,
                                        config=test_config)
     assert len(windows_b) == 0, f"Expected 0 windows for short trial, got {len(windows_b)}"
     print(f"  (b) Short trial (T=500 < window=1351) → 0 windows  ✓")
@@ -493,7 +494,7 @@ def _run_tests() -> None:
     # (c) First window all-NaN → skipped; second window valid → 1 window returned
     Y_nan_win = np.vstack([ch0, ch1]).copy()
     Y_nan_win[:, :1351] = np.nan    # first window all-NaN
-    windows_c = compute_windowed_dspte(Y_nan_win, window_size=1350, stride=1350,
+    windows_c = compute_windowed_bivariate_dspte(Y_nan_win, window_size=1350, stride=1350,
                                        config=test_config)
     # T=4053: windows would start at 1350, 2700, 4050.  w=4050 → w+1=4051, only 3 samples.
     # Actually w=4050: Y_trial[:, 4050-1350:4051] = Y[:, 2700:4051] → 1351 samples. Valid.
@@ -514,7 +515,7 @@ def _run_tests() -> None:
         f"got keys: {list(windows_c.keys())}"
     )
 
-    print("  [PASS] 4.1.1 compute_windowed_dspte\n")
+    print("  [PASS] 4.1.1 compute_windowed_bivariate_dspte\n")
 
     print("=== All Section 4.1 tests passed. ===\n")
 

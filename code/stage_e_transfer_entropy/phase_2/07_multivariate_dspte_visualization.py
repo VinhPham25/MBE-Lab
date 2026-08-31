@@ -1,5 +1,5 @@
 """
-Stage E — Step E7: Phase 2 Hybrid-dSPTE Visualization (Section 7.3.2 + 7.3.3)
+Stage E — Step E7: Phase 2 Multivariate dSPTE Visualization (Section 7.3.2 + 7.3.3)
 
 Implements the two diagnostic visualizations required by Section 7.3 of
 TRANSFER_ENTROPY_PROGRESS.md:
@@ -20,7 +20,7 @@ TRANSFER_ENTROPY_PROGRESS.md:
       conditioning.  The primary diagnostic run generates all 20 connections
       for subject A1, Trial 1, Window 1.
 
-Output paths (phase_2_hybrid_dspte/visualizations/)
+Output paths (phase_2_multivariate_dspte/visualizations/)
 ----------------------------------------------------
   phase1_vs_phase2_comparison.png
   lag_profile_comparison/sub-{id}_Tr{N}_Win{M}_{src}_to_{tgt}_lag_comparison.png
@@ -117,17 +117,17 @@ def _lag_profile_dir(config: Optional[dict] = None) -> Path:
 # ---------------------------------------------------------------------------
 
 def _load_batch_log(config: Optional[dict] = None) -> dict:
-    """Load hybrid_te_batch_log.json from the Phase 2 connectivity directory."""
+    """Load multivariate_te_batch_log.json from the Phase 2 connectivity directory."""
     conn_dir = _p2_conn_dir(config)
     te_cfg = (config or load_config()).get("stage_e_transfer_entropy", {})
     batch_log_name = te_cfg.get("phase_2", {}).get(
-        "batch_log_filename", "hybrid_te_batch_log.json"
+        "batch_log_filename", "multivariate_te_batch_log.json"
     )
     log_path = conn_dir / batch_log_name
     if not log_path.exists():
         raise FileNotFoundError(
             f"Phase 2 batch log not found: {log_path}\n"
-            "Run run_batch_hybrid_dspte() first."
+            "Run run_batch_multivariate_dspte() first."
         )
     with open(log_path) as f:
         return json.load(f)
@@ -139,7 +139,7 @@ def _load_subject_p2_npz(
 ) -> dict:
     """Load Phase 2 .npz for one subject, returning all arrays keyed by trial."""
     conn_dir = _p2_conn_dir(config)
-    npz_path = conn_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+    npz_path = conn_dir / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
     if not npz_path.exists():
         raise FileNotFoundError(f"Phase 2 npz not found: {npz_path}")
     return np.load(npz_path, allow_pickle=True)
@@ -151,7 +151,7 @@ def _load_subject_p1_npz(
 ) -> dict:
     """Load Phase 1 .npz for one subject."""
     conn_dir = _p1_conn_dir(config)
-    npz_path = conn_dir / f"sub-{subject_id}_dspte_connectivity.npz"
+    npz_path = conn_dir / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
     if not npz_path.exists():
         raise FileNotFoundError(
             f"Phase 1 npz not found: {npz_path}\n"
@@ -213,7 +213,7 @@ def plot_phase1_vs_phase2_comparison(
 ) -> plt.Figure:
     """
     Paired bar chart comparing Phase 1 (bivariate dSPTE) vs Phase 2
-    (conditional hybrid-dSPTE) for all 20 directed connections.
+    (conditional multivariate dSPTE) for all 20 directed connections.
 
     **Highlighting logic (PRD 7.3.2):**
 
@@ -254,7 +254,7 @@ def plot_phase1_vs_phase2_comparison(
     p2_subject_means: list[np.ndarray] = []
     subjects_used: list[str] = []
 
-    p1_npz_files = sorted(conn_dir_p1.glob("sub-*_dspte_connectivity.npz"))
+    p1_npz_files = sorted(conn_dir_p1.glob("sub-*_bivariate_dspte_connectivity.npz"))
     if not p1_npz_files:
         raise FileNotFoundError(
             f"No Phase 1 npz files found in {conn_dir_p1}. "
@@ -263,7 +263,7 @@ def plot_phase1_vs_phase2_comparison(
 
     for p1_path in p1_npz_files:
         subject_id = p1_path.stem.replace("sub-", "").replace("_dspte_connectivity", "")
-        p2_path = conn_dir_p2 / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+        p2_path = conn_dir_p2 / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
         if not p2_path.exists():
             logger.warning(
                 "plot_phase1_vs_phase2_comparison: no Phase 2 file for %s — skipping.",
@@ -327,7 +327,7 @@ def plot_phase1_vs_phase2_comparison(
     bars_p2 = ax.bar(
         x + bar_w / 2, p2_mean, bar_w,
         color=_P2_COLOR, alpha=0.88,
-        label="Phase 2 — conditional hybrid-dSPTE",
+        label="Phase 2 — conditional multivariate dSPTE",
         yerr=p2_sem, capsize=3,
         error_kw={"elinewidth": 1.2, "ecolor": "#A0540F"},
     )
@@ -572,7 +572,7 @@ def plot_lag_profile_phase1_vs_phase2(
     ax_top.fill_between(lags, 0, p1_profile, color=_P1_COLOR, alpha=0.10)
 
     ax_top.plot(lags, p2_profile, color=_P2_COLOR, lw=2.0, alpha=0.9,
-                label="Phase 2 (conditional hybrid-dSPTE)")
+                label="Phase 2 (conditional multivariate dSPTE)")
     ax_top.fill_between(lags, 0, p2_profile, color=_P2_COLOR, alpha=0.10)
 
     if 1 <= p2_optimal_delay <= u_max:
@@ -715,7 +715,7 @@ def _load_p2_group_mean_arrays(
     config: Optional[dict] = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str], list[str]]:
     """
-    Load Phase 2 subject-mean group arrays built by 08_hybrid_dspte_statistics.py.
+    Load Phase 2 subject-mean group arrays built by 08_multivariate_dspte_statistics.py.
 
     Returns
     -------
@@ -728,12 +728,12 @@ def _load_p2_group_mean_arrays(
     from utils_te import get_te_output_dir, get_connection_labels  # noqa
     grp_dir = get_te_output_dir("phase_2_group", config=config)
 
-    exp_path = grp_dir / "B_Exp_hybrid_mean.npz"
-    nov_path = grp_dir / "B_Nov_hybrid_mean.npz"
+    exp_path = grp_dir / "B_Exp_multivariate_mean.npz"
+    nov_path = grp_dir / "B_Nov_multivariate_mean.npz"
     if not exp_path.exists() or not nov_path.exists():
         raise FileNotFoundError(
             f"Phase 2 group arrays not found in {grp_dir}.\n"
-            "Run run_all_statistics_p2() from 08_hybrid_dspte_statistics.py first."
+            "Run run_all_statistics_p2() from 08_multivariate_dspte_statistics.py first."
         )
 
     exp_npz = np.load(exp_path, allow_pickle=True)
@@ -772,11 +772,11 @@ def plot_group_connectivity_matrix_p2(
     config: Optional[dict] = None,
 ) -> plt.Figure:
     """
-    Side-by-side 5×5 heatmaps of group-mean hybrid-dSPTE (Expert | Novice | Difference).
+    Side-by-side 5×5 heatmaps of group-mean multivariate dSPTE (Expert | Novice | Difference).
 
     Mirrors Phase 1's ``plot_group_connectivity_matrix_te_averaged()`` exactly but
-    loads Phase 2 subject-mean arrays (``B_Exp_hybrid_mean.npz`` /
-    ``B_Nov_hybrid_mean.npz``).
+    loads Phase 2 subject-mean arrays (``B_Exp_multivariate_mean.npz`` /
+    ``B_Nov_multivariate_mean.npz``).
 
     Layout
     ------
@@ -787,7 +787,7 @@ def plot_group_connectivity_matrix_p2(
 
     Each cell is annotated with the numeric value.  Diagonal is masked (grey '—').
 
-    Saves to ``phase_2_hybrid_dspte/visualizations/group_hybrid_te_connectivity_matrix.png``.
+    Saves to ``phase_2_multivariate_dspte/visualizations/group_multivariate_te_connectivity_matrix.png``.
 
     Parameters
     ----------
@@ -871,14 +871,14 @@ def plot_group_connectivity_matrix_p2(
         cb.set_label(cbar_lbl, fontsize=8)
 
     fig.suptitle(
-        "Group-Mean Conditional dSPTE Connectivity Matrix — Phase 2 Hybrid  [All-Trial Average]\n"
+        "Group-Mean Conditional dSPTE Connectivity Matrix — Phase 2 Multivariate  [All-Trial Average]\n"
         "(row = Source, col = Target;  diagonal masked;  subject_mean strategy)",
         fontsize=11, y=1.02,
     )
     fig.tight_layout()
 
     if save:
-        out = _p2_viz_dir(config) / "group_hybrid_te_connectivity_matrix.png"
+        out = _p2_viz_dir(config) / "group_multivariate_te_connectivity_matrix.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -906,14 +906,14 @@ def plot_group_te_comparison_p2(
     2. **FDR significance markers** — ``*`` for connections that are FDR-significant
        under the primary (subject_mean) strategy from the Phase 2 H1 CSV.  ``†`` for
        connections significant only in the sensitivity (first_window) strategy.
-       Loaded from ``phase_2_hybrid_dspte/statistics/H1_expert_vs_novice.csv``
+       Loaded from ``phase_2_multivariate_dspte/statistics/H1_expert_vs_novice.csv``
        automatically if ``h1_df=None``.
 
     3. **Phase 1 reference dots** — small dots above each group's bar showing the
        corresponding Phase 1 bivariate dSPTE value, so the viewer can see how much
        the conditioning suppressed each connection.
 
-    Saves to ``phase_2_hybrid_dspte/visualizations/group_hybrid_te_comparison.png``.
+    Saves to ``phase_2_multivariate_dspte/visualizations/group_multivariate_te_comparison.png``.
 
     Parameters
     ----------
@@ -953,8 +953,8 @@ def plot_group_te_comparison_p2(
     try:
         from utils_te import get_te_output_dir  # noqa
         grp_dir_p1 = get_te_output_dir("phase_1_group", config=config, create=False)
-        p1_exp_npz = np.load(grp_dir_p1 / "B_Exp_dspte_mean.npz", allow_pickle=True)
-        p1_nov_npz = np.load(grp_dir_p1 / "B_Nov_dspte_mean.npz", allow_pickle=True)
+        p1_exp_npz = np.load(grp_dir_p1 / "B_Exp_bivariate_dspte_mean.npz", allow_pickle=True)
+        p1_nov_npz = np.load(grp_dir_p1 / "B_Nov_bivariate_dspte_mean.npz", allow_pickle=True)
         p1_exp_mean = np.nanmean(np.nanmean(p1_exp_npz["data"], axis=2), axis=0)
         p1_nov_mean = np.nanmean(np.nanmean(p1_nov_npz["data"], axis=2), axis=0)
         logger.info("Loaded Phase 1 reference means for comparison dots.")
@@ -1036,7 +1036,7 @@ def plot_group_te_comparison_p2(
     fig.tight_layout()
 
     if save:
-        out = _p2_viz_dir(config) / "group_hybrid_te_comparison.png"
+        out = _p2_viz_dir(config) / "group_multivariate_te_comparison.png"
         fig.savefig(out, dpi=300, bbox_inches="tight")
         logger.info("Saved %s", out.name)
 
@@ -1077,7 +1077,7 @@ def run_all_phase2_visualizations(
     lag_dir = _lag_profile_dir(config)
 
     # 7.3.1 — group connectivity matrix (Expert | Novice | Difference)
-    matrix_path = viz_dir / "group_hybrid_te_connectivity_matrix.png"
+    matrix_path = viz_dir / "group_multivariate_te_connectivity_matrix.png"
     if overwrite or not matrix_path.exists():
         logger.info("Generating 7.3.1 group matrix: Expert | Novice | Expert−Novice …")
         try:
@@ -1090,7 +1090,7 @@ def run_all_phase2_visualizations(
         logger.info("Group matrix already exists (overwrite=False): %s", matrix_path)
 
     # 7.3.1 — Expert vs Novice bar chart
-    bar_path = viz_dir / "group_hybrid_te_comparison.png"
+    bar_path = viz_dir / "group_multivariate_te_comparison.png"
     if overwrite or not bar_path.exists():
         logger.info("Generating 7.3.1 Expert vs Novice bar chart …")
         try:
@@ -1170,42 +1170,42 @@ def _cli_main() -> None:
     Usage examples
     --------------
     # 7.3.2 group comparison bar chart (all subjects):
-    python3 07_hybrid_dspte_visualization.py --comparison
+    python3 07_multivariate_dspte_visualization.py --comparison
 
     # 7.3.3 lag profiles — all 20 connections for A1 Tr_1 Win 1:
-    python3 07_hybrid_dspte_visualization.py --lag-profiles --subject A1 --trial Tr_1 --window 1
+    python3 07_multivariate_dspte_visualization.py --lag-profiles --subject A1 --trial Tr_1 --window 1
 
     # 7.3.3 single connection:
-    python3 07_hybrid_dspte_visualization.py --lag-profiles --subject A1 --trial Tr_1 --window 1 --connection "CPFC→LM1"
+    python3 07_multivariate_dspte_visualization.py --lag-profiles --subject A1 --trial Tr_1 --window 1 --connection "CPFC→LM1"
 
     # Full run (7.3.2 + all 20 lag profiles for A1 Tr_1 Win 1):
-    python3 07_hybrid_dspte_visualization.py --batch
+    python3 07_multivariate_dspte_visualization.py --batch
 
     # Unit smoke tests (synthetic data, no real subjects required):
-    python3 07_hybrid_dspte_visualization.py --test
+    python3 07_multivariate_dspte_visualization.py --test
     """
     import argparse
     import time as _time
 
     p = argparse.ArgumentParser(
-        description="Stage E Phase 2 — Hybrid-dSPTE Visualization (Sections 7.3.2 + 7.3.3).",
+        description="Stage E Phase 2 — Multivariate dSPTE Visualization (Sections 7.3.2 + 7.3.3).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # 7.3.2 group comparison bar chart:
-  python3 code/stage_e_transfer_entropy/07_hybrid_dspte_visualization.py --comparison
+  python3 code/stage_e_transfer_entropy/07_multivariate_dspte_visualization.py --comparison
 
   # 7.3.3 all 20 lag profiles for A1, Tr_1, Window 1:
-  python3 code/stage_e_transfer_entropy/07_hybrid_dspte_visualization.py --lag-profiles --subject R7 --trial Tr_2 --window 1
+  python3 code/stage_e_transfer_entropy/07_multivariate_dspte_visualization.py --lag-profiles --subject R7 --trial Tr_2 --window 1
 
   # 7.3.3 single connection:
-  python3 code/stage_e_transfer_entropy/07_hybrid_dspte_visualization.py --lag-profiles --subject A1 --trial Tr_1 --window 1 --connection "CPFC→LM1"
+  python3 code/stage_e_transfer_entropy/07_multivariate_dspte_visualization.py --lag-profiles --subject A1 --trial Tr_1 --window 1 --connection "CPFC→LM1"
 
   # Full batch (7.3.2 bar chart + all 20 lag profiles for A1 Tr_1 Win 1):
-  python3 code/stage_e_transfer_entropy/07_hybrid_dspte_visualization.py --batch
+  python3 code/stage_e_transfer_entropy/07_multivariate_dspte_visualization.py --batch
 
   # Unit smoke tests:
-  python3 code/stage_e_transfer_entropy/07_hybrid_dspte_visualization.py --test
+  python3 code/stage_e_transfer_entropy/07_multivariate_dspte_visualization.py --test
         """,
     )
     p.add_argument(
@@ -1300,7 +1300,7 @@ Examples:
     # ------------------------------------------------------------------
     if args.test:
         import time as _t
-        print("\n=== 07_hybrid_dspte_visualization — unit smoke tests ===\n")
+        print("\n=== 07_multivariate_dspte_visualization — unit smoke tests ===\n")
 
         print("Test 1: Path helpers …")
         try:

@@ -2,7 +2,7 @@
 # Stage E / Phase 1 — Bivariate dSPTE: compute connectivity for all subjects
 # and build group arrays. (Superseded by Phase 4 amplitude dSTE — kept for
 # comparison; see CLAUDE.md Section 3.)
-# Wraps: code/stage_e_transfer_entropy/phase_1/03_subject_dspte_pipeline.py
+# Wraps: code/stage_e_transfer_entropy/phase_1/03_bivariate_dspte_batch.py
 #
 # Defaults to --batch when run with no arguments (the underlying script
 # defaults to a single-subject A1 smoke test otherwise).
@@ -20,4 +20,4 @@ if [ "$#" -eq 0 ]; then
   set -- --batch
 fi
 
-python3 code/stage_e_transfer_entropy/phase_1/03_subject_dspte_pipeline.py "$@"
+python3 code/stage_e_transfer_entropy/phase_1/03_bivariate_dspte_batch.py "$@"

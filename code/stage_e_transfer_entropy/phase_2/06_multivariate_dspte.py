@@ -1,5 +1,5 @@
 """
-Stage E — Phase 2: Hybrid-dSPTE (Multivariate Conditioning)
+Stage E — Phase 2: Multivariate dSPTE (Multivariate Conditioning of Phase dSPTE)
 
 Implements Section 7 of TRANSFER_ENTROPY_PROGRESS.md:
   - Section 7.1: Multivariate Symbolisation (this session)
@@ -237,8 +237,8 @@ def symbolise_multivariate(
     # -----------------------------------------------------------------
     # Import Phase 1 core utilities via importlib (same pattern used across Stage E)
     import importlib.util as _ilu
-    _core_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
-    _spec = _ilu.spec_from_file_location("dspte_core", _core_path)
+    _core_path = _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
+    _spec = _ilu.spec_from_file_location("bivariate_dspte_core", _core_path)
     _core = _ilu.module_from_spec(_spec)
     _spec.loader.exec_module(_core)
     uniform_embed = _core.uniform_embed
@@ -873,12 +873,12 @@ def compute_conditional_dspte_at_lag(
             u, sparsity_pct * 100, n_zero_cells, n_cells, mean_count_occupied,
         )
         # Fall back to the Phase 1 bivariate dSPTE for this pair at this lag.
-        # Import compute_dspte_at_lag from 01_dspte_core via importlib.
-        _core_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
-        _spec = _ilu.spec_from_file_location("dspte_core_fb", _core_path)
+        # Import compute_bivariate_dspte_at_lag from 01_bivariate_dspte_core via importlib.
+        _core_path = _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
+        _spec = _ilu.spec_from_file_location("bivariate_dspte_core_fb", _core_path)
         _core_fb = _ilu.module_from_spec(_spec)
         _spec.loader.exec_module(_core_fb)
-        te_biv = float(_core_fb.compute_dspte_at_lag(S_x, S_y, u=u, k0=k0))
+        te_biv = float(_core_fb.compute_bivariate_dspte_at_lag(S_x, S_y, u=u, k0=k0))
         return te_biv, {
             "fallback": True,
             "sparsity_pct": float(sparsity_pct),
@@ -988,7 +988,7 @@ def compute_conditional_dspte_multidelay(
     """
     Search over lags u ∈ {1, ..., u_max} and return the maximum conditional dSPTE.
 
-    Phase 2 analogue of ``compute_dspte_multidelay`` from Phase 1. At each lag,
+    Phase 2 analogue of ``compute_bivariate_dspte_multidelay`` from Phase 1. At each lag,
     calls ``compute_conditional_dspte_at_lag`` with the full conditioning set
     (or with a PCA-compressed single conditioner if ``pca_compress=True``).
 
@@ -1137,6 +1137,28 @@ def compute_conditional_dspte_multidelay(
         pca_compress,
     )
 
+    # ------------------------------------------------------------------
+    # Section 10.2 (Stage 2 fix, 2026-08-30) -- additive key exposing the
+    # PCA-compressed composite Z symbol sequence actually used to build
+    # every per-lag table above (built once, before the lag loop; the same
+    # composite is reused unchanged across all u -- see the PCA conditioning
+    # compression block at the top of this function). None when PCA
+    # compression was not actually applied (pca_compress=False, or no
+    # conditioning channels available) -- in that case there is nothing for
+    # the ETE core to reuse and it should use the existing bivariate /
+    # symbol_seqs-only path unchanged. This lets 11_symbolic_ete_core.py's
+    # compute_pair_ete() condition every surrogate recomputation on the
+    # exact same single composite conditioner the real pipeline used for
+    # this pair, instead of the full raw per-ROI symbol set (which produces
+    # a mismatched, higher-dimensional table that triggers its own sparsity
+    # fallback -- see 11_symbolic_ete_core.py's module docstring history).
+    # ------------------------------------------------------------------
+    z_composite = (
+        effective_S_z_list[0].copy()
+        if (pca_compress and pca_meta_out is not None and len(effective_S_z_list) == 1)
+        else None
+    )
+
     agg_meta = {
         "n_fallbacks": n_fallbacks,
         "fallback_lags": fallback_lags,
@@ -1145,15 +1167,16 @@ def compute_conditional_dspte_multidelay(
         "majority_fallback": majority_fallback,
         "pca_compress": pca_compress,
         "pca_meta": pca_meta_out,
+        "z_composite": z_composite,
     }
     return max_te, optimal_delay, te_vs_lag, agg_meta
 
 
 # ===========================================================================
-# Section 7.2.2 — Hybrid-dSPTE Matrix (drop-in replacement for Phase 1)
+# Section 7.2.2 — Multivariate dSPTE Matrix (drop-in replacement for Phase 1)
 # ===========================================================================
 
-def compute_hybrid_dspte_matrix(
+def compute_multivariate_dspte_matrix(
     Phi_win: np.ndarray,
     taus: list[int],
     config: "dict | None" = None,
@@ -1162,7 +1185,7 @@ def compute_hybrid_dspte_matrix(
     """
     Compute the multivariate-conditioned dSPTE effective connectivity matrix.
 
-    Drop-in replacement for Phase 1's ``compute_dspte_matrix()``.  Accepts a
+    Drop-in replacement for Phase 1's ``compute_bivariate_dspte_matrix()``.  Accepts a
     pre-filtered phase window slice (not raw signals) and returns the same
     ``(EC_matrix, delay_matrix, metadata)`` triple as Phase 1.
 
@@ -1287,7 +1310,7 @@ def compute_hybrid_dspte_matrix(
 
     if n_valid < 2:
         logger.warning(
-            "compute_hybrid_dspte_matrix: fewer than 2 valid ROIs (%d) — "
+            "compute_multivariate_dspte_matrix: fewer than 2 valid ROIs (%d) — "
             "returning zero matrices.", n_valid
         )
         return EC_matrix, delay_matrix, {
@@ -1298,6 +1321,10 @@ def compute_hybrid_dspte_matrix(
             "pca_compress": pca_compress, "mean_sparsity_pct": float("nan"),
             "mean_count_occupied": float("nan"),
             "conditioning_mode": "bivariate",
+            "symbol_seqs": [], "valid_indices": valid_indices, "codebook": None,
+            # Section 10.2 (Stage 2 fix) -- no conditioning is even attempted
+            # here (< 2 valid ROIs), so there is no composite for any pair.
+            "z_composite_per_pair": {}, "conditioning_config_hash": None,
         }
 
     # ------------------------------------------------------------------
@@ -1323,8 +1350,8 @@ def compute_hybrid_dspte_matrix(
     # These are needed for pca_compress=True path in compute_conditional_dspte_multidelay
     if pca_compress and n_valid >= 3:
         import importlib.util as _ilu_embed
-        _core_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
-        _spec_e = _ilu_embed.spec_from_file_location("dspte_core_emb", _core_path)
+        _core_path = _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
+        _spec_e = _ilu_embed.spec_from_file_location("bivariate_dspte_core_emb", _core_path)
         _core_e = _ilu_embed.module_from_spec(_spec_e)
         _spec_e.loader.exec_module(_core_e)
         embedded_valid = [
@@ -1343,6 +1370,13 @@ def compute_hybrid_dspte_matrix(
     all_mean_count_occupied: list[float] = []
     n_pairs_fallback = 0
     n_pairs_total = 0
+    # Section 10.2 (Stage 2 fix) -- per-pair PCA composite Z symbol sequence,
+    # keyed by (src_v, tgt_v) in local valid-ROI index space (same indexing
+    # convention as te_profiles). Only populated for pairs where the real
+    # pipeline actually used genuine multivariate PCA conditioning (i.e. did
+    # NOT majority-fall-back to bivariate across the lag sweep) -- see
+    # metadata['z_composite_per_pair'] docstring below.
+    z_composite_per_pair: dict = {}
 
     for src_v in range(n_valid):
         for tgt_v in range(n_valid):
@@ -1388,6 +1422,12 @@ def compute_hybrid_dspte_matrix(
             all_mean_count_occupied.append(pair_meta["mean_count_occupied"])
             if pair_meta["majority_fallback"]:
                 n_pairs_fallback += 1
+            elif pair_meta.get("z_composite") is not None:
+                # Genuine multivariate conditioning: persist the exact
+                # composite this pair's EC_matrix entry was computed from,
+                # so the ETE core can reuse it unchanged (not reconstruct it
+                # from raw per-ROI symbols, not recompute PCA).
+                z_composite_per_pair[(src_v, tgt_v)] = pair_meta["z_composite"]
 
     # ------------------------------------------------------------------
     # Majority-fallback warning at window level
@@ -1397,7 +1437,7 @@ def compute_hybrid_dspte_matrix(
     )
     if majority_pairs_fallback:
         logger.warning(
-            "compute_hybrid_dspte_matrix: Majority of pairs fell back to bivariate "
+            "compute_multivariate_dspte_matrix: Majority of pairs fell back to bivariate "
             "— %d/%d pairs. Phase 2 results for this window should be treated as "
             "equivalent to Phase 1.",
             n_pairs_fallback, n_pairs_total,
@@ -1415,12 +1455,14 @@ def compute_hybrid_dspte_matrix(
         conditioning_mode = f"full_nz{n_valid - 2}"
 
     logger.info(
-        "compute_hybrid_dspte_matrix: k0=%d  n_valid=%d  conditioning=%s  "
+        "compute_multivariate_dspte_matrix: k0=%d  n_valid=%d  conditioning=%s  "
         "pairs_fallback=%d/%d  mean_sparsity=%.1f%%  mean_count_occupied=%.2f",
         k0, n_valid, conditioning_mode, n_pairs_fallback, n_pairs_total,
         mean_sparsity * 100 if not np.isnan(mean_sparsity) else float("nan"),
         mean_count_occupied_win if not np.isnan(mean_count_occupied_win) else float("nan"),
     )
+
+    from utils_te import compute_conditioning_config_hash  # noqa
 
     metadata = {
         "k0": sym_meta["k0"],
@@ -1438,13 +1480,52 @@ def compute_hybrid_dspte_matrix(
         "mean_sparsity_pct": mean_sparsity,
         "mean_count_occupied": mean_count_occupied_win,
         "conditioning_mode": conditioning_mode,
+        # ------------------------------------------------------------------
+        # Section 10.2 — additive keys for the Effective TE (ETE) surrogate
+        # core (11_symbolic_ete_core.py).  Purely additive: zero behaviour
+        # change for existing callers.  These let compute_symbolic_ete_matrix()
+        # reconstruct per-pair (S_x, S_y, S_z_list) without re-running
+        # symbolisation, and without this function needing any awareness of
+        # ETE/surrogate testing.
+        # - 'symbol_seqs': per-VALID-ROI symbol arrays (local valid-ROI index
+        #   space, same indexing as te_profiles keys), length n_valid.
+        # - 'valid_indices': maps local valid-ROI index -> original ROI index
+        #   (n_rois_in space), so the ETE core can align back to roi_names.
+        # - 'codebook': shared Neural-Gas codebook, shape (k0, d).
+        # ------------------------------------------------------------------
+        "symbol_seqs": symbol_seqs,
+        "valid_indices": valid_indices,
+        "codebook": codebook,
+        # ------------------------------------------------------------------
+        # Section 10.2 (Stage 2 fix, 2026-08-30) — additive keys so the ETE
+        # core can condition every surrogate recomputation on the exact same
+        # PCA-compressed composite the real pipeline used for that specific
+        # pair, instead of reconstructing a (mismatched, sparsity-triggering)
+        # full raw per-ROI conditioning set.
+        # - 'z_composite_per_pair': {(src_v, tgt_v): np.ndarray(T',)} — the
+        #   composite Z symbol sequence for every pair where PCA conditioning
+        #   was genuinely used (majority_fallback=False at the pair level).
+        #   Absent keys mean this specific pair's EC_matrix entry was itself
+        #   computed via bivariate fallback — the ETE core must fall back to
+        #   bivariate the same way, not reconstruct a raw conditioning set.
+        # - 'conditioning_config_hash': tag identifying the exact parameter
+        #   set (filter, d, k0, PCA settings) used to build the composites
+        #   above. The ETE core recomputes this hash from its own config and
+        #   raises a clear error on mismatch instead of silently reusing a
+        #   stale composite (e.g. if this metadata were ever cached/reused
+        #   across a config change).
+        # ------------------------------------------------------------------
+        "z_composite_per_pair": z_composite_per_pair,
+        "conditioning_config_hash": compute_conditioning_config_hash(
+            config, "phase_2", k0
+        ),
     }
 
     return EC_matrix, delay_matrix, metadata
 
 
 # ===========================================================================
-# Section 7.2.3 — Per-Subject Hybrid-dSPTE Pipeline
+# Section 7.2.3 — Per-Subject Multivariate dSPTE Pipeline
 # ===========================================================================
 
 import importlib.util as _importlib_util_p2
@@ -1454,7 +1535,7 @@ from datetime import datetime as _datetime_p2
 from typing import Optional as _Optional_p2
 
 
-def _get_hybrid_module_dependencies():
+def _get_multivariate_module_dependencies():
     """Lazily load external modules needed by the Phase 2 pipeline."""
     results = {}
 
@@ -1467,16 +1548,16 @@ def _get_hybrid_module_dependencies():
     results["seg"] = mod
 
     spec2 = _importlib_util_p2.spec_from_file_location(
-        "dspte_pipeline_p2",
-        _STAGE_E_ROOT / "phase_1" / "02_dspte_pipeline.py",
+        "bivariate_dspte_pipeline_p2",
+        _STAGE_E_ROOT / "phase_1" / "02_bivariate_dspte_pipeline.py",
     )
     mod2 = _importlib_util_p2.module_from_spec(spec2)
     spec2.loader.exec_module(mod2)
     results["pipeline"] = mod2
 
     spec3 = _importlib_util_p2.spec_from_file_location(
-        "dspte_core_p2",
-        _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py",
+        "bivariate_dspte_core_p2",
+        _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py",
     )
     mod3 = _importlib_util_p2.module_from_spec(spec3)
     spec3.loader.exec_module(mod3)
@@ -1521,7 +1602,7 @@ def _filter_and_extract_phase_trial_p2(
     """
     Apply narrowband bandpass filter to the full trial then extract Hilbert phase.
 
-    Reuses the Phase 1 logic from ``03_subject_dspte_pipeline._filter_and_extract_phase_trial``
+    Reuses the Phase 1 logic from ``03_bivariate_dspte_batch._filter_and_extract_phase_trial``
     without duplicating it — kept here as a private helper so Phase 2 can be
     run standalone without importing Phase 1's pipeline module.
 
@@ -1557,7 +1638,7 @@ def _filter_and_extract_phase_trial_p2(
     return Phi_trial, taus_trial
 
 
-def _compute_windowed_hybrid_dspte(
+def _compute_windowed_multivariate_dspte(
     Y_trial: np.ndarray,
     Phi_trial: np.ndarray,
     taus_trial: list,
@@ -1570,11 +1651,11 @@ def _compute_windowed_hybrid_dspte(
     first_window_only: bool = False,
 ) -> dict:
     """
-    Sliding window loop for Phase 2 hybrid-dSPTE.
+    Sliding window loop for Phase 2 multivariate dSPTE.
 
-    Mirrors Phase 1's ``compute_windowed_dspte()`` but calls
-    ``compute_hybrid_dspte_matrix()`` (multivariate conditioning) instead of
-    ``compute_dspte_matrix()`` (bivariate Phase 1).
+    Mirrors Phase 1's ``compute_windowed_bivariate_dspte()`` but calls
+    ``compute_multivariate_dspte_matrix()`` (multivariate conditioning) instead of
+    ``compute_bivariate_dspte_matrix()`` (bivariate Phase 1).
 
     Parameters
     ----------
@@ -1584,7 +1665,7 @@ def _compute_windowed_hybrid_dspte(
     Phi_trial : np.ndarray, shape (n_rois, T_trial)
         Pre-computed instantaneous phase (Hilbert of narrowband-filtered signal).
         Slice ``Phi_win = Phi_trial[:, start:end+1]`` is passed to
-        ``compute_hybrid_dspte_matrix``.
+        ``compute_multivariate_dspte_matrix``.
     taus_trial : list of int, length n_rois
         Per-ROI embedding delays (computed from the full trial signal).
     valid_roi_names : list of str
@@ -1622,7 +1703,7 @@ def _compute_windowed_hybrid_dspte(
 
         t_win_start = _time_p2.perf_counter()
         try:
-            EC_matrix, delay_matrix, metadata = compute_hybrid_dspte_matrix(
+            EC_matrix, delay_matrix, metadata = compute_multivariate_dspte_matrix(
                 Phi_win=Phi_win,
                 taus=taus_trial,
                 config=config,
@@ -1630,8 +1711,8 @@ def _compute_windowed_hybrid_dspte(
             )
         except Exception as exc:
             logger.error(
-                "_compute_windowed_hybrid_dspte [%s %s Win_%d]: "
-                "compute_hybrid_dspte_matrix raised %s — skipping window.",
+                "_compute_windowed_multivariate_dspte [%s %s Win_%d]: "
+                "compute_multivariate_dspte_matrix raised %s — skipping window.",
                 subject_id, trial_id, win_idx, exc,
             )
             win_idx += 1
@@ -1640,7 +1721,7 @@ def _compute_windowed_hybrid_dspte(
         elapsed_win = _time_p2.perf_counter() - t_win_start
         if elapsed_win > _slow_thresh:
             logger.warning(
-                "_compute_windowed_hybrid_dspte [%s %s Win_%d]: "
+                "_compute_windowed_multivariate_dspte [%s %s Win_%d]: "
                 "window took %.1f s (> %.0f s threshold).",
                 subject_id, trial_id, win_idx, elapsed_win, _slow_thresh,
             )
@@ -1650,7 +1731,7 @@ def _compute_windowed_hybrid_dspte(
         win_idx += 1
 
         logger.info(
-            "_compute_windowed_hybrid_dspte [%s %s %s]: "
+            "_compute_windowed_multivariate_dspte [%s %s %s]: "
             "k0=%d  conditioning=%s  fallbacks=%d/%d  elapsed=%.1f s",
             subject_id, trial_id, win_key,
             metadata.get("k0", 0),
@@ -1666,7 +1747,7 @@ def _compute_windowed_hybrid_dspte(
     return windows
 
 
-def process_subject_hybrid_dspte(
+def process_subject_multivariate_dspte(
     subject_id: str,
     study: str = "expert_novice",
     config: "_Optional_p2[dict]" = None,
@@ -1674,11 +1755,11 @@ def process_subject_hybrid_dspte(
     first_window_only: bool = False,
 ) -> dict:
     """
-    Run the full Phase 2 Hybrid-dSPTE pipeline for one subject.
+    Run the full Phase 2 Multivariate dSPTE pipeline for one subject.
 
-    Clone of ``process_subject_dspte()`` (Phase 1) updated to use:
-    - ``compute_hybrid_dspte_matrix()`` (multivariate conditioning) instead of
-      ``compute_dspte_matrix()`` (bivariate Phase 1).
+    Clone of ``process_subject_bivariate_dspte()`` (Phase 1) updated to use:
+    - ``compute_multivariate_dspte_matrix()`` (multivariate conditioning) instead of
+      ``compute_bivariate_dspte_matrix()`` (bivariate Phase 1).
     - Output path ``phase_2_connectivity/`` instead of ``phase_1_connectivity/``.
     - Additional ``Tr_N_conditional_te_profiles`` key in the saved .npz (same
       schema as Phase 1's ``Tr_N_te_profiles`` but from conditional TE).
@@ -1687,7 +1768,7 @@ def process_subject_hybrid_dspte(
     1. Load ROI signals from Stage D cache.
     2. Apply 0.04–0.15 Hz Butterworth bandpass to the full trial signal.
     3. Slice ``Phi_full`` into ``Phi_win`` segments aligned to trial markers.
-    4. Pass ``Phi_win`` + ``taus_trial`` to ``compute_hybrid_dspte_matrix``.
+    4. Pass ``Phi_win`` + ``taus_trial`` to ``compute_multivariate_dspte_matrix``.
     5. Extract connectivity and delay vectors using the canonical schema.
     6. Save .npz to ``phase_2_connectivity/``.
 
@@ -1745,27 +1826,27 @@ def process_subject_hybrid_dspte(
     # Cache check
     # ------------------------------------------------------------------
     out_dir = get_te_output_dir("phase_2_connectivity", config=config)
-    npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+    npz_path = out_dir / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
 
     if not overwrite and npz_path.exists():
         logger.info(
-            "process_subject_hybrid_dspte [%s]: cached .npz found — loading.",
+            "process_subject_multivariate_dspte [%s]: cached .npz found — loading.",
             subject_id,
         )
-        return _load_subject_hybrid_dspte(subject_id, config=config)
+        return _load_subject_multivariate_dspte(subject_id, config=config)
 
     t_subject_start = _time_p2.perf_counter()
 
     # ------------------------------------------------------------------
     # Step 1 — Load ROI signals from Stage D cache
     # ------------------------------------------------------------------
-    logger.info("process_subject_hybrid_dspte [%s]: loading ROI signals ...", subject_id)
+    logger.info("process_subject_multivariate_dspte [%s]: loading ROI signals ...", subject_id)
     Data_Reg, valid_roi_names, sfreq = load_or_extract_roi_signals(
         subject_id, study=study, config=config
     )
     n_rois_valid = Data_Reg.shape[0]
     logger.info(
-        "process_subject_hybrid_dspte [%s]: Data_Reg shape=%s  ROIs=%s  sfreq=%.1f Hz",
+        "process_subject_multivariate_dspte [%s]: Data_Reg shape=%s  ROIs=%s  sfreq=%.1f Hz",
         subject_id, Data_Reg.shape, valid_roi_names, sfreq,
     )
 
@@ -1773,17 +1854,17 @@ def process_subject_hybrid_dspte(
     # Step 2 — Trial segmentation
     # ------------------------------------------------------------------
     raw = load_preprocessed_fif(subject_id, study=study, config=config)
-    deps = _get_hybrid_module_dependencies()
+    deps = _get_multivariate_module_dependencies()
     seg_mod = deps["seg"]
     core_mod = deps["core"]
 
     segments = seg_mod.get_trial_segments(raw, config=config)
     logger.info(
-        "process_subject_hybrid_dspte [%s]: %d trials found.", subject_id, len(segments)
+        "process_subject_multivariate_dspte [%s]: %d trials found.", subject_id, len(segments)
     )
 
     # ------------------------------------------------------------------
-    # Step 3 — Windowed hybrid-dSPTE + connectivity extraction, per trial
+    # Step 3 — Windowed multivariate dSPTE + connectivity extraction, per trial
     # ------------------------------------------------------------------
     conn_labels = get_connection_labels()
 
@@ -1808,7 +1889,7 @@ def process_subject_hybrid_dspte(
         Y_trial = Data_Reg[:, onset: offset + 1]
 
         logger.info(
-            "process_subject_hybrid_dspte [%s]: %s  samples=[%d, %d]  shape=%s",
+            "process_subject_multivariate_dspte [%s]: %s  samples=[%d, %d]  shape=%s",
             subject_id, trial_id, onset, offset, Y_trial.shape,
         )
 
@@ -1827,7 +1908,7 @@ def process_subject_hybrid_dspte(
         else:
             # Fallback: compute phase directly from raw signal (not recommended)
             logger.warning(
-                "process_subject_hybrid_dspte [%s %s]: narrowband filter disabled — "
+                "process_subject_multivariate_dspte [%s %s]: narrowband filter disabled — "
                 "Hilbert phase from raw broadband signal will be quasi-uniform. "
                 "Phase 2 results will be unreliable. Enable narrowband_filter in config.",
                 subject_id, trial_id,
@@ -1841,7 +1922,7 @@ def process_subject_hybrid_dspte(
                 taus_trial.append(core_mod.compute_embedding_delay(ph))
 
         # Windowed Phase 2 computation
-        windows_hybrid = _compute_windowed_hybrid_dspte(
+        windows_multivariate = _compute_windowed_multivariate_dspte(
             Y_trial=Y_trial,
             Phi_trial=Phi_trial,
             taus_trial=taus_trial,
@@ -1862,7 +1943,7 @@ def process_subject_hybrid_dspte(
         pipe_mod = deps["pipeline"]
         extract_connectivity_vector = pipe_mod.extract_connectivity_vector
 
-        for win_id, (EC_matrix, delay_matrix, metadata) in windows_hybrid.items():
+        for win_id, (EC_matrix, delay_matrix, metadata) in windows_multivariate.items():
             conn_vec_20 = extract_connectivity_vector(EC_matrix, valid_roi_names)
             delay_matrix_float = delay_matrix.astype(float)
             delay_vec_20 = extract_connectivity_vector(delay_matrix_float, valid_roi_names)
@@ -1896,7 +1977,7 @@ def process_subject_hybrid_dspte(
         profiles_result[trial_id] = trial_profiles
 
         logger.info(
-            "process_subject_hybrid_dspte [%s]: %s → %d windows",
+            "process_subject_multivariate_dspte [%s]: %s → %d windows",
             subject_id, trial_id, len(trial_result),
         )
 
@@ -1910,7 +1991,7 @@ def process_subject_hybrid_dspte(
 
     params = {
         "study": study,
-        "phase": "phase_2_hybrid_dspte",
+        "phase": "phase_2_multivariate_dspte",
         "window_size_samples": window_size,
         "stride_samples": stride,
         "sfreq": sfreq,
@@ -1936,7 +2017,7 @@ def process_subject_hybrid_dspte(
         "mean_optimal_delay_samples": round(float(np.mean(all_delays)), 2) if all_delays else float("nan"),
     }
 
-    _save_subject_hybrid_dspte_npz(
+    _save_subject_multivariate_dspte_npz(
         subject_id=subject_id,
         result=result,
         delays_result=delays_result,
@@ -1948,7 +2029,7 @@ def process_subject_hybrid_dspte(
 
     total_wins = sum(len(v) for v in result.values())
     logger.info(
-        "process_subject_hybrid_dspte [%s]: complete.  "
+        "process_subject_multivariate_dspte [%s]: complete.  "
         "Trials=%d  Total windows=%d  Elapsed=%.1f s  "
         "mean_k0=%.1f  mean_fallback_rate=%.2f",
         subject_id, len(result), total_wins, elapsed_subject,
@@ -1965,7 +2046,7 @@ def _extract_canonical_lag_profiles_p2(
     u_max: int,
 ) -> np.ndarray:
     """
-    Convert a ``te_profiles`` dict from ``compute_hybrid_dspte_matrix``
+    Convert a ``te_profiles`` dict from ``compute_multivariate_dspte_matrix``
     (keyed by local valid-ROI index pairs) to a canonical (20, u_max) array.
 
     Identical logic to ``_extract_canonical_lag_profiles`` in Phase 1 pipeline.
@@ -1993,7 +2074,7 @@ def _extract_canonical_lag_profiles_p2(
     return profiles
 
 
-def _save_subject_hybrid_dspte_npz(
+def _save_subject_multivariate_dspte_npz(
     subject_id: str,
     result: dict,
     delays_result: dict,
@@ -2004,7 +2085,7 @@ def _save_subject_hybrid_dspte_npz(
 ) -> Path:
     """
     Save Phase 2 per-subject output to
-    ``phase_2_connectivity/sub-{id}_hybrid_dspte_connectivity.npz``.
+    ``phase_2_connectivity/sub-{id}_multivariate_dspte_connectivity.npz``.
 
     Schema (extends Phase 1 .npz schema)
     --------------------------------------
@@ -2078,22 +2159,22 @@ def _save_subject_hybrid_dspte_npz(
         group = "Unknown"
     save_dict["group"] = np.array(group)
 
-    npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+    npz_path = out_dir / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
     np.savez(npz_path, **save_dict)
 
     logger.info(
-        "_save_subject_hybrid_dspte_npz [%s]: saved → %s  (trials=%d, total_wins=%d)",
+        "_save_subject_multivariate_dspte_npz [%s]: saved → %s  (trials=%d, total_wins=%d)",
         subject_id, npz_path.name, len(trial_ids), sum(window_counts),
     )
     return npz_path
 
 
-def _load_subject_hybrid_dspte(
+def _load_subject_multivariate_dspte(
     subject_id: str,
     config: "_Optional_p2[dict]" = None,
 ) -> "_Optional_p2[dict]":
     """
-    Load ``sub-{id}_hybrid_dspte_connectivity.npz`` and return nested result dict.
+    Load ``sub-{id}_multivariate_dspte_connectivity.npz`` and return nested result dict.
 
     Returns ``{trial_id: {win_id: conn_vec_20}}`` or None if file not found.
     """
@@ -2104,11 +2185,11 @@ def _load_subject_hybrid_dspte(
     from utils_te import get_te_output_dir  # noqa
 
     out_dir = get_te_output_dir("phase_2_connectivity", config=config)
-    npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+    npz_path = out_dir / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
 
     if not npz_path.exists():
         logger.warning(
-            "_load_subject_hybrid_dspte [%s]: file not found: %s",
+            "_load_subject_multivariate_dspte [%s]: file not found: %s",
             subject_id, npz_path,
         )
         return None
@@ -2126,7 +2207,7 @@ def _load_subject_hybrid_dspte(
         result[trial_id] = trial_result
 
     logger.info(
-        "_load_subject_hybrid_dspte [%s]: loaded from cache — "
+        "_load_subject_multivariate_dspte [%s]: loaded from cache — "
         "%d trials, %d total windows",
         subject_id, len(result),
         sum(len(v) for v in result.values()),
@@ -2134,7 +2215,7 @@ def _load_subject_hybrid_dspte(
     return result
 
 
-def run_batch_hybrid_dspte(
+def run_batch_multivariate_dspte(
     study: str = "expert_novice",
     subjects: "_Optional_p2[list[str]]" = None,
     config: "_Optional_p2[dict]" = None,
@@ -2142,12 +2223,12 @@ def run_batch_hybrid_dspte(
     first_window_only: bool = False,
 ) -> dict:
     """
-    Batch-process all subjects with Phase 2 Hybrid-dSPTE.
+    Batch-process all subjects with Phase 2 Multivariate dSPTE.
 
-    Mirrors ``run_batch_dspte()`` from Phase 1 pipeline.  Logs per-subject
+    Mirrors ``run_batch_bivariate_dspte()`` from Phase 1 pipeline.  Logs per-subject
     Phase 2 specific statistics (conditional k₀, sparsity fallback rate,
     mean conditional dSPTE, mean optimal delay) and writes
-    ``hybrid_te_batch_log.json``.
+    ``multivariate_te_batch_log.json``.
 
     Parameters
     ----------
@@ -2167,7 +2248,7 @@ def run_batch_hybrid_dspte(
     -------
     batch_log : dict
         ``{'subjects': {id: stats_dict}, 'summary': {...}}``.
-        Also written to ``phase_2_connectivity/hybrid_te_batch_log.json``.
+        Also written to ``phase_2_connectivity/multivariate_te_batch_log.json``.
     """
     if config is None:
         try:
@@ -2194,7 +2275,7 @@ def run_batch_hybrid_dspte(
         subjects = experts + novices
 
     logger.info(
-        "run_batch_hybrid_dspte: processing %d subjects: %s", len(subjects), subjects
+        "run_batch_multivariate_dspte: processing %d subjects: %s", len(subjects), subjects
     )
 
     batch_start = _time_p2.perf_counter()
@@ -2203,7 +2284,7 @@ def run_batch_hybrid_dspte(
     batch_log: dict = {
         "run_timestamp": _datetime_p2.now().isoformat(),
         "study": study,
-        "phase": "phase_2_hybrid_dspte",
+        "phase": "phase_2_multivariate_dspte",
         "n_subjects": len(subjects),
         "first_window_only": bool(first_window_only),
         "subjects": {},
@@ -2214,10 +2295,10 @@ def run_batch_hybrid_dspte(
 
     for subject_id in subjects:
         subj_start = _time_p2.perf_counter()
-        logger.info("run_batch_hybrid_dspte: === Subject %s ===", subject_id)
+        logger.info("run_batch_multivariate_dspte: === Subject %s ===", subject_id)
 
         try:
-            result = process_subject_hybrid_dspte(
+            result = process_subject_multivariate_dspte(
                 subject_id,
                 study=study,
                 config=config,
@@ -2226,7 +2307,7 @@ def run_batch_hybrid_dspte(
             )
 
             if result is None:
-                raise RuntimeError("process_subject_hybrid_dspte returned None")
+                raise RuntimeError("process_subject_multivariate_dspte returned None")
 
             n_trials = len(result)
             n_wins_total = sum(len(v) for v in result.values())
@@ -2248,7 +2329,7 @@ def run_batch_hybrid_dspte(
 
             # Load Phase 2 specific stats from saved .npz
             out_dir = get_te_output_dir("phase_2_connectivity", config=config)
-            npz_path = out_dir / f"sub-{subject_id}_hybrid_dspte_connectivity.npz"
+            npz_path = out_dir / f"sub-{subject_id}_multivariate_dspte_connectivity.npz"
             mean_conditional_k0 = float("nan")
             mean_sparsity_fallback_rate = float("nan")
             mean_delay = float("nan")
@@ -2273,21 +2354,21 @@ def run_batch_hybrid_dspte(
                 "status": "ok",
                 "n_trials": n_trials,
                 "n_windows_total": n_wins_total,
-                "mean_hybrid_dspte": round(mean_dspte, 6),
-                "max_hybrid_dspte": round(max_dspte, 6),
+                "mean_multivariate_dspte": round(mean_dspte, 6),
+                "max_multivariate_dspte": round(max_dspte, 6),
                 "mean_conditional_k0": round(mean_conditional_k0, 2) if not np.isnan(mean_conditional_k0) else None,
                 "mean_sparsity_fallback_rate": round(mean_sparsity_fallback_rate, 4) if not np.isnan(mean_sparsity_fallback_rate) else None,
                 "mean_optimal_delay_samples": round(mean_delay, 2) if not np.isnan(mean_delay) else None,
                 "mean_optimal_delay_s": round(mean_delay / _sfreq_batch, 3) if not np.isnan(mean_delay) else None,
                 "conditioning_mode": conditioning_mode,
-                "per_connection_mean_hybrid_dspte": [round(v, 6) for v in conn_means],
+                "per_connection_mean_multivariate_dspte": [round(v, 6) for v in conn_means],
                 "connection_labels": conn_labels,
                 "elapsed_s": round(elapsed_subj, 1),
             }
             n_success += 1
 
             logger.info(
-                "run_batch_hybrid_dspte [%s]: OK — trials=%d  wins=%d  "
+                "run_batch_multivariate_dspte [%s]: OK — trials=%d  wins=%d  "
                 "mean_dspte=%.4f  mean_k0=%.1f  fallback_rate=%.2f  elapsed=%.1f s",
                 subject_id, n_trials, n_wins_total, mean_dspte,
                 mean_conditional_k0 if not np.isnan(mean_conditional_k0) else 0.0,
@@ -2298,7 +2379,7 @@ def run_batch_hybrid_dspte(
         except Exception as exc:
             elapsed_subj = _time_p2.perf_counter() - subj_start
             logger.error(
-                "run_batch_hybrid_dspte [%s]: FAILED — %s  (elapsed=%.1f s)",
+                "run_batch_multivariate_dspte [%s]: FAILED — %s  (elapsed=%.1f s)",
                 subject_id, exc, elapsed_subj,
             )
             batch_log["subjects"][subject_id] = {
@@ -2318,13 +2399,13 @@ def run_batch_hybrid_dspte(
 
     # Save batch log
     log_dir = get_te_output_dir("phase_2_connectivity", config=config)
-    log_filename = te_cfg.get("phase_2", {}).get("batch_log_filename", "hybrid_te_batch_log.json")
+    log_filename = te_cfg.get("phase_2", {}).get("batch_log_filename", "multivariate_te_batch_log.json")
     log_path = log_dir / log_filename
     with open(log_path, "w") as f:
         _json_p2.dump(batch_log, f, indent=2)
 
     logger.info(
-        "run_batch_hybrid_dspte: complete.  OK=%d  FAILED=%d  Total=%.1f s  Log → %s",
+        "run_batch_multivariate_dspte: complete.  OK=%d  FAILED=%d  Total=%.1f s  Log → %s",
         n_success, n_failed, elapsed_total, log_path,
     )
     return batch_log
@@ -2336,24 +2417,24 @@ def run_batch_hybrid_dspte(
 
 def _cli_main() -> None:
     """
-    CLI entry point for Phase 2 Hybrid-dSPTE pipeline.
+    CLI entry point for Phase 2 Multivariate dSPTE pipeline.
 
     Usage examples
     --------------
     # Single subject (recompute even if .npz exists):
-    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --subject A1 --overwrite
+    python3 code/stage_e_transfer_entropy/phase_2/06_multivariate_dspte.py --subject A1 --overwrite
 
     # Single subject (use cache if available):
-    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --subject R7
+    python3 code/stage_e_transfer_entropy/phase_2/06_multivariate_dspte.py --subject R7
 
     # Full batch — all 13 subjects (skip already-done):
-    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --batch
+    python3 code/stage_e_transfer_entropy/phase_2/06_multivariate_dspte.py --batch
 
     # Full batch — force recompute all:
-    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --batch --overwrite
+    python3 code/stage_e_transfer_entropy/phase_2/06_multivariate_dspte.py --batch --overwrite
 
     # Smoke tests only (unit tests, no real data required):
-    python3 code/stage_e_transfer_entropy/06_hybrid_dspte.py --test
+    python3 code/stage_e_transfer_entropy/phase_2/06_multivariate_dspte.py --test
     """
     import argparse
     import sys as _sys_cli
@@ -2366,41 +2447,41 @@ def _cli_main() -> None:
         _sys_cli.path.insert(0, str(_code_root_cli))
 
     p = argparse.ArgumentParser(
-        description="Stage E Phase 2 — Hybrid-dSPTE per-subject pipeline and batch runner.",
+        description="Stage E Phase 2 — Multivariate dSPTE per-subject pipeline and batch runner.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Run one subject (recompute):
-  python3 06_hybrid_dspte.py --subject A1 --overwrite
+  python3 06_multivariate_dspte.py --subject A1 --overwrite
 
   # Run full batch (cache-first):
-  python3 06_hybrid_dspte.py --batch
+  python3 06_multivariate_dspte.py --batch
 
   # Force recompute full batch:
-  python3 06_hybrid_dspte.py --batch --overwrite
+  python3 06_multivariate_dspte.py --batch --overwrite
 
   # Run unit smoke tests (no real data):
-  python3 06_hybrid_dspte.py --test
+  python3 06_multivariate_dspte.py --test
         """,
     )
     p.add_argument(
         "--batch",
         action="store_true",
-        help="Run hybrid-dSPTE for all Expert+Novice subjects in config (R10 excluded). "
-             "Writes hybrid_te_batch_log.json to phase_2_connectivity/.",
+        help="Run multivariate dSPTE for all Expert+Novice subjects in config (R10 excluded). "
+             "Writes multivariate_te_batch_log.json to phase_2_connectivity/.",
     )
     p.add_argument(
         "--subject",
         type=str,
         default=None,
         metavar="ID",
-        help="Run hybrid-dSPTE for one subject (e.g. A1, R7). "
+        help="Run multivariate dSPTE for one subject (e.g. A1, R7). "
              "Add --overwrite to force recompute if .npz already exists.",
     )
     p.add_argument(
         "--overwrite",
         action="store_true",
-        help="Recompute and overwrite even if sub-{id}_hybrid_dspte_connectivity.npz already exists.",
+        help="Recompute and overwrite even if sub-{id}_multivariate_dspte_connectivity.npz already exists.",
     )
     p.add_argument(
         "--first-window-only",
@@ -2435,8 +2516,8 @@ Examples:
         raise
 
     if args.subject:
-        logger.info("=== Phase 2 Hybrid-dSPTE: single subject %s ===", args.subject)
-        result = process_subject_hybrid_dspte(
+        logger.info("=== Phase 2 Multivariate dSPTE: single subject %s ===", args.subject)
+        result = process_subject_multivariate_dspte(
             args.subject.strip(),
             study="expert_novice",
             config=config,
@@ -2451,8 +2532,8 @@ Examples:
         return
 
     if args.batch:
-        logger.info("=== Phase 2 Hybrid-dSPTE: full batch ===")
-        batch_log = run_batch_hybrid_dspte(
+        logger.info("=== Phase 2 Multivariate dSPTE: full batch ===")
+        batch_log = run_batch_multivariate_dspte(
             study="expert_novice",
             subjects=None,
             config=config,
@@ -2751,12 +2832,12 @@ def _run_smoke_tests() -> None:
     # With no conditioning channels, the formula reduces to:
     #   I(Y_t ; X_{t-u} | Y_{t-1})  =  Phase 1 bivariate dSPTE
     import importlib.util as _ilu_t
-    _core_p = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
-    _spec_t = _ilu_t.spec_from_file_location("dspte_core_t", _core_p)
+    _core_p = _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
+    _spec_t = _ilu_t.spec_from_file_location("bivariate_dspte_core_t", _core_p)
     _core_t = _ilu_t.module_from_spec(_spec_t)
     _spec_t.loader.exec_module(_core_t)
 
-    te_biv_ref = float(_core_t.compute_dspte_at_lag(S_x_test, S_y_test, u=3, k0=k0_test))
+    te_biv_ref = float(_core_t.compute_bivariate_dspte_at_lag(S_x_test, S_y_test, u=3, k0=k0_test))
     te_8, meta_8 = compute_conditional_dspte_at_lag(
         S_x_test, S_y_test, S_z_list=[], u=3, k0=k0_test,
         sparsity_threshold=1.0,   # no fallback
@@ -2821,7 +2902,7 @@ def _run_smoke_tests() -> None:
     _sys.path.insert(0, str(_STAGE_E_ROOT))
     from utils_te import fit_neural_gas_codebook as _fngc, quantise_to_symbols as _qts  # noqa
     import importlib.util as _ilu2
-    _core2_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
+    _core2_path = _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
     _spec2 = _ilu2.spec_from_file_location("dc2", _core2_path)
     _core2 = _ilu2.module_from_spec(_spec2)
     _spec2.loader.exec_module(_core2)
@@ -2880,8 +2961,8 @@ def _run_smoke_tests() -> None:
     # Re-run symbolisation to get embedded_list (symbol_sequences from Test 1
     # came from the shared codebook; we need the raw embedded matrices).
     import importlib.util as _ilu_pca
-    _core_pca_path = _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
-    _spec_pca = _ilu_pca.spec_from_file_location("dspte_core_pca", _core_pca_path)
+    _core_pca_path = _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
+    _spec_pca = _ilu_pca.spec_from_file_location("bivariate_dspte_core_pca", _core_pca_path)
     _core_pca = _ilu_pca.module_from_spec(_spec_pca)
     _spec_pca.loader.exec_module(_core_pca)
 
@@ -3009,10 +3090,10 @@ def _run_smoke_tests() -> None:
     print("=" * 65 + "\n")
 
     # ===================================================================
-    # Section 7.2.2 smoke tests — compute_hybrid_dspte_matrix
+    # Section 7.2.2 smoke tests — compute_multivariate_dspte_matrix
     # ===================================================================
     print("\n" + "=" * 65)
-    print("Section 7.2.2 — compute_hybrid_dspte_matrix smoke tests")
+    print("Section 7.2.2 — compute_multivariate_dspte_matrix smoke tests")
     print("=" * 65 + "\n")
 
     # Reuse Phi_trial (5 ROIs, T=1351) from Section 7.1 tests.
@@ -3041,9 +3122,9 @@ def _run_smoke_tests() -> None:
     # -------------------------------------------------------------------
     # Test 16: Basic matrix output — shape, diagonal=0, non-negative
     # -------------------------------------------------------------------
-    print("Test 16: compute_hybrid_dspte_matrix — output shape, diagonal=0, non-negative")
+    print("Test 16: compute_multivariate_dspte_matrix — output shape, diagonal=0, non-negative")
     t_start_16 = time.time()
-    EC_16, delay_16, meta_16 = compute_hybrid_dspte_matrix(
+    EC_16, delay_16, meta_16 = compute_multivariate_dspte_matrix(
         Phi_win=Phi_trial,
         taus=tau_list_test,
         config=config_test_p2,
@@ -3084,7 +3165,7 @@ def _run_smoke_tests() -> None:
     Phi_nan_test = Phi_trial.copy()
     Phi_nan_test[2, :] = np.nan   # RPFC all-NaN
 
-    EC_17, delay_17, meta_17 = compute_hybrid_dspte_matrix(
+    EC_17, delay_17, meta_17 = compute_multivariate_dspte_matrix(
         Phi_win=Phi_nan_test,
         taus=tau_list_test,
         config=config_test_p2,
@@ -3145,7 +3226,7 @@ def _run_smoke_tests() -> None:
             },
         }
     }
-    EC_19, _, meta_19 = compute_hybrid_dspte_matrix(
+    EC_19, _, meta_19 = compute_multivariate_dspte_matrix(
         Phi_win=Phi_trial,
         taus=tau_list_test,
         config=config_no_pca,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stage E / Phase 2 — IDTxl (KSG estimator) parallel validation: a model-free
-# cross-check against the NG-symbolic hybrid-dSPTE approach.
+# cross-check against the NG-symbolic multivariate-dSPTE approach.
 # Wraps: code/stage_e_transfer_entropy/phase_2/10_idtxl_validation.py
 #
 # This script has many performance-tuning flags (see the Python file's

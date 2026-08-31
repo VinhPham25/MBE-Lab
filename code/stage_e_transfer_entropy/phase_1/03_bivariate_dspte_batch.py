@@ -1,5 +1,5 @@
 """
-Stage E — Step E3: Per-Subject dSPTE Pipeline and Batch Runner
+Stage E — Step E3: Per-Subject Bivariate dSPTE Pipeline and Batch Runner
 
 Orchestrates the full Transfer Entropy pipeline for one subject and
 for the entire ASTaUND expert-novice cohort.  Mirrors Stage D's
@@ -9,9 +9,9 @@ batch loop and batch log format.
 
 Section 4.2 task coverage (TRANSFER_ENTROPY_PROGRESS.md)
 ---------------------------------------------------------
-4.2.1 — process_subject_dspte(subject_id, study, overwrite) -> dict
+4.2.1 — process_subject_bivariate_dspte(subject_id, study, overwrite) -> dict
            Orchestrates: load ROI signals (from Stage D cache) →
-           get_trial_segments → compute_windowed_dspte per trial →
+           get_trial_segments → compute_windowed_bivariate_dspte per trial →
            extract_connectivity_vector per window → save .npz.
            Supports overwrite=False caching.
 
@@ -23,7 +23,7 @@ Section 4.2 task coverage (TRANSFER_ENTROPY_PROGRESS.md)
            + metadata keys (subject_id, group, trial_ids, window_counts,
              roi_names_used, connection_labels, n_trials, params_json)
 
-4.2.3 — run_batch_dspte(study, subjects, overwrite) -> dict
+4.2.3 — run_batch_bivariate_dspte(study, subjects, overwrite) -> dict
            Batch processes all 13 subjects (R10 excluded).
            Writes te_batch_log.json with per-subject stats.
 
@@ -105,8 +105,8 @@ def _get_pipeline_module():
     global _PIPELINE_MODULE
     if _PIPELINE_MODULE is None:
         spec = importlib.util.spec_from_file_location(
-            "dspte_pipeline",
-            Path(__file__).parent / "02_dspte_pipeline.py",
+            "bivariate_dspte_pipeline",
+            Path(__file__).parent / "02_bivariate_dspte_pipeline.py",
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -118,8 +118,8 @@ def _get_core_module_for_filter():
     global _CORE_MODULE
     if _CORE_MODULE is None:
         spec = importlib.util.spec_from_file_location(
-            "dspte_core",
-            Path(__file__).parent / "01_dspte_core.py",
+            "bivariate_dspte_core",
+            Path(__file__).parent / "01_bivariate_dspte_core.py",
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -160,7 +160,7 @@ def _filter_and_extract_phase_trial(
     order : int
         Butterworth filter order.
     core_mod : module
-        Loaded ``01_dspte_core`` module (provides narrowband_filter,
+        Loaded ``01_bivariate_dspte_core`` module (provides narrowband_filter,
         extract_phase_signal, compute_embedding_delay).
     subject_id, trial_id : str
         For logging only.
@@ -212,7 +212,7 @@ def _filter_and_extract_phase_trial(
 # Section 4.2.1 — Per-Subject dSPTE Pipeline
 # ===========================================================================
 
-def process_subject_dspte(
+def process_subject_bivariate_dspte(
     subject_id: str,
     study: str = "expert_novice",
     config: Optional[dict] = None,
@@ -228,7 +228,7 @@ def process_subject_dspte(
     differences:
     1. ROI signals are loaded from the Stage D cache via
        ``load_or_extract_roi_signals()`` (no .fif reload needed).
-    2. The core computation is ``compute_windowed_dspte()`` (not GC).
+    2. The core computation is ``compute_windowed_bivariate_dspte()`` (not GC).
     3. The .npz stores additional ``Tr_N_delays`` and ``Tr_N_k0_values``
        arrays for diagnostic use.
 
@@ -270,7 +270,7 @@ def process_subject_dspte(
     special handling is needed here.
 
     **Delay-matrix → 20-element delay vector:** The ``delay_matrix`` from
-    ``compute_dspte_matrix()`` is a (n_rois × n_rois) integer array.  It is
+    ``compute_bivariate_dspte_matrix()`` is a (n_rois × n_rois) integer array.  It is
     expanded and flattened identically to the EC matrix (canonical 5×5 →
     remove diagonal → 20 elements) and stored as ``Tr_N_delays``.
     """
@@ -297,14 +297,14 @@ def process_subject_dspte(
     )
 
     out_dir = get_te_output_dir("phase_1_connectivity", config=config)
-    npz_path = out_dir / f"sub-{subject_id}_dspte_connectivity.npz"
+    npz_path = out_dir / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
 
     if not overwrite and npz_path.exists():
         logger.info(
-            "process_subject_dspte [%s]: cached .npz found — loading.",
+            "process_subject_bivariate_dspte [%s]: cached .npz found — loading.",
             subject_id,
         )
-        return _load_subject_dspte(subject_id, config=config)
+        return _load_subject_bivariate_dspte(subject_id, config=config)
 
     t_subject_start = time.perf_counter()
 
@@ -312,14 +312,14 @@ def process_subject_dspte(
     # Step 1 — Load ROI signals from Stage D cache
     # ------------------------------------------------------------------
     logger.info(
-        "process_subject_dspte [%s]: loading ROI signals ...", subject_id
+        "process_subject_bivariate_dspte [%s]: loading ROI signals ...", subject_id
     )
     Data_Reg, valid_roi_names, sfreq = load_or_extract_roi_signals(
         subject_id, study=study, config=config
     )
     n_rois_valid = Data_Reg.shape[0]
     logger.info(
-        "process_subject_dspte [%s]: Data_Reg shape=%s  ROIs=%s  sfreq=%.1f Hz",
+        "process_subject_bivariate_dspte [%s]: Data_Reg shape=%s  ROIs=%s  sfreq=%.1f Hz",
         subject_id, Data_Reg.shape, valid_roi_names, sfreq,
     )
 
@@ -329,7 +329,7 @@ def process_subject_dspte(
     # load_preprocessed_fif needed only for annotations/events
     from utils_te import load_preprocessed_fif  # noqa: E402
     logger.info(
-        "process_subject_dspte [%s]: loading .fif for trial segments ...",
+        "process_subject_bivariate_dspte [%s]: loading .fif for trial segments ...",
         subject_id,
     )
     raw = load_preprocessed_fif(subject_id, study=study, config=config)
@@ -337,14 +337,14 @@ def process_subject_dspte(
     seg_mod = _get_seg_module()
     segments = seg_mod.get_trial_segments(raw, config=config)
     logger.info(
-        "process_subject_dspte [%s]: %d trials found.", subject_id, len(segments)
+        "process_subject_bivariate_dspte [%s]: %d trials found.", subject_id, len(segments)
     )
 
     # ------------------------------------------------------------------
     # Step 3 — Windowed dSPTE + connectivity extraction, per trial
     # ------------------------------------------------------------------
     pipe_mod = _get_pipeline_module()
-    compute_windowed_dspte = pipe_mod.compute_windowed_dspte
+    compute_windowed_bivariate_dspte = pipe_mod.compute_windowed_bivariate_dspte
     extract_connectivity_vector = pipe_mod.extract_connectivity_vector
 
     result: dict = {}          # {trial_id: {win_id: conn_vec_20}}
@@ -366,7 +366,7 @@ def process_subject_dspte(
         Y_trial = Data_Reg[:, onset : offset + 1]
 
         logger.info(
-            "process_subject_dspte [%s]: %s  samples=[%d, %d]  shape=%s",
+            "process_subject_bivariate_dspte [%s]: %s  samples=[%d, %d]  shape=%s",
             subject_id, trial_id, onset, offset, Y_trial.shape,
         )
 
@@ -377,7 +377,7 @@ def process_subject_dspte(
         #   (a) Hilbert phase is computed on a quasi-monocomponent oscillation
         #   (b) Edge artefacts are confined to trial boundaries (outside windows)
         # The resulting Phi_trial (n_rois, T_trial) and taus_trial (n_rois,)
-        # are passed to compute_windowed_dspte, which slices Phi_trial per
+        # are passed to compute_windowed_bivariate_dspte, which slices Phi_trial per
         # window instead of recomputing phase from raw signal slices.
         if filter_enabled:
             Phi_trial, taus_trial = _filter_and_extract_phase_trial(
@@ -394,7 +394,7 @@ def process_subject_dspte(
             Phi_trial = None
             taus_trial = None
 
-        windows_dspte = compute_windowed_dspte(
+        windows_bivariate_dspte = compute_windowed_bivariate_dspte(
             Y_trial,
             window_size=window_size,
             stride=stride,
@@ -412,7 +412,7 @@ def process_subject_dspte(
         conn_labels = get_connection_labels()
         u_max = int(sig_cfg.get("u_max", 50))
 
-        for win_id, (EC_matrix, delay_matrix, metadata) in windows_dspte.items():
+        for win_id, (EC_matrix, delay_matrix, metadata) in windows_bivariate_dspte.items():
             # Connectivity vector: (n_valid × n_valid) → canonical 5×5 → 20
             conn_vec_20 = extract_connectivity_vector(EC_matrix, valid_roi_names)
 
@@ -448,7 +448,7 @@ def process_subject_dspte(
 
         total_wins = sum(len(v) for v in result.values())
         logger.info(
-            "process_subject_dspte [%s]: %s → %d windows  (total so far: %d)",
+            "process_subject_bivariate_dspte [%s]: %s → %d windows  (total so far: %d)",
             subject_id, trial_id, len(trial_result), total_wins,
         )
 
@@ -475,7 +475,7 @@ def process_subject_dspte(
         "narrowband_filter_order": int(filt_cfg.get("order", 3)) if filter_enabled else None,
     }
 
-    _save_subject_dspte_npz(
+    _save_subject_bivariate_dspte_npz(
         subject_id=subject_id,
         result=result,
         delays_result=delays_result,
@@ -488,7 +488,7 @@ def process_subject_dspte(
 
     total_wins = sum(len(v) for v in result.values())
     logger.info(
-        "process_subject_dspte [%s]: complete.  "
+        "process_subject_bivariate_dspte [%s]: complete.  "
         "Trials=%d, Total windows=%d, Elapsed=%.1f s",
         subject_id, len(result), total_wins, elapsed_subject,
     )
@@ -546,7 +546,7 @@ def _extract_canonical_lag_profiles(
     Parameters
     ----------
     te_profiles : dict
-        ``{(src, tgt): np.ndarray(u_max,)}`` from ``compute_dspte_matrix``
+        ``{(src, tgt): np.ndarray(u_max,)}`` from ``compute_bivariate_dspte_matrix``
         metadata.  Keys use *local* valid-ROI indices.
     roi_names : list[str]
         Valid ROI names for this window (e.g. ``['LPFC','CPFC','RPFC','LM1','SMA']``).
@@ -588,7 +588,7 @@ def _extract_canonical_lag_profiles(
 # Private helper — save per-subject .npz
 # ---------------------------------------------------------------------------
 
-def _save_subject_dspte_npz(
+def _save_subject_bivariate_dspte_npz(
     subject_id: str,
     result: dict,
     delays_result: dict,
@@ -599,8 +599,8 @@ def _save_subject_dspte_npz(
     config: Optional[dict] = None,
 ) -> Path:
     """
-    Save ``process_subject_dspte`` output to
-    ``phase_1_connectivity/sub-{id}_dspte_connectivity.npz``.
+    Save ``process_subject_bivariate_dspte`` output to
+    ``phase_1_connectivity/sub-{id}_bivariate_dspte_connectivity.npz``.
 
     Schema
     ------
@@ -694,11 +694,11 @@ def _save_subject_dspte_npz(
     save_dict["group"] = np.array(group)
     save_dict["params_json"] = np.array(json.dumps(params))
 
-    npz_path = out_dir / f"sub-{subject_id}_dspte_connectivity.npz"
+    npz_path = out_dir / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
     np.savez(npz_path, **save_dict)
 
     logger.info(
-        "_save_subject_dspte_npz [%s]: saved → %s  (trials=%d, total_wins=%d)",
+        "_save_subject_bivariate_dspte_npz [%s]: saved → %s  (trials=%d, total_wins=%d)",
         subject_id, npz_path.name, len(trial_ids), sum(window_counts),
     )
     return npz_path
@@ -708,24 +708,24 @@ def _save_subject_dspte_npz(
 # Private helper — load per-subject .npz
 # ---------------------------------------------------------------------------
 
-def _load_subject_dspte(
+def _load_subject_bivariate_dspte(
     subject_id: str,
     config: Optional[dict] = None,
 ) -> Optional[dict]:
     """
-    Load ``sub-{id}_dspte_connectivity.npz`` and return the nested result dict.
+    Load ``sub-{id}_bivariate_dspte_connectivity.npz`` and return the nested result dict.
 
     Returns a dict ``{trial_id: {win_id: conn_vec_20}}`` matching the return
-    format of ``process_subject_dspte()``.  Returns None if file not found.
+    format of ``process_subject_bivariate_dspte()``.  Returns None if file not found.
     """
     from utils_te import get_te_output_dir  # noqa
 
     out_dir = get_te_output_dir("phase_1_connectivity", config=config)
-    npz_path = out_dir / f"sub-{subject_id}_dspte_connectivity.npz"
+    npz_path = out_dir / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
 
     if not npz_path.exists():
         logger.warning(
-            "_load_subject_dspte [%s]: file not found: %s", subject_id, npz_path
+            "_load_subject_bivariate_dspte [%s]: file not found: %s", subject_id, npz_path
         )
         return None
 
@@ -743,7 +743,7 @@ def _load_subject_dspte(
         result[trial_id] = trial_result
 
     logger.info(
-        "_load_subject_dspte [%s]: loaded from cache — "
+        "_load_subject_bivariate_dspte [%s]: loaded from cache — "
         "%d trials, %d total windows",
         subject_id,
         len(result),
@@ -756,7 +756,7 @@ def _load_subject_dspte(
 # Section 4.2.3 — Batch Runner
 # ===========================================================================
 
-def run_batch_dspte(
+def run_batch_bivariate_dspte(
     study: str = "expert_novice",
     subjects: Optional[list[str]] = None,
     config: Optional[dict] = None,
@@ -765,7 +765,7 @@ def run_batch_dspte(
     """
     Batch-process all subjects and write te_batch_log.json.
 
-    Runs ``process_subject_dspte()`` for every subject in the cohort
+    Runs ``process_subject_bivariate_dspte()`` for every subject in the cohort
     (R10 excluded by default).  Logs per-subject statistics and saves a
     JSON batch log to ``phase_1_connectivity/te_batch_log.json``.
 
@@ -809,7 +809,7 @@ def run_batch_dspte(
         subjects = experts + novices
 
     logger.info(
-        "run_batch_dspte: processing %d subjects: %s", len(subjects), subjects
+        "run_batch_bivariate_dspte: processing %d subjects: %s", len(subjects), subjects
     )
 
     batch_start = time.perf_counter()
@@ -828,15 +828,15 @@ def run_batch_dspte(
 
     for subject_id in subjects:
         subj_start = time.perf_counter()
-        logger.info("run_batch_dspte: === Subject %s ===", subject_id)
+        logger.info("run_batch_bivariate_dspte: === Subject %s ===", subject_id)
 
         try:
-            result = process_subject_dspte(
+            result = process_subject_bivariate_dspte(
                 subject_id, study=study, config=config, overwrite=overwrite
             )
 
             if result is None:
-                raise RuntimeError("process_subject_dspte returned None")
+                raise RuntimeError("process_subject_bivariate_dspte returned None")
 
             # Gather per-subject stats
             n_trials = len(result)
@@ -850,19 +850,19 @@ def run_batch_dspte(
 
             if all_conn:
                 all_conn_arr = np.stack(all_conn)   # (n_wins_total, 20)
-                mean_dspte = float(all_conn_arr.mean())
-                max_dspte = float(all_conn_arr.max())
+                mean_bivariate_dspte = float(all_conn_arr.mean())
+                max_bivariate_dspte = float(all_conn_arr.max())
                 # Per-connection mean (across all windows × trials)
                 conn_means = all_conn_arr.mean(axis=0).tolist()
             else:
-                mean_dspte = 0.0
-                max_dspte = 0.0
+                mean_bivariate_dspte = 0.0
+                max_bivariate_dspte = 0.0
                 conn_means = [0.0] * 20
 
             # Load k₀ stats from the saved .npz
             from utils_te import get_te_output_dir  # noqa
             out_dir = get_te_output_dir("phase_1_connectivity", config=config)
-            npz_path = out_dir / f"sub-{subject_id}_dspte_connectivity.npz"
+            npz_path = out_dir / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
             mean_k0 = float("nan")
             mean_delay = float("nan")
             if npz_path.exists():
@@ -887,28 +887,28 @@ def run_batch_dspte(
                 "status": "ok",
                 "n_trials": n_trials,
                 "n_windows_total": n_wins_total,
-                "mean_dspte": round(mean_dspte, 6),
-                "max_dspte": round(max_dspte, 6),
+                "mean_bivariate_dspte": round(mean_bivariate_dspte, 6),
+                "max_bivariate_dspte": round(max_bivariate_dspte, 6),
                 "mean_k0": round(mean_k0, 2),
                 "mean_optimal_delay_samples": round(mean_delay, 2),
                 "mean_optimal_delay_s": round(mean_delay / 25.0, 3)
                     if not np.isnan(mean_delay) else float("nan"),
-                "per_connection_mean_dspte": [round(v, 6) for v in conn_means],
+                "per_connection_mean_bivariate_dspte": [round(v, 6) for v in conn_means],
                 "connection_labels": conn_labels,
                 "elapsed_s": round(elapsed_subj, 1),
             }
             n_success += 1
 
             logger.info(
-                "run_batch_dspte [%s]: OK — trials=%d  wins=%d  "
-                "mean_dspte=%.4f  mean_k0=%.1f  elapsed=%.1f s",
-                subject_id, n_trials, n_wins_total, mean_dspte, mean_k0, elapsed_subj,
+                "run_batch_bivariate_dspte [%s]: OK — trials=%d  wins=%d  "
+                "mean_bivariate_dspte=%.4f  mean_k0=%.1f  elapsed=%.1f s",
+                subject_id, n_trials, n_wins_total, mean_bivariate_dspte, mean_k0, elapsed_subj,
             )
 
         except Exception as exc:
             elapsed_subj = time.perf_counter() - subj_start
             logger.error(
-                "run_batch_dspte [%s]: FAILED — %s  (elapsed=%.1f s)",
+                "run_batch_bivariate_dspte [%s]: FAILED — %s  (elapsed=%.1f s)",
                 subject_id, exc, elapsed_subj,
             )
             batch_log["subjects"][subject_id] = {
@@ -935,7 +935,7 @@ def run_batch_dspte(
         json.dump(batch_log, f, indent=2)
 
     logger.info(
-        "run_batch_dspte: complete.  OK=%d  FAILED=%d  Total=%.1f s  "
+        "run_batch_bivariate_dspte: complete.  OK=%d  FAILED=%d  Total=%.1f s  "
         "Log → %s",
         n_success, n_failed, elapsed_total, log_path,
     )
@@ -963,7 +963,7 @@ def _load_npz_lists(
     def _load(subject_ids):
         results = []
         for sid in subject_ids:
-            fpath = conn_dir / f"sub-{sid}_dspte_connectivity.npz"
+            fpath = conn_dir / f"sub-{sid}_bivariate_dspte_connectivity.npz"
             if not fpath.exists():
                 logger.warning(
                     "%s: missing .npz for %s: %s", caller, sid, fpath.name
@@ -1007,7 +1007,7 @@ def _window_summary(subject_ids, npz_list):
 
 
 # ---------------------------------------------------------------------------
-# 4.3.1c — build_group_arrays_all_windows()  (renamed from build_group_arrays_dspte)
+# 4.3.1c — build_group_arrays_all_windows()  (renamed from build_group_arrays_bivariate_dspte)
 # ---------------------------------------------------------------------------
 
 def build_group_arrays_all_windows(
@@ -1019,7 +1019,7 @@ def build_group_arrays_all_windows(
     Load all per-subject dSPTE .npz files and stack into group-level arrays.
 
     All windows from every subject are included.  This is the original
-    ``build_group_arrays_dspte()`` logic, renamed.  Use for H0
+    ``build_group_arrays_bivariate_dspte()`` logic, renamed.  Use for H0
     (within-trial stability) and HIV (across-trial stability) tests which
     require window-level resolution.
 
@@ -1047,9 +1047,9 @@ def build_group_arrays_all_windows(
 
     Saves
     -----
-    ``phase_1_group/B_Exp_dspte_all.npz``  — Expert group arrays
-    ``phase_1_group/B_Nov_dspte_all.npz``  — Novice group arrays
-    ``phase_1_group/dspte_summary.json``   — processing metadata
+    ``phase_1_group/B_Exp_bivariate_dspte_all.npz``  — Expert group arrays
+    ``phase_1_group/B_Nov_bivariate_dspte_all.npz``  — Novice group arrays
+    ``phase_1_group/bivariate_dspte_summary.json``   — processing metadata
     """
     if config is None:
         config = load_config()
@@ -1057,8 +1057,8 @@ def build_group_arrays_all_windows(
     from utils_te import get_te_output_dir, get_connection_labels  # noqa
 
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    exp_path = group_dir / "B_Exp_dspte_all.npz"
-    nov_path = group_dir / "B_Nov_dspte_all.npz"
+    exp_path = group_dir / "B_Exp_bivariate_dspte_all.npz"
+    nov_path = group_dir / "B_Nov_bivariate_dspte_all.npz"
 
     if not overwrite and exp_path.exists() and nov_path.exists():
         logger.info(
@@ -1092,7 +1092,7 @@ def build_group_arrays_all_windows(
     if not all_npz:
         raise RuntimeError(
             "build_group_arrays_all_windows: no per-subject .npz files found. "
-            "Run process_subject_dspte() for each subject first."
+            "Run process_subject_bivariate_dspte() for each subject first."
         )
 
     # Determine max trials and max windows per trial across all subjects
@@ -1158,7 +1158,7 @@ def build_group_arrays_all_windows(
     exp_save["strategy"] = np.array("all_windows")
     np.savez(exp_path, **exp_save)
     logger.info(
-        "build_group_arrays_all_windows: saved B_Exp_dspte_all.npz  (trials=%s)",
+        "build_group_arrays_all_windows: saved B_Exp_bivariate_dspte_all.npz  (trials=%s)",
         list(B_Exp.keys()),
     )
 
@@ -1167,7 +1167,7 @@ def build_group_arrays_all_windows(
     nov_save["strategy"] = np.array("all_windows")
     np.savez(nov_path, **nov_save)
     logger.info(
-        "build_group_arrays_all_windows: saved B_Nov_dspte_all.npz  (trials=%s)",
+        "build_group_arrays_all_windows: saved B_Nov_bivariate_dspte_all.npz  (trials=%s)",
         list(B_Nov.keys()),
     )
 
@@ -1186,9 +1186,9 @@ def build_group_arrays_all_windows(
         "expert_subjects": _window_summary(expert_ids, expert_npz_list),
         "novice_subjects": _window_summary(novice_ids, novice_npz_list),
     }
-    with open(group_dir / "dspte_summary.json", "w") as fh:
+    with open(group_dir / "bivariate_dspte_summary.json", "w") as fh:
         json.dump(summary, fh, indent=2, cls=_NumpyEncoder)
-    logger.info("build_group_arrays_all_windows: saved dspte_summary.json")
+    logger.info("build_group_arrays_all_windows: saved bivariate_dspte_summary.json")
 
     return B_Exp, B_Nov
 
@@ -1228,8 +1228,8 @@ def build_group_arrays_subject_mean(
 
     Saves
     -----
-    ``phase_1_group/B_Exp_dspte_mean.npz``
-    ``phase_1_group/B_Nov_dspte_mean.npz``
+    ``phase_1_group/B_Exp_bivariate_dspte_mean.npz``
+    ``phase_1_group/B_Nov_bivariate_dspte_mean.npz``
 
     Each .npz stores: ``data`` (n_subs, 20, 5), ``subject_ids``,
     ``strategy="subject_mean"``.
@@ -1240,8 +1240,8 @@ def build_group_arrays_subject_mean(
     from utils_te import get_te_output_dir, get_connection_labels  # noqa
 
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    exp_path = group_dir / "B_Exp_dspte_mean.npz"
-    nov_path = group_dir / "B_Nov_dspte_mean.npz"
+    exp_path = group_dir / "B_Exp_bivariate_dspte_mean.npz"
+    nov_path = group_dir / "B_Nov_bivariate_dspte_mean.npz"
 
     if not overwrite and exp_path.exists() and nov_path.exists():
         logger.info(
@@ -1305,7 +1305,7 @@ def build_group_arrays_subject_mean(
         subject_ids=np.array(expert_ids),
         strategy=np.array("subject_mean"),
     )
-    logger.info("build_group_arrays_subject_mean: saved B_Exp_dspte_mean.npz")
+    logger.info("build_group_arrays_subject_mean: saved B_Exp_bivariate_dspte_mean.npz")
 
     np.savez(
         nov_path,
@@ -1313,7 +1313,7 @@ def build_group_arrays_subject_mean(
         subject_ids=np.array(novice_ids),
         strategy=np.array("subject_mean"),
     )
-    logger.info("build_group_arrays_subject_mean: saved B_Nov_dspte_mean.npz")
+    logger.info("build_group_arrays_subject_mean: saved B_Nov_bivariate_dspte_mean.npz")
 
     return B_Exp_mean, B_Nov_mean
 
@@ -1355,8 +1355,8 @@ def build_group_arrays_first_window(
 
     Saves
     -----
-    ``phase_1_group/B_Exp_dspte_fw.npz``
-    ``phase_1_group/B_Nov_dspte_fw.npz``
+    ``phase_1_group/B_Exp_bivariate_dspte_fw.npz``
+    ``phase_1_group/B_Nov_bivariate_dspte_fw.npz``
 
     Each .npz stores: ``data`` (n_subs, 20, 5), ``subject_ids``,
     ``strategy="first_window"``.
@@ -1367,8 +1367,8 @@ def build_group_arrays_first_window(
     from utils_te import get_te_output_dir, get_connection_labels  # noqa
 
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    exp_path = group_dir / "B_Exp_dspte_fw.npz"
-    nov_path = group_dir / "B_Nov_dspte_fw.npz"
+    exp_path = group_dir / "B_Exp_bivariate_dspte_fw.npz"
+    nov_path = group_dir / "B_Nov_bivariate_dspte_fw.npz"
 
     if not overwrite and exp_path.exists() and nov_path.exists():
         logger.info(
@@ -1437,7 +1437,7 @@ def build_group_arrays_first_window(
         subject_ids=np.array(expert_ids),
         strategy=np.array("first_window"),
     )
-    logger.info("build_group_arrays_first_window: saved B_Exp_dspte_fw.npz")
+    logger.info("build_group_arrays_first_window: saved B_Exp_bivariate_dspte_fw.npz")
 
     np.savez(
         nov_path,
@@ -1445,7 +1445,7 @@ def build_group_arrays_first_window(
         subject_ids=np.array(novice_ids),
         strategy=np.array("first_window"),
     )
-    logger.info("build_group_arrays_first_window: saved B_Nov_dspte_fw.npz")
+    logger.info("build_group_arrays_first_window: saved B_Nov_bivariate_dspte_fw.npz")
 
     return B_Exp_fw, B_Nov_fw
 
@@ -1460,7 +1460,7 @@ def build_all_group_arrays(
     overwrite: bool = False,
 ) -> dict:
     """
-    Build all three group array variants and update dspte_summary.json.
+    Build all three group array variants and update bivariate_dspte_summary.json.
 
     Calls:
     - ``build_group_arrays_subject_mean()`` — PRIMARY for H1
@@ -1495,10 +1495,10 @@ def build_all_group_arrays(
     )
 
     # ------------------------------------------------------------------
-    # Update dspte_summary.json with duration-confound strategy metadata
+    # Update bivariate_dspte_summary.json with duration-confound strategy metadata
     # ------------------------------------------------------------------
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    summary_path = group_dir / "dspte_summary.json"
+    summary_path = group_dir / "bivariate_dspte_summary.json"
 
     existing_summary: dict = {}
     if summary_path.exists():
@@ -1520,7 +1520,7 @@ def build_all_group_arrays(
     with open(summary_path, "w") as fh:
         json.dump(existing_summary, fh, indent=2, cls=_NumpyEncoder)
     logger.info(
-        "build_all_group_arrays: updated dspte_summary.json with "
+        "build_all_group_arrays: updated bivariate_dspte_summary.json with "
         "duration_confound_strategy."
     )
 
@@ -1543,13 +1543,13 @@ def build_all_group_arrays(
 # Backward-compat alias (kept so existing call sites don't break immediately)
 # ---------------------------------------------------------------------------
 
-def build_group_arrays_dspte(
+def build_group_arrays_bivariate_dspte(
     study: str = "expert_novice",
     config: Optional[dict] = None,
 ) -> tuple[dict, dict]:
     """Deprecated alias — calls ``build_group_arrays_all_windows()``."""
     logger.warning(
-        "build_group_arrays_dspte() is deprecated. "
+        "build_group_arrays_bivariate_dspte() is deprecated. "
         "Call build_all_group_arrays() instead, or one of the three "
         "strategy-specific builders."
     )
@@ -1562,7 +1562,7 @@ def build_group_arrays_dspte(
 # ---------------------------------------------------------------------------
 
 def _load_group_npz_as_dict(path: Path) -> dict:
-    """Load a B_Exp/B_Nov_dspte_all.npz and return as trial-keyed dict."""
+    """Load a B_Exp/B_Nov_bivariate_dspte_all.npz and return as trial-keyed dict."""
     raw = dict(np.load(path, allow_pickle=True))
     out = {k: v for k, v in raw.items() if k.startswith("Tr_")}
     return out
@@ -1576,7 +1576,7 @@ def _run_tests() -> None:
     """
     Section 4.2 smoke tests.
 
-    4.2.1/4.2.2 — process_subject_dspte('A1'):
+    4.2.1/4.2.2 — process_subject_bivariate_dspte('A1'):
         (a) Returns nested dict with correct structure
         (b) Each connectivity vector has shape (20,), values ≥ 0
         (c) .npz exists with correct keys and schema
@@ -1592,7 +1592,7 @@ def _run_tests() -> None:
         datefmt="%H:%M:%S",
     )
     print("\n=== Section 4.2 — Per-Subject dSPTE Pipeline Smoke Test ===\n")
-    print("Running process_subject_dspte('A1') with config defaults.")
+    print("Running process_subject_bivariate_dspte('A1') with config defaults.")
     print("This may take several minutes (u_max × 20 pairs × n_windows).\n")
 
     config = load_config()
@@ -1603,7 +1603,7 @@ def _run_tests() -> None:
     # config["stage_e_transfer_entropy"]["signal"]["u_max"] = 10
 
     t0 = time.perf_counter()
-    result = process_subject_dspte("A1", config=config, overwrite=True)
+    result = process_subject_bivariate_dspte("A1", config=config, overwrite=True)
     elapsed = time.perf_counter() - t0
 
     print(f"\n--- Results ---")
@@ -1632,7 +1632,7 @@ def _run_tests() -> None:
     # (c) .npz schema validation
     from utils_te import get_te_output_dir
     out_dir = get_te_output_dir("phase_1_connectivity", config=config)
-    npz_path = out_dir / "sub-A1_dspte_connectivity.npz"
+    npz_path = out_dir / "sub-A1_bivariate_dspte_connectivity.npz"
     assert npz_path.exists(), f".npz not found: {npz_path}"
 
     data = dict(np.load(npz_path, allow_pickle=True))
@@ -1673,7 +1673,7 @@ def _run_tests() -> None:
     # (e) Cache load — overwrite=False should load without recomputing
     print(f"\n  (e) Testing cache load (overwrite=False) ...")
     t_cache = time.perf_counter()
-    result_cached = process_subject_dspte("A1", config=config, overwrite=False)
+    result_cached = process_subject_bivariate_dspte("A1", config=config, overwrite=False)
     elapsed_cache = time.perf_counter() - t_cache
     assert result_cached is not None, "Cache load returned None"
     assert set(result_cached.keys()) == set(result.keys()), "Trial keys mismatch"
@@ -1688,28 +1688,28 @@ def _cli_main() -> None:
     import argparse
 
     #To run on full expert-novice group, use the following command:
-    # python3 code/stage_e_transfer_entropy/03_subject_dspte_pipeline.py --batch --overwrite
+    # python3 code/stage_e_transfer_entropy/phase_1/03_bivariate_dspte_batch.py --batch --overwrite
 
     #To run on a single subject, use the following command:
-    # python3 code/stage_e_transfer_entropy/03_subject_dspte_pipeline.py --subject A1 --overwrite
+    # python3 code/stage_e_transfer_entropy/phase_1/03_bivariate_dspte_batch.py --subject A1 --overwrite
 
     #To run the smoke test, use the following command:
-    # python3 code/stage_e_transfer_entropy/03_subject_dspte_pipeline.py --test
+    # python3 code/stage_e_transfer_entropy/phase_1/03_bivariate_dspte_batch.py --test
     p = argparse.ArgumentParser(
-        description="Stage E Phase 1 — per-subject dSPTE and group arrays.",
+        description="Stage E Phase 1 — per-subject bivariate dSPTE and group arrays.",
     )
     p.add_argument(
         "--batch",
         action="store_true",
-        help="Run dSPTE for all Expert+Novice subjects in config (R10 excluded), "
-        "write te_batch_log.json, then build B_Exp_dspte / B_Nov_dspte.",
+        help="Run bivariate dSPTE for all Expert+Novice subjects in config (R10 excluded), "
+        "write te_batch_log.json, then build B_Exp_bivariate_dspte / B_Nov_bivariate_dspte.",
     )
     p.add_argument(
         "--subject",
         type=str,
         default=None,
         metavar="ID",
-        help="Run dSPTE for one subject (e.g. R7). Use --overwrite to recompute if .npz exists.",
+        help="Run bivariate dSPTE for one subject (e.g. R7). Use --overwrite to recompute if .npz exists.",
     )
     p.add_argument(
         "--group-only",
@@ -1720,7 +1720,7 @@ def _cli_main() -> None:
     p.add_argument(
         "--overwrite",
         action="store_true",
-        help="Recompute even if sub-{id}_dspte_connectivity.npz exists.",
+        help="Recompute even if sub-{id}_bivariate_dspte_connectivity.npz exists.",
     )
     p.add_argument(
         "--no-overwrite",
@@ -1741,7 +1741,7 @@ def _cli_main() -> None:
     )
     config = load_config()
 
-    # Batch: respect --overwrite / --no-overwrite (matches process_subject_dspte defaults).
+    # Batch: respect --overwrite / --no-overwrite (matches process_subject_bivariate_dspte defaults).
     overwrite = bool(args.overwrite)
     if args.no_overwrite:
         overwrite = False
@@ -1750,7 +1750,7 @@ def _cli_main() -> None:
         build_all_group_arrays(config=config, overwrite=overwrite)
         return
     if args.batch:
-        run_batch_dspte(
+        run_batch_bivariate_dspte(
             study="expert_novice",
             subjects=None,
             config=config,
@@ -1759,7 +1759,7 @@ def _cli_main() -> None:
         build_all_group_arrays(config=config, overwrite=overwrite)
         return
     if args.subject:
-        process_subject_dspte(
+        process_subject_bivariate_dspte(
             args.subject.strip(),
             study="expert_novice",
             config=config,

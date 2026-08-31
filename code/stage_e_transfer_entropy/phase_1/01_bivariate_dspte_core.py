@@ -1,9 +1,10 @@
 """
-Stage E — Phase 1 dSPTE Core Functions
+Stage E — Phase 1 Bivariate dSPTE Core Functions
 
 Implements the six algorithmic steps of Wang (2020)'s delay Symbolic Phase
 Transfer Entropy (dSPTE), as specified in TRANSFER_ENTROPY_PROGRESS.md
-Sections 3.1 through 3.4.
+Sections 3.1 through 3.4. This is the bivariate (unconditioned, pairwise)
+variant — Phase 2's multivariate conditioning builds on top of it.
 
 Section 3.1 — Phase Extraction
     narrowband_filter(x, f_lo, f_hi) : zero-phase Butterworth bandpass (full-trial)
@@ -17,10 +18,10 @@ Section 3.2 — Uniform Embedding
 Section 3.3 — Neural-Gas Symbolisation
     symbolise_pair(theta_x, theta_y, d, tau, k0_max, ndis_threshold)
 
-Section 3.4 — dSPTE Computation (next session)
-    compute_dspte_at_lag(S_x, S_y, u, k0)
-    compute_dspte_multidelay(S_x, S_y, k0, u_max)
-    compute_dspte_matrix(Y_window, config)
+Section 3.4 — Bivariate dSPTE Computation (next session)
+    compute_bivariate_dspte_at_lag(S_x, S_y, u, k0)
+    compute_bivariate_dspte_multidelay(S_x, S_y, k0, u_max)
+    compute_bivariate_dspte_matrix(Y_window, config)
 
 Reference
 ---------
@@ -604,10 +605,10 @@ def symbolise_pair(
 
 
 # ===========================================================================
-# Section 3.4 — dSPTE Computation
+# Section 3.4 — Bivariate dSPTE Computation
 # ===========================================================================
 
-def compute_dspte_at_lag(
+def compute_bivariate_dspte_at_lag(
     S_x: np.ndarray,
     S_y: np.ndarray,
     u: int,
@@ -671,7 +672,7 @@ def compute_dspte_at_lag(
 
     if t_start >= T_prime:
         logger.warning(
-            "compute_dspte_at_lag: lag u=%d >= T'=%d, returning 0.0", u, T_prime
+            "compute_bivariate_dspte_at_lag: lag u=%d >= T'=%d, returning 0.0", u, T_prime
         )
         return 0.0
 
@@ -745,13 +746,13 @@ def compute_dspte_at_lag(
     te = max(0.0, te)
 
     logger.debug(
-        "compute_dspte_at_lag: u=%d  k0=%d  T'=%d  TE=%.6f",
+        "compute_bivariate_dspte_at_lag: u=%d  k0=%d  T'=%d  TE=%.6f",
         u, k0, T_prime, te,
     )
     return te
 
 
-def compute_dspte_multidelay(
+def compute_bivariate_dspte_multidelay(
     S_x: np.ndarray,
     S_y: np.ndarray,
     k0: int,
@@ -773,7 +774,7 @@ def compute_dspte_multidelay(
     S_y : np.ndarray, shape (T',), dtype int
         Symbolic sequence for the target channel Y.
     k0 : int
-        Codebook alphabet size (passed through to ``compute_dspte_at_lag``).
+        Codebook alphabet size (passed through to ``compute_bivariate_dspte_at_lag``).
     u_max : int
         Maximum lag to search (default 50 → ~2 s at 25 Hz).
 
@@ -791,19 +792,19 @@ def compute_dspte_multidelay(
     te_vs_lag = np.zeros(u_max, dtype=np.float64)
 
     for i, u in enumerate(range(1, u_max + 1)):
-        te_vs_lag[i] = compute_dspte_at_lag(S_x, S_y, u=u, k0=k0)
+        te_vs_lag[i] = compute_bivariate_dspte_at_lag(S_x, S_y, u=u, k0=k0)
 
     max_te = float(te_vs_lag.max())
     optimal_delay = int(np.argmax(te_vs_lag)) + 1   # 1-indexed
 
     logger.info(
-        "compute_dspte_multidelay: max_TE=%.6f  opt_delay=%d  u_max=%d",
+        "compute_bivariate_dspte_multidelay: max_TE=%.6f  opt_delay=%d  u_max=%d",
         max_te, optimal_delay, u_max,
     )
     return max_te, optimal_delay, te_vs_lag
 
 
-def compute_dspte_matrix(
+def compute_bivariate_dspte_matrix(
     Y_window: np.ndarray,
     config: "dict | None" = None,
     phases: "list[np.ndarray | None] | None" = None,
@@ -826,7 +827,7 @@ def compute_dspte_matrix(
        joint NG codebook is fitted on a commensurate state space.
     3. Symbolise the pair via :func:`symbolise_pair` (NG codebook fitting +
        vector quantisation → integer symbolic sequences S_x, S_y).
-    4. Run multi-delay dSPTE search via :func:`compute_dspte_multidelay`
+    4. Run multi-delay dSPTE search via :func:`compute_bivariate_dspte_multidelay`
        → (max_te, optimal_delay, te_vs_lag).
     5. Store ``EC_matrix[src, tgt] = max_te`` and
        ``delay_matrix[src, tgt] = optimal_delay``.
@@ -925,7 +926,7 @@ def compute_dspte_matrix(
         # Validate supplied arrays and fill taus if not given.
         if len(phases) != n_rois:
             raise ValueError(
-                f"compute_dspte_matrix: len(phases)={len(phases)} != n_rois={n_rois}"
+                f"compute_bivariate_dspte_matrix: len(phases)={len(phases)} != n_rois={n_rois}"
             )
         if taus is None:
             taus = []
@@ -943,7 +944,7 @@ def compute_dspte_matrix(
                 _phases[roi_idx] = None
                 _taus[roi_idx] = 1
                 logger.warning(
-                    "compute_dspte_matrix: ROI %d Y_window row all-NaN — "
+                    "compute_bivariate_dspte_matrix: ROI %d Y_window row all-NaN — "
                     "overriding supplied phase to None.", roi_idx,
                 )
     else:
@@ -956,7 +957,7 @@ def compute_dspte_matrix(
                 _phases.append(None)
                 _taus.append(1)
                 logger.warning(
-                    "compute_dspte_matrix: ROI %d is all-NaN — will skip all pairs involving it.",
+                    "compute_bivariate_dspte_matrix: ROI %d is all-NaN — will skip all pairs involving it.",
                     roi_idx,
                 )
             else:
@@ -975,7 +976,7 @@ def compute_dspte_matrix(
             if _phases[src] is None or _phases[tgt] is None:
                 skipped_pairs.append((src, tgt))
                 logger.debug(
-                    "compute_dspte_matrix: skipping pair (%d→%d) — NaN ROI.", src, tgt
+                    "compute_bivariate_dspte_matrix: skipping pair (%d→%d) — NaN ROI.", src, tgt
                 )
                 continue
 
@@ -996,7 +997,7 @@ def compute_dspte_matrix(
             k0 = sym_meta["k0"]
 
             # Multi-delay dSPTE search
-            max_te, opt_delay, te_profile = compute_dspte_multidelay(
+            max_te, opt_delay, te_profile = compute_bivariate_dspte_multidelay(
                 S_src, S_tgt, k0=k0, u_max=u_max
             )
 
@@ -1008,12 +1009,12 @@ def compute_dspte_matrix(
             te_profiles[(src, tgt)] = te_profile
 
             logger.debug(
-                "compute_dspte_matrix: (%d→%d)  TE=%.6f  delay=%d  k₀=%d  τ=%d",
+                "compute_bivariate_dspte_matrix: (%d→%d)  TE=%.6f  delay=%d  k₀=%d  τ=%d",
                 src, tgt, max_te, opt_delay, k0, tau_shared,
             )
 
     logger.info(
-        "compute_dspte_matrix: EC shape=%s  off-diag range=[%.4f, %.4f]  "
+        "compute_bivariate_dspte_matrix: EC shape=%s  off-diag range=[%.4f, %.4f]  "
         "skipped=%d pairs",
         EC_matrix.shape,
         float(EC_matrix[EC_matrix > 0].min()) if np.any(EC_matrix > 0) else 0.0,
@@ -1423,9 +1424,9 @@ def _run_tests() -> None:
     print("  [PASS] 3.3.3 symbolise_pair\n")
 
     # ------------------------------------------------------------------
-    # 3.4.1 — compute_dspte_at_lag
+    # 3.4.1 — compute_bivariate_dspte_at_lag
     # ------------------------------------------------------------------
-    print("--- 3.4.1  compute_dspte_at_lag ---")
+    print("--- 3.4.1  compute_bivariate_dspte_at_lag ---")
 
     # (a) Coupled AR model: Y(t) = 0.9·X(t-3) + noise → TE peak expected at u=3
     rng_te = np.random.default_rng(7)
@@ -1443,10 +1444,10 @@ def _run_tests() -> None:
     k0_ar = meta_ar["k0"]
 
     # TE at lag 3 should be greater than TE at lag 1 (wrong lag)
-    te_u3 = compute_dspte_at_lag(S_x_ar, S_y_ar, u=3, k0=k0_ar)
-    te_u1 = compute_dspte_at_lag(S_x_ar, S_y_ar, u=1, k0=k0_ar)
+    te_u3 = compute_bivariate_dspte_at_lag(S_x_ar, S_y_ar, u=3, k0=k0_ar)
+    te_u1 = compute_bivariate_dspte_at_lag(S_x_ar, S_y_ar, u=1, k0=k0_ar)
     # Reverse direction: TE(Y→X) at lag 3 should be smaller
-    te_yx_u3 = compute_dspte_at_lag(S_y_ar, S_x_ar, u=3, k0=k0_ar)
+    te_yx_u3 = compute_bivariate_dspte_at_lag(S_y_ar, S_x_ar, u=3, k0=k0_ar)
 
     print(f"  (a) AR model (X→Y, δ=3):  TE(X→Y, u=3)={te_u3:.5f}  "
           f"TE(X→Y, u=1)={te_u1:.5f}  TE(Y→X, u=3)={te_yx_u3:.5f}")
@@ -1464,18 +1465,18 @@ def _run_tests() -> None:
 
     # (c) u >= T' should return 0.0
     short_S = np.array([0, 1, 0, 1], dtype=int)
-    te_too_large = compute_dspte_at_lag(short_S, short_S, u=10, k0=2)
+    te_too_large = compute_bivariate_dspte_at_lag(short_S, short_S, u=10, k0=2)
     assert te_too_large == 0.0, f"Expected 0.0 for u >= T', got {te_too_large}"
     print(f"  (c) u >= T' returns 0.0  ✓")
 
-    print("  [PASS] 3.4.1 compute_dspte_at_lag\n")
+    print("  [PASS] 3.4.1 compute_bivariate_dspte_at_lag\n")
 
     # ------------------------------------------------------------------
-    # 3.4.2 — compute_dspte_multidelay
+    # 3.4.2 — compute_bivariate_dspte_multidelay
     # ------------------------------------------------------------------
-    print("--- 3.4.2  compute_dspte_multidelay ---")
+    print("--- 3.4.2  compute_bivariate_dspte_multidelay ---")
 
-    max_te_ar, opt_delay_ar, te_vs_lag_ar = compute_dspte_multidelay(
+    max_te_ar, opt_delay_ar, te_vs_lag_ar = compute_bivariate_dspte_multidelay(
         S_x_ar, S_y_ar, k0=k0_ar, u_max=10
     )
     print(f"  AR model: max_TE={max_te_ar:.5f}  opt_delay={opt_delay_ar}  "
@@ -1490,18 +1491,18 @@ def _run_tests() -> None:
     assert max_te_ar >= 0.0
 
     # Directional asymmetry: max TE(X→Y) should exceed max TE(Y→X)
-    max_te_yx, _, _ = compute_dspte_multidelay(S_y_ar, S_x_ar, k0=k0_ar, u_max=10)
+    max_te_yx, _, _ = compute_bivariate_dspte_multidelay(S_y_ar, S_x_ar, k0=k0_ar, u_max=10)
     print(f"  max TE(X→Y)={max_te_ar:.5f}  max TE(Y→X)={max_te_yx:.5f}")
     assert max_te_ar > max_te_yx, (
         f"Expected TE(X→Y) > TE(Y→X): {max_te_ar:.5f} <= {max_te_yx:.5f}"
     )
     print(f"  TE(X→Y) > TE(Y→X)  ✓  Optimal delay={opt_delay_ar} (expected 3)")
-    print("  [PASS] 3.4.2 compute_dspte_multidelay\n")
+    print("  [PASS] 3.4.2 compute_bivariate_dspte_multidelay\n")
 
     # ------------------------------------------------------------------
-    # 3.4.3 — compute_dspte_matrix (mini window, fast smoke test)
+    # 3.4.3 — compute_bivariate_dspte_matrix (mini window, fast smoke test)
     # ------------------------------------------------------------------
-    print("--- 3.4.3  compute_dspte_matrix ---")
+    print("--- 3.4.3  compute_bivariate_dspte_matrix ---")
 
     # Build a small 3-ROI synthetic window to keep the test fast
     # ROI 0 → ROI 1 causal coupling (δ=2), ROI 2 is independent noise
@@ -1531,7 +1532,7 @@ def _run_tests() -> None:
         }
     }
 
-    EC_m, delay_m, meta_m = compute_dspte_matrix(Y_mini, config=test_config)
+    EC_m, delay_m, meta_m = compute_bivariate_dspte_matrix(Y_mini, config=test_config)
 
     print(f"  EC_matrix shape : {EC_m.shape}  (expected (3, 3))")
     print(f"  diagonal        : {np.diag(EC_m)}  (expected all 0)")
@@ -1559,12 +1560,12 @@ def _run_tests() -> None:
     # Directionality check: EC[0,1] (true coupling) should be ≥ EC[1,0]
     print(f"  EC[0→1]={EC_m[0,1]:.5f}  EC[1→0]={EC_m[1,0]:.5f}  "
           f"(expect 0→1 dominant)")
-    print("  [PASS] 3.4.3 compute_dspte_matrix\n")
+    print("  [PASS] 3.4.3 compute_bivariate_dspte_matrix\n")
 
     # NaN-row handling
     Y_nan = Y_mini.copy()
     Y_nan[2, :] = np.nan   # ROI 2 all-NaN
-    EC_nan, _, meta_nan = compute_dspte_matrix(Y_nan, config=test_config)
+    EC_nan, _, meta_nan = compute_bivariate_dspte_matrix(Y_nan, config=test_config)
     nan_pairs = meta_nan["skipped_pairs"]
     # Pairs involving ROI 2 (4 pairs: (0,2),(1,2),(2,0),(2,1)) should be skipped
     assert (2, 0) in nan_pairs or (0, 2) in nan_pairs, (

@@ -1,5 +1,5 @@
 """
-Stage E — Step E4: Phase 1 dSPTE Statistical Tests
+Stage E — Step E4: Phase 1 Bivariate dSPTE Statistical Tests
 
 Mirrors Stage D ``05_gc_statistics.py`` exactly — same four tests (normality,
 H1, H0, HIV), same ANOVA + FDR structure, same MATLAB alignment notes.
@@ -116,7 +116,7 @@ def _load_connection_labels(config: Optional[dict] = None) -> list[str]:
 
 def _load_mean_arrays(config: Optional[dict] = None) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """
-    Load B_Exp_dspte_mean.npz and B_Nov_dspte_mean.npz.
+    Load B_Exp_bivariate_dspte_mean.npz and B_Nov_bivariate_dspte_mean.npz.
 
     Returns
     -------
@@ -126,8 +126,8 @@ def _load_mean_arrays(config: Optional[dict] = None) -> tuple[np.ndarray, np.nda
     """
     from utils_te import get_te_output_dir  # noqa
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    exp_npz = np.load(group_dir / "B_Exp_dspte_mean.npz", allow_pickle=True)
-    nov_npz = np.load(group_dir / "B_Nov_dspte_mean.npz", allow_pickle=True)
+    exp_npz = np.load(group_dir / "B_Exp_bivariate_dspte_mean.npz", allow_pickle=True)
+    nov_npz = np.load(group_dir / "B_Nov_bivariate_dspte_mean.npz", allow_pickle=True)
     logger.info(
         "_load_mean_arrays: B_Exp shape=%s  B_Nov shape=%s",
         exp_npz["data"].shape, nov_npz["data"].shape,
@@ -136,11 +136,11 @@ def _load_mean_arrays(config: Optional[dict] = None) -> tuple[np.ndarray, np.nda
 
 
 def _load_fw_arrays(config: Optional[dict] = None) -> tuple[np.ndarray, np.ndarray]:
-    """Load B_Exp_dspte_fw.npz and B_Nov_dspte_fw.npz."""
+    """Load B_Exp_bivariate_dspte_fw.npz and B_Nov_bivariate_dspte_fw.npz."""
     from utils_te import get_te_output_dir  # noqa
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    exp_npz = np.load(group_dir / "B_Exp_dspte_fw.npz", allow_pickle=True)
-    nov_npz = np.load(group_dir / "B_Nov_dspte_fw.npz", allow_pickle=True)
+    exp_npz = np.load(group_dir / "B_Exp_bivariate_dspte_fw.npz", allow_pickle=True)
+    nov_npz = np.load(group_dir / "B_Nov_bivariate_dspte_fw.npz", allow_pickle=True)
     logger.info(
         "_load_fw_arrays: B_Exp_fw shape=%s  B_Nov_fw shape=%s",
         exp_npz["data"].shape, nov_npz["data"].shape,
@@ -150,7 +150,7 @@ def _load_fw_arrays(config: Optional[dict] = None) -> tuple[np.ndarray, np.ndarr
 
 def _load_all_windows_arrays(config: Optional[dict] = None) -> tuple[dict, dict, list[str]]:
     """
-    Load B_Exp_dspte_all.npz and B_Nov_dspte_all.npz.
+    Load B_Exp_bivariate_dspte_all.npz and B_Nov_bivariate_dspte_all.npz.
 
     Returns
     -------
@@ -160,8 +160,8 @@ def _load_all_windows_arrays(config: Optional[dict] = None) -> tuple[dict, dict,
     """
     from utils_te import get_te_output_dir  # noqa
     group_dir = get_te_output_dir("phase_1_group", config=config)
-    exp_data = np.load(group_dir / "B_Exp_dspte_all.npz", allow_pickle=True)
-    nov_data = np.load(group_dir / "B_Nov_dspte_all.npz", allow_pickle=True)
+    exp_data = np.load(group_dir / "B_Exp_bivariate_dspte_all.npz", allow_pickle=True)
+    nov_data = np.load(group_dir / "B_Nov_bivariate_dspte_all.npz", allow_pickle=True)
     B_Exp = {k: exp_data[k] for k in exp_data.files if k.startswith("Tr_")}
     B_Nov = {k: nov_data[k] for k in nov_data.files if k.startswith("Tr_")}
     logger.info(
@@ -358,13 +358,13 @@ def test_expert_vs_novice_te(
     H1: Test whether Expert and Novice groups differ in dSPTE connectivity.
 
     PRIMARY input:
-        B_Exp_dspte_mean.npz / B_Nov_dspte_mean.npz (subject_mean strategy).
+        B_Exp_bivariate_dspte_mean.npz / B_Nov_bivariate_dspte_mean.npz (subject_mean strategy).
         Each subject contributes one value per trial regardless of how many
         windows they recorded — controls for the Novice/Expert window-count
         confound.
 
     SENSITIVITY CHECK:
-        B_Exp_dspte_fw.npz / B_Nov_dspte_fw.npz (first_window strategy).
+        B_Exp_bivariate_dspte_fw.npz / B_Nov_bivariate_dspte_fw.npz (first_window strategy).
         Same ANOVA run on Win_1-only values.  Most conservative de-confounding.
 
     Primary results use subject_mean strategy to control for trial-duration
@@ -376,7 +376,7 @@ def test_expert_vs_novice_te(
         significant_fw   : bool, FDR-significant in sensitivity check
         strategy_agreement : True if ``significant`` == ``significant_fw``
 
-    Saves to ``phase_1_dspte/statistics/H1_expert_vs_novice.csv``.
+    Saves to ``phase_1_bivariate_dspte/statistics/H1_expert_vs_novice.csv``.
 
     Parameters
     ----------
@@ -458,7 +458,7 @@ def test_within_trial_stability_te(
     equality of window-level means per (group, trial, connection).  FDR is
     applied per (group, trial) across 20 connections.
 
-    Saves to ``phase_1_dspte/statistics/H0_within_trial_stability.csv``.
+    Saves to ``phase_1_bivariate_dspte/statistics/H0_within_trial_stability.csv``.
 
     Parameters
     ----------
@@ -606,7 +606,7 @@ def test_across_trial_stability_te(
     across all trials and runs ANOVA.  Only the first ``hiv_max_windows``
     windows are tested (mirrors MATLAB j=1:3).
 
-    Saves to ``phase_1_dspte/statistics/HIV_across_trial_stability.csv``.
+    Saves to ``phase_1_bivariate_dspte/statistics/HIV_across_trial_stability.csv``.
 
     Parameters
     ----------

@@ -325,7 +325,7 @@ Wang (2020) delay Symbolic Phase Transfer Entropy. Found flat lag profiles
 and Novice > Expert on all 20 connections — root cause: broadband HbO
 Hilbert phase is quasi-uniformly distributed.
 
-#### `03_process.sh` — wraps `03_subject_dspte_pipeline.py`
+#### `03_process.sh` — wraps `03_bivariate_dspte_batch.py`
 Compute connectivity + build group arrays.
 
 **Args**
@@ -344,7 +344,7 @@ Compute connectivity + build group arrays.
 ./03_process.sh --group-only
 ```
 
-#### `04_statistics.sh` — wraps `04_dspte_statistics.py`
+#### `04_statistics.sh` — wraps `04_bivariate_dspte_statistics.py`
 **Args**
 - `--overwrite` — recompute even if output CSVs already exist
 - `--test {h1,h0,hiv,normality,all}` — which test to run (default: `all`)
@@ -354,7 +354,7 @@ Compute connectivity + build group arrays.
 ./04_statistics.sh --test h1 --overwrite
 ```
 
-#### `05_visualize.sh` — wraps `05_dspte_visualization.py`
+#### `05_visualize.sh` — wraps `05_bivariate_dspte_visualization.py`
 **Args**
 - `--overwrite` — regenerate even if PNGs already exist
 - `--plot {all,heatmap,delay,gcte,topology,lag}` — which plot group to generate (default: `all`)
@@ -385,15 +385,15 @@ accepted.
 ./run_all.sh
 ```
 
-### Phase 2 Multivariate (Hybrid) dSPTE (`phase_2/`) — superseded, kept for comparison
+### Phase 2 Multivariate dSPTE (`phase_2/`) — superseded, kept for comparison
 
 Adds PCA-conditioning on the other 3 ROIs to suppress shared-noise
 connections. Reduced mean TE ~45%, but most connections still had flat lag
 profiles.
 
-#### `06_process.sh` — wraps `06_hybrid_dspte.py`
+#### `06_process.sh` — wraps `06_multivariate_dspte.py`
 **Args**
-- `--batch` — run hybrid-dSPTE for all Expert+Novice subjects (R10 excluded), writes `hybrid_te_batch_log.json`
+- `--batch` — run multivariate dSPTE for all Expert+Novice subjects (R10 excluded), writes `multivariate_te_batch_log.json`
 - `--subject ID` — run for one subject, e.g. `A1`, `R7`
 - `--overwrite` — recompute and overwrite even if `.npz` already exists
 - `--first-window-only` — process only the first window per trial (matches IDTxl fast-compare mode)
@@ -407,7 +407,7 @@ profiles.
 ./06_process.sh --batch --first-window-only
 ```
 
-#### `07_visualize.sh` — wraps `07_hybrid_dspte_visualization.py`
+#### `07_visualize.sh` — wraps `07_multivariate_dspte_visualization.py`
 **Args**
 - `--batch` — run all Phase 2 visualizations (group matrix, group bar chart, 7.3.2 comparison chart + 20 lag profiles)
 - `--group-matrix` — Phase 2 group connectivity matrix (Expert | Novice | Difference)
@@ -430,7 +430,7 @@ profiles.
 ./07_visualize.sh --lag-profiles --subject A1 --trial Tr_1 --window 1 --connection "CPFC→LM1"
 ```
 
-#### `08_statistics.sh` — wraps `08_hybrid_dspte_statistics.py`
+#### `08_statistics.sh` — wraps `08_multivariate_dspte_statistics.py`
 **Args:** none — always runs the full Section 8 statistical battery.
 
 ```bash
@@ -449,7 +449,7 @@ lag profiles.
 
 #### `10_idtxl_validation.sh` — wraps `10_idtxl_validation.py`
 IDTxl (KSG estimator) parallel validation — model-free cross-check against
-the NG-symbolic hybrid-dSPTE approach. For HPC/PACE batch submission use
+the NG-symbolic multivariate-dSPTE approach. For HPC/PACE batch submission use
 `pace_idtxl_job.sh` (repo root) instead.
 
 **Args** (one of the first five is required)

@@ -1,24 +1,24 @@
 """
-Stage E — Step E8: Phase 2 Hybrid-dSPTE Statistical Tests  (Section 7.3.1)
+Stage E — Step E8: Phase 2 Multivariate dSPTE Statistical Tests  (Section 7.3.1)
 
-Implements the Phase 2 equivalent of ``04_dspte_statistics.py``.  The design
-principle from the PRD is: **re-use ``04_dspte_statistics.py`` functions
+Implements the Phase 2 equivalent of ``04_bivariate_dspte_statistics.py``.  The design
+principle from the PRD is: **re-use ``04_bivariate_dspte_statistics.py`` functions
 directly — do not duplicate test logic.**  This module:
 
   1. Builds Phase 2 group arrays from the per-subject
-     ``sub-{id}_hybrid_dspte_connectivity.npz`` files in
-     ``phase_2_hybrid_dspte/te_connectivity/``.
+     ``sub-{id}_multivariate_dspte_connectivity.npz`` files in
+     ``phase_2_multivariate_dspte/te_connectivity/``.
 
      Three builders mirroring the Phase 1 equivalents in
-     ``03_subject_dspte_pipeline.py``:
+     ``03_bivariate_dspte_batch.py``:
 
-       build_p2_group_arrays_all_windows()   → B_Exp_hybrid_all.npz   / B_Nov_hybrid_all.npz
-       build_p2_group_arrays_subject_mean()  → B_Exp_hybrid_mean.npz  / B_Nov_hybrid_mean.npz
-       build_p2_group_arrays_first_window()  → B_Exp_hybrid_fw.npz    / B_Nov_hybrid_fw.npz
+       build_p2_group_arrays_all_windows()   → B_Exp_multivariate_all.npz   / B_Nov_multivariate_all.npz
+       build_p2_group_arrays_subject_mean()  → B_Exp_multivariate_mean.npz  / B_Nov_multivariate_mean.npz
+       build_p2_group_arrays_first_window()  → B_Exp_multivariate_fw.npz    / B_Nov_multivariate_fw.npz
 
   2. Runs the same 4 statistical tests by calling Phase 1 stat functions with
      Phase 2 arrays as inputs.  Output CSVs go to
-     ``phase_2_hybrid_dspte/statistics/``.
+     ``phase_2_multivariate_dspte/statistics/``.
 
        run_normality_tests_p2()           → normality_test.csv
        test_expert_vs_novice_p2()         → H1_expert_vs_novice.csv
@@ -30,10 +30,10 @@ directly — do not duplicate test logic.**  This module:
 
 Section 7.3.1 task coverage (TRANSFER_ENTROPY_PROGRESS.md)
 -----------------------------------------------------------
-7.3.1 — Run same 4 statistical tests as Phase 1 on hybrid group arrays using
+7.3.1 — Run same 4 statistical tests as Phase 1 on multivariate group arrays using
          the three-strategy builders (subject_mean for H1, all_windows for H0
-         and HIV).  Save to phase_2_hybrid_dspte/statistics/.  Re-use
-         04_dspte_statistics.py functions directly.
+         and HIV).  Save to phase_2_multivariate_dspte/statistics/.  Re-use
+         04_bivariate_dspte_statistics.py functions directly.
 
 MATLAB equivalents (inherited from Phase 1)
 -------------------------------------------
@@ -86,9 +86,9 @@ _N_TRIALS_CANONICAL = 5   # canonical trial count (R4 has 4; R9 has 2 — padded
 # ===========================================================================
 
 def _import_p1_stats():
-    """Return the 04_dspte_statistics module via importlib."""
-    p = _STAGE_E_ROOT / "phase_1" / "04_dspte_statistics.py"
-    spec = importlib.util.spec_from_file_location("dspte_statistics_p1", p)
+    """Return the 04_bivariate_dspte_statistics module via importlib."""
+    p = _STAGE_E_ROOT / "phase_1" / "04_bivariate_dspte_statistics.py"
+    spec = importlib.util.spec_from_file_location("bivariate_dspte_statistics_p1", p)
     mod  = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -158,14 +158,14 @@ def _load_p2_npz_lists(
     """
     Load per-subject Phase 2 .npz files; return None for missing files.
 
-    Mirrors ``_load_npz_lists()`` from ``03_subject_dspte_pipeline.py``
-    but looks for ``sub-{id}_hybrid_dspte_connectivity.npz``.
+    Mirrors ``_load_npz_lists()`` from ``03_bivariate_dspte_batch.py``
+    but looks for ``sub-{id}_multivariate_dspte_connectivity.npz``.
     """
     def _load(subject_ids):
         """Load one list of subject `.npz` files, returning `None` when missing."""
         results = []
         for sid in subject_ids:
-            fpath = conn_dir / f"sub-{sid}_hybrid_dspte_connectivity.npz"
+            fpath = conn_dir / f"sub-{sid}_multivariate_dspte_connectivity.npz"
             if not fpath.exists():
                 logger.warning(
                     "%s: missing Phase 2 .npz for %s: %s", caller, sid, fpath.name
@@ -198,7 +198,7 @@ def _p2_window_summary(subject_ids, npz_list):
     Returns
     -------
     dict
-        Mapping subject -> status/shape summary used in `hybrid_group_summary.json`.
+        Mapping subject -> status/shape summary used in `multivariate_group_summary.json`.
     """
     out = {}
     for sid, d in zip(subject_ids, npz_list):
@@ -228,7 +228,7 @@ def build_p2_group_arrays_all_windows(
     overwrite: bool = False,
 ) -> tuple[dict, dict]:
     """
-    Build Phase 2 all-windows group arrays from per-subject hybrid-dSPTE .npz.
+    Build Phase 2 all-windows group arrays from per-subject multivariate dSPTE .npz.
 
     Mirrors ``build_group_arrays_all_windows()`` from Phase 1 pipeline.
     Uses for H0 (within-trial stability) and HIV (across-trial stability).
@@ -241,9 +241,9 @@ def build_p2_group_arrays_all_windows(
 
     Saves
     -----
-    phase_2_group/B_Exp_hybrid_all.npz
-    phase_2_group/B_Nov_hybrid_all.npz
-    phase_2_group/hybrid_group_summary.json
+    phase_2_group/B_Exp_multivariate_all.npz
+    phase_2_group/B_Nov_multivariate_all.npz
+    phase_2_group/multivariate_group_summary.json
     """
     if config is None:
         config = load_config()
@@ -251,8 +251,8 @@ def build_p2_group_arrays_all_windows(
     from utils_te import get_connection_labels  # noqa
 
     group_dir  = _p2_group_dir(config)
-    exp_path   = group_dir / "B_Exp_hybrid_all.npz"
-    nov_path   = group_dir / "B_Nov_hybrid_all.npz"
+    exp_path   = group_dir / "B_Exp_multivariate_all.npz"
+    nov_path   = group_dir / "B_Nov_multivariate_all.npz"
 
     if not overwrite and exp_path.exists() and nov_path.exists():
         logger.info("build_p2_group_arrays_all_windows: cached files found — loading.")
@@ -284,7 +284,7 @@ def build_p2_group_arrays_all_windows(
     if not all_npz:
         raise RuntimeError(
             "build_p2_group_arrays_all_windows: no Phase 2 .npz files found. "
-            "Run run_batch_hybrid_dspte() first."
+            "Run run_batch_multivariate_dspte() first."
         )
 
     max_trials = max(int(d["n_trials"]) for d in all_npz)
@@ -347,17 +347,17 @@ def build_p2_group_arrays_all_windows(
     exp_save["subject_ids"] = np.array(expert_ids)
     exp_save["strategy"]    = np.array("all_windows")
     np.savez(exp_path, **exp_save)
-    logger.info("build_p2_group_arrays_all_windows: saved B_Exp_hybrid_all.npz")
+    logger.info("build_p2_group_arrays_all_windows: saved B_Exp_multivariate_all.npz")
 
     nov_save = {tid: arr for tid, arr in B_Nov.items()}
     nov_save["subject_ids"] = np.array(novice_ids)
     nov_save["strategy"]    = np.array("all_windows")
     np.savez(nov_path, **nov_save)
-    logger.info("build_p2_group_arrays_all_windows: saved B_Nov_hybrid_all.npz")
+    logger.info("build_p2_group_arrays_all_windows: saved B_Nov_multivariate_all.npz")
 
     summary = {
         "created_at": datetime.now().isoformat(),
-        "phase": "phase_2_hybrid_dspte",
+        "phase": "phase_2_multivariate_dspte",
         "strategy": "all_windows",
         "n_experts": len(expert_ids),
         "n_novices": len(novice_ids),
@@ -370,9 +370,9 @@ def build_p2_group_arrays_all_windows(
         "expert_subjects": _p2_window_summary(expert_ids, expert_npz_list),
         "novice_subjects": _p2_window_summary(novice_ids, novice_npz_list),
     }
-    with open(group_dir / "hybrid_group_summary.json", "w") as fh:
+    with open(group_dir / "multivariate_group_summary.json", "w") as fh:
         json.dump(summary, fh, indent=2, cls=_NumpyEncoder)
-    logger.info("build_p2_group_arrays_all_windows: saved hybrid_group_summary.json")
+    logger.info("build_p2_group_arrays_all_windows: saved multivariate_group_summary.json")
 
     return B_Exp, B_Nov
 
@@ -400,8 +400,8 @@ def build_p2_group_arrays_subject_mean(
 
     Saves
     -----
-    phase_2_group/B_Exp_hybrid_mean.npz
-    phase_2_group/B_Nov_hybrid_mean.npz
+    phase_2_group/B_Exp_multivariate_mean.npz
+    phase_2_group/B_Nov_multivariate_mean.npz
     """
     if config is None:
         config = load_config()
@@ -409,8 +409,8 @@ def build_p2_group_arrays_subject_mean(
     from utils_te import get_connection_labels  # noqa
 
     group_dir = _p2_group_dir(config)
-    exp_path  = group_dir / "B_Exp_hybrid_mean.npz"
-    nov_path  = group_dir / "B_Nov_hybrid_mean.npz"
+    exp_path  = group_dir / "B_Exp_multivariate_mean.npz"
+    nov_path  = group_dir / "B_Nov_multivariate_mean.npz"
 
     if not overwrite and exp_path.exists() and nov_path.exists():
         logger.info("build_p2_group_arrays_subject_mean: cached files found — loading.")
@@ -468,11 +468,11 @@ def build_p2_group_arrays_subject_mean(
 
     np.savez(exp_path, data=B_Exp_mean, subject_ids=np.array(expert_ids),
              strategy=np.array("subject_mean"))
-    logger.info("build_p2_group_arrays_subject_mean: saved B_Exp_hybrid_mean.npz")
+    logger.info("build_p2_group_arrays_subject_mean: saved B_Exp_multivariate_mean.npz")
 
     np.savez(nov_path, data=B_Nov_mean, subject_ids=np.array(novice_ids),
              strategy=np.array("subject_mean"))
-    logger.info("build_p2_group_arrays_subject_mean: saved B_Nov_hybrid_mean.npz")
+    logger.info("build_p2_group_arrays_subject_mean: saved B_Nov_multivariate_mean.npz")
 
     return B_Exp_mean, B_Nov_mean
 
@@ -500,8 +500,8 @@ def build_p2_group_arrays_first_window(
 
     Saves
     -----
-    phase_2_group/B_Exp_hybrid_fw.npz
-    phase_2_group/B_Nov_hybrid_fw.npz
+    phase_2_group/B_Exp_multivariate_fw.npz
+    phase_2_group/B_Nov_multivariate_fw.npz
     """
     if config is None:
         config = load_config()
@@ -509,8 +509,8 @@ def build_p2_group_arrays_first_window(
     from utils_te import get_connection_labels  # noqa
 
     group_dir = _p2_group_dir(config)
-    exp_path  = group_dir / "B_Exp_hybrid_fw.npz"
-    nov_path  = group_dir / "B_Nov_hybrid_fw.npz"
+    exp_path  = group_dir / "B_Exp_multivariate_fw.npz"
+    nov_path  = group_dir / "B_Nov_multivariate_fw.npz"
 
     if not overwrite and exp_path.exists() and nov_path.exists():
         logger.info("build_p2_group_arrays_first_window: cached files found — loading.")
@@ -568,11 +568,11 @@ def build_p2_group_arrays_first_window(
 
     np.savez(exp_path, data=B_Exp_fw, subject_ids=np.array(expert_ids),
              strategy=np.array("first_window"))
-    logger.info("build_p2_group_arrays_first_window: saved B_Exp_hybrid_fw.npz")
+    logger.info("build_p2_group_arrays_first_window: saved B_Exp_multivariate_fw.npz")
 
     np.savez(nov_path, data=B_Nov_fw, subject_ids=np.array(novice_ids),
              strategy=np.array("first_window"))
-    logger.info("build_p2_group_arrays_first_window: saved B_Nov_hybrid_fw.npz")
+    logger.info("build_p2_group_arrays_first_window: saved B_Nov_multivariate_fw.npz")
 
     return B_Exp_fw, B_Nov_fw
 
@@ -584,8 +584,8 @@ def build_p2_group_arrays_first_window(
 def _load_p2_mean_arrays(config: Optional[dict] = None):
     """Load Phase 2 subject-mean group arrays from disk."""
     group_dir = _p2_group_dir(config)
-    exp_npz   = np.load(group_dir / "B_Exp_hybrid_mean.npz", allow_pickle=True)
-    nov_npz   = np.load(group_dir / "B_Nov_hybrid_mean.npz", allow_pickle=True)
+    exp_npz   = np.load(group_dir / "B_Exp_multivariate_mean.npz", allow_pickle=True)
+    nov_npz   = np.load(group_dir / "B_Nov_multivariate_mean.npz", allow_pickle=True)
     logger.info(
         "_load_p2_mean_arrays: B_Exp shape=%s  B_Nov shape=%s",
         exp_npz["data"].shape, nov_npz["data"].shape,
@@ -596,8 +596,8 @@ def _load_p2_mean_arrays(config: Optional[dict] = None):
 def _load_p2_fw_arrays(config: Optional[dict] = None):
     """Load Phase 2 first-window group arrays from disk."""
     group_dir = _p2_group_dir(config)
-    exp_npz   = np.load(group_dir / "B_Exp_hybrid_fw.npz", allow_pickle=True)
-    nov_npz   = np.load(group_dir / "B_Nov_hybrid_fw.npz", allow_pickle=True)
+    exp_npz   = np.load(group_dir / "B_Exp_multivariate_fw.npz", allow_pickle=True)
+    nov_npz   = np.load(group_dir / "B_Nov_multivariate_fw.npz", allow_pickle=True)
     logger.info(
         "_load_p2_fw_arrays: B_Exp_fw shape=%s  B_Nov_fw shape=%s",
         exp_npz["data"].shape, nov_npz["data"].shape,
@@ -616,8 +616,8 @@ def _load_p2_all_windows_arrays(config: Optional[dict] = None):
     conn_labels : list[str]
     """
     group_dir = _p2_group_dir(config)
-    exp_data  = np.load(group_dir / "B_Exp_hybrid_all.npz", allow_pickle=True)
-    nov_data  = np.load(group_dir / "B_Nov_hybrid_all.npz", allow_pickle=True)
+    exp_data  = np.load(group_dir / "B_Exp_multivariate_all.npz", allow_pickle=True)
+    nov_data  = np.load(group_dir / "B_Nov_multivariate_all.npz", allow_pickle=True)
     B_Exp = {k: exp_data[k] for k in exp_data.files if k.startswith("Tr_")}
     B_Nov = {k: nov_data[k] for k in nov_data.files if k.startswith("Tr_")}
     logger.info(
@@ -684,7 +684,7 @@ def test_expert_vs_novice_p2(
     overwrite: bool = False,
 ) -> pd.DataFrame:
     """
-    H1: Expert vs. Novice ANOVA on Phase 2 hybrid-dSPTE connectivity.
+    H1: Expert vs. Novice ANOVA on Phase 2 multivariate dSPTE connectivity.
 
     PRIMARY: subject_mean strategy.
     SENSITIVITY: first_window strategy.
@@ -749,7 +749,7 @@ def test_within_trial_stability_p2(
     overwrite: bool = False,
 ) -> pd.DataFrame:
     """
-    H0: Within-trial stability ANOVA on Phase 2 hybrid-dSPTE.
+    H0: Within-trial stability ANOVA on Phase 2 multivariate dSPTE.
 
     Tests whether conditional dSPTE is stable across windows within a trial.
     Uses all-windows arrays; re-uses Phase 1 ANOVA logic via the imported
@@ -885,7 +885,7 @@ def test_across_trial_stability_p2(
     overwrite: bool = False,
 ) -> pd.DataFrame:
     """
-    HIV: Across-trial stability ANOVA on Phase 2 hybrid-dSPTE.
+    HIV: Across-trial stability ANOVA on Phase 2 multivariate dSPTE.
 
     Tests whether conditional dSPTE is stable across trial repetitions.
     Uses all-windows arrays — mirrors Phase 1's HIV test logic exactly.
@@ -1092,7 +1092,7 @@ def _print_summary_p2(
     alpha = _stats_cfg(config)["alpha"]
 
     print("\n" + "=" * 70)
-    print("STATISTICAL TESTING SUMMARY — Phase 2 Hybrid-dSPTE")
+    print("STATISTICAL TESTING SUMMARY — Phase 2 Multivariate dSPTE")
     print("=" * 70)
 
     # Normality
@@ -1148,7 +1148,7 @@ def _print_summary_p2(
     print(f"    % trial-varying: {pct:.1f}%")
 
     print(f"\n{'=' * 70}")
-    print(f"Phase 2 statistics saved to: phase_2_hybrid_dspte/statistics/")
+    print(f"Phase 2 statistics saved to: phase_2_multivariate_dspte/statistics/")
     print("=" * 70 + "\n")
 
 
@@ -1166,7 +1166,7 @@ if __name__ == "__main__":
     )
 
     print("\n" + "=" * 70)
-    print("Stage E — Section 7.3.1: Phase 2 Hybrid-dSPTE Statistics")
+    print("Stage E — Section 7.3.1: Phase 2 Multivariate dSPTE Statistics")
     print("=" * 70 + "\n")
 
     t_start = time.perf_counter()

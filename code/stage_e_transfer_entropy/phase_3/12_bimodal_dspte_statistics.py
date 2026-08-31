@@ -55,10 +55,10 @@ def _import_p1_stats():
     Returns
     -------
     module
-        Loaded `04_dspte_statistics.py` module object.
+        Loaded `04_bivariate_dspte_statistics.py` module object.
     """
-    p = _STAGE_E_ROOT / "phase_1" / "04_dspte_statistics.py"
-    spec = importlib.util.spec_from_file_location("dspte_statistics_p1_for_p3", p)
+    p = _STAGE_E_ROOT / "phase_1" / "04_bivariate_dspte_statistics.py"
+    spec = importlib.util.spec_from_file_location("bivariate_dspte_statistics_p1_for_p3", p)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod

@@ -24,7 +24,7 @@ Output:
     - JSON summary: per-subject per-ROI marginal entropy values
     - PNG figure: Expert vs Novice H(S_Y) per ROI (violin + scatter plot)
     - PNG figure: group mean H(S_Y) with individual subject lines
-    - Saved to: outputs/stage_e_transfer_entropy/expert-novice/phase_1_dspte/
+    - Saved to: outputs/stage_e_transfer_entropy/expert-novice/phase_1_bivariate_dspte/
                 diagnostics/phase_entropy_bias/
 
 Reference
@@ -64,7 +64,7 @@ logger = logging.getLogger(__name__)
 _ROI_NAMES_CANONICAL = ["LPFC", "CPFC", "RPFC", "LM1", "SMA"]
 
 # ---------------------------------------------------------------------------
-# Lazy module loaders (mirror 03_subject_dspte_pipeline.py pattern)
+# Lazy module loaders (mirror 03_bivariate_dspte_batch.py pattern)
 # ---------------------------------------------------------------------------
 
 _SEG_MODULE = None
@@ -88,7 +88,7 @@ def _get_core_module():
     global _CORE_MODULE
     if _CORE_MODULE is None:
         spec = importlib.util.spec_from_file_location(
-            "dspte_core", _STAGE_E_ROOT / "phase_1" / "01_dspte_core.py"
+            "bivariate_dspte_core", _STAGE_E_ROOT / "phase_1" / "01_bivariate_dspte_core.py"
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)

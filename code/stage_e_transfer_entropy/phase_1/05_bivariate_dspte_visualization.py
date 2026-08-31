@@ -1,5 +1,5 @@
 """
-Stage E — Step E5: Phase 1 dSPTE Visualization
+Stage E — Step E5: Phase 1 Bivariate dSPTE Visualization
 
 Mirrors Stage D ``06_gc_visualization.py`` in structure and naming conventions.
 Reuses shared helpers (ROI positions, arrow drawing, 20→5×5 reconstruction)
@@ -18,7 +18,7 @@ Differences from Stage D visualization
 1. Colormap: ``viridis`` (sequential) instead of ``YlOrRd``.  TE values can
    exceed 1.0 (unlike GC which is bounded near 0–0.1); a perceptually uniform
    sequential map reads better across this range.
-2. Subject-averaged group arrays come from ``B_Exp_dspte_mean.npz``
+2. Subject-averaged group arrays come from ``B_Exp_bivariate_dspte_mean.npz``
    (strategy="subject_mean") rather than recomputing from per-window stacks.
    This is consistent with the H1 analysis and avoids re-introducing the
    trial-duration confound in the visualization.
@@ -34,7 +34,7 @@ Conventions (identical to Stage D)
   Row = Source (y-axis), Column = Target (x-axis)
   20-vector → 5×5 matrix: zeros at diagonal [0, 6, 12, 18, 24], reshape (5,5)
 
-Output paths (phase_1_dspte/visualizations/)
+Output paths (phase_1_bivariate_dspte/visualizations/)
 --------------------------------------------
   sub-{id}_{trial}_{window}_te_connectivity.png
   sub-{id}_{trial}_{window}_delay_matrix.png
@@ -195,7 +195,7 @@ def _load_group_mean_arrays(
     config: Optional[dict] = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str], list[str], list[str]]:
     """
-    Load B_Exp_dspte_mean / B_Nov_dspte_mean and return along with subject IDs.
+    Load B_Exp_bivariate_dspte_mean / B_Nov_bivariate_dspte_mean and return along with subject IDs.
 
     Returns
     -------
@@ -207,8 +207,8 @@ def _load_group_mean_arrays(
     """
     from utils_te import get_connection_labels  # noqa
     gd = _group_dir(config)
-    exp_npz = np.load(gd / "B_Exp_dspte_mean.npz", allow_pickle=True)
-    nov_npz = np.load(gd / "B_Nov_dspte_mean.npz", allow_pickle=True)
+    exp_npz = np.load(gd / "B_Exp_bivariate_dspte_mean.npz", allow_pickle=True)
+    nov_npz = np.load(gd / "B_Nov_bivariate_dspte_mean.npz", allow_pickle=True)
     return (
         exp_npz["data"],
         nov_npz["data"],
@@ -345,7 +345,7 @@ def plot_connectivity_evolution_te(
     fig : plt.Figure
     """
     from utils_te import get_subject_group  # noqa
-    npz_path = _conn_dir(config) / f"sub-{subject_id}_dspte_connectivity.npz"
+    npz_path = _conn_dir(config) / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
     data = np.load(npz_path, allow_pickle=True)
 
     key = f"{trial}_connectivity"
@@ -520,7 +520,7 @@ def plot_gc_vs_te_comparison(
     Side-by-side bar chart comparing GC and dSPTE for the same subject/trial/window.
 
     Loads Stage D ``sub-{id}_gc_connectivity.npz`` and Stage E
-    ``sub-{id}_dspte_connectivity.npz`` for the given subject.  Bar chart shows
+    ``sub-{id}_bivariate_dspte_connectivity.npz`` for the given subject.  Bar chart shows
     all 20 connections with GC in steel blue and dSPTE in teal.  Title reports
     Pearson r and Spearman ρ between the two vectors.
 
@@ -559,7 +559,7 @@ def plot_gc_vs_te_comparison(
     gc_vec = gc_arr[:, window_idx]
 
     # --- Load Stage E dSPTE vector ---
-    te_npz_path = _conn_dir(config) / f"sub-{subject_id}_dspte_connectivity.npz"
+    te_npz_path = _conn_dir(config) / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
     if not te_npz_path.exists():
         raise FileNotFoundError(f"dSPTE .npz not found: {te_npz_path}")
     te_data = np.load(te_npz_path, allow_pickle=True)
@@ -696,7 +696,7 @@ def plot_group_topology_te(
     Brain-topology directed-arrow diagrams for Expert and Novice (side-by-side).
 
     Generates two variants:
-    1. Snapshot: uses ``B_Exp_dspte_mean[:, :, trial_idx]`` (group mean of
+    1. Snapshot: uses ``B_Exp_bivariate_dspte_mean[:, :, trial_idx]`` (group mean of
        subject averages for the specified trial).
     2. Averaged: calls ``plot_group_topology_te_averaged()`` internally.
 
@@ -780,7 +780,7 @@ def plot_group_topology_te_averaged(
     """
     Brain-topology diagram using subject-mean TE averaged across all trials.
 
-    Uses ``B_Exp_dspte_mean`` and ``B_Nov_dspte_mean`` — averages over the
+    Uses ``B_Exp_bivariate_dspte_mean`` and ``B_Nov_bivariate_dspte_mean`` — averages over the
     trial axis to produce a per-group, all-trial mean connectivity vector.
     Saves Expert, Novice, and combined panel PNGs.
 
@@ -919,7 +919,7 @@ def plot_group_te_comparison_averaged(
     # Load H1 CSV if not provided
     if h1_df is None:
         stats_dir = _PROJECT_ROOT / "outputs" / "stage_e_transfer_entropy" / \
-                    "expert-novice" / "phase_1_dspte" / "statistics"
+                    "expert-novice" / "phase_1_bivariate_dspte" / "statistics"
         h1_path = stats_dir / "H1_expert_vs_novice.csv"
         if h1_path.exists():
             h1_df = pd.read_csv(h1_path)
@@ -1197,7 +1197,7 @@ def run_all_visualizations_te(
     overwrite: bool = True,
 ) -> None:
     """
-    Generate all Section 6 visualizations and save to phase_1_dspte/visualizations/.
+    Generate all Section 6 visualizations and save to phase_1_bivariate_dspte/visualizations/.
 
     Skips individual files that already exist if ``overwrite=True``.
     """
@@ -1216,7 +1216,7 @@ def run_all_visualizations_te(
     # Load H1 CSV for FDR markers
     stats_path = (
         _PROJECT_ROOT / "outputs" / "stage_e_transfer_entropy"
-        / "expert-novice" / "phase_1_dspte" / "statistics"
+        / "expert-novice" / "phase_1_bivariate_dspte" / "statistics"
         / "H1_expert_vs_novice.csv"
     )
     h1_df = pd.read_csv(stats_path) if stats_path.exists() else None
@@ -1226,7 +1226,7 @@ def run_all_visualizations_te(
     # ---- 6.1: Per-subject connectivity heatmaps (A1 Tr_1 Win_1 + evolution) ----
     logger.info("6.1 — Per-subject connectivity heatmaps...")
     for subject_id in expert_ids + novice_ids:
-        npz_path = cd / f"sub-{subject_id}_dspte_connectivity.npz"
+        npz_path = cd / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
         if not npz_path.exists():
             logger.warning("  %s: .npz not found, skipping 6.1", subject_id)
             continue
@@ -1255,7 +1255,7 @@ def run_all_visualizations_te(
 
     # ---- 6.2: Optimal delay matrix (A1 Tr_1 Win_1) ----
     logger.info("6.2 — Optimal delay matrix (A1 Tr_1 Win_1)...")
-    a1_path = cd / "sub-A1_dspte_connectivity.npz"
+    a1_path = cd / "sub-A1_bivariate_dspte_connectivity.npz"
     if a1_path.exists():
         a1_data = np.load(a1_path, allow_pickle=True)
         if "Tr_1_delays" in a1_data and a1_data["Tr_1_delays"].shape[1] > 0:
@@ -1317,7 +1317,7 @@ def run_all_visualizations_te(
     logger.info("6.5 — Lag-TE profile (A1 Tr_1 Win_1, LPFC→SMA)...")
     te_raw_dir = (
         _PROJECT_ROOT / "outputs" / "stage_e_transfer_entropy"
-        / "expert-novice" / "phase_1_dspte" / "te_raw"
+        / "expert-novice" / "phase_1_bivariate_dspte" / "te_raw"
     )
     # te_raw stores lag profiles per subject; if not available, generate
     # a synthetic example from the batch log delay data
@@ -1353,7 +1353,7 @@ def _generate_lag_profile_example(
     "illustrative" watermark so legacy files remain renderable.
     """
     cd = _conn_dir(config)
-    npz_path = cd / f"sub-{subject_id}_dspte_connectivity.npz"
+    npz_path = cd / f"sub-{subject_id}_bivariate_dspte_connectivity.npz"
     if not npz_path.exists():
         logger.warning("_generate_lag_profile_example: %s .npz not found", subject_id)
         return None
@@ -1486,7 +1486,7 @@ if __name__ == "__main__":
         run_all_visualizations_te(config=config, overwrite=args.overwrite)
     elif args.plot == "heatmap":
         cd = _conn_dir(config)
-        npz = np.load(cd / f"sub-{args.subject}_dspte_connectivity.npz", allow_pickle=True)
+        npz = np.load(cd / f"sub-{args.subject}_bivariate_dspte_connectivity.npz", allow_pickle=True)
         fig = plot_connectivity_matrix_te(
             npz["Tr_1_connectivity"][:, 0],
             subject_id=args.subject, trial="Tr_1", window="Win_1",
@@ -1495,7 +1495,7 @@ if __name__ == "__main__":
         plt.close(fig)
     elif args.plot == "delay":
         cd = _conn_dir(config)
-        npz = np.load(cd / f"sub-{args.subject}_dspte_connectivity.npz", allow_pickle=True)
+        npz = np.load(cd / f"sub-{args.subject}_bivariate_dspte_connectivity.npz", allow_pickle=True)
         fig = plot_optimal_delay_matrix(
             npz["Tr_1_delays"][:, 0],
             subject_id=args.subject, trial="Tr_1", window="Win_1",

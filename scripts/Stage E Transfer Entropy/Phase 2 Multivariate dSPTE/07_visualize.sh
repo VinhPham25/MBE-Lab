@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage E / Phase 2 — Visualization (group matrix, group bar chart,
 # Phase 1 vs Phase 2 comparison, lag profiles).
-# Wraps: code/stage_e_transfer_entropy/phase_2/07_hybrid_dspte_visualization.py
+# Wraps: code/stage_e_transfer_entropy/phase_2/07_multivariate_dspte_visualization.py
 #
 # Defaults to --batch (all Section 7 plots) when run with no arguments.
 #
@@ -17,4 +17,4 @@ if [ "$#" -eq 0 ]; then
   set -- --batch
 fi
 
-python3 code/stage_e_transfer_entropy/phase_2/07_hybrid_dspte_visualization.py "$@"
+python3 code/stage_e_transfer_entropy/phase_2/07_multivariate_dspte_visualization.py "$@"

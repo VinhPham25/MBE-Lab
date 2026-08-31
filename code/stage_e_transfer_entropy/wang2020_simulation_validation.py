@@ -34,7 +34,7 @@ Model 3 — Multivariate Complex Hybrid (Eq. 28)  [EXPECTED: BENCHMARK FAIL]
 Scenario interpretation (Models 1 and 2):
   A — Both PASS: TE computation correct; real-data issues are signal-domain.
   B — Peak at wrong lag: embedding/phase extraction distorting lag detection.
-  C — X→Y ≈ Y→X: Likely bug in compute_dspte_at_lag contingency table.
+  C — X→Y ≈ Y→X: Likely bug in compute_bivariate_dspte_at_lag contingency table.
 
 Multivariate benchmark (Model 3):
   Bivariate dSPTE will detect X→Y (u=5, nonlinear) ✓ and Y→Z (u=9) ✓ and
@@ -73,14 +73,14 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 from utils_te import fit_neural_gas_codebook, quantise_to_symbols  # noqa
 import importlib.util as _ilu
 
-_core_spec = _ilu.spec_from_file_location("dspte_core", _HERE / "phase_1" / "01_dspte_core.py")
+_core_spec = _ilu.spec_from_file_location("bivariate_dspte_core", _HERE / "phase_1" / "01_bivariate_dspte_core.py")
 _core_mod = _ilu.module_from_spec(_core_spec)
 _core_spec.loader.exec_module(_core_mod)
 
 extract_phase_signal    = _core_mod.extract_phase_signal
 compute_embedding_delay = _core_mod.compute_embedding_delay
 uniform_embed           = _core_mod.uniform_embed
-compute_dspte_at_lag    = _core_mod.compute_dspte_at_lag
+compute_bivariate_dspte_at_lag    = _core_mod.compute_bivariate_dspte_at_lag
 
 
 # ===========================================================================
@@ -109,7 +109,7 @@ def _compute_te_profile(S_src: np.ndarray, S_tgt: np.ndarray,
     """Compute TE(src→tgt) for lags 1..u_max, return (u_max,) array."""
     profile = np.zeros(u_max)
     for u in range(1, u_max + 1):
-        profile[u - 1] = compute_dspte_at_lag(S_src, S_tgt, u=u, k0=k0)
+        profile[u - 1] = compute_bivariate_dspte_at_lag(S_src, S_tgt, u=u, k0=k0)
     return profile
 
 
@@ -238,7 +238,7 @@ def run_linear_ar(
         elif pass_direction and not pass_peak:
             print(f"B — Direction correct, peak at u={opt_xy} ≠ δ={delta}")
         else:
-            print("C — X→Y ≈ Y→X — check compute_dspte_at_lag indexing")
+            print("C — X→Y ≈ Y→X — check compute_bivariate_dspte_at_lag indexing")
 
     return {
         "model": "linear_ar",
