@@ -58,7 +58,11 @@ except ImportError:
     if _PIP_DEPS.exists() and str(_PIP_DEPS) not in sys.path:
         sys.path.append(str(_PIP_DEPS))   # append → venv wins on all other packages
 
-from utils import load_config                      # code/utils.py
+from utils import load_config, configure_pyswarms_logging  # code/utils.py
+
+# Redirect pyswarms' Reporter (report.log + rotated backups) from the cwd
+# into report_logs/ at the project root — see utils.configure_pyswarms_logging.
+configure_pyswarms_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -613,6 +617,93 @@ def quantise_to_symbols(
     """
     dists = cdist(embedded, codebook, metric="euclidean")   # (T', k₀)
     return np.argmin(dists, axis=1).astype(int)
+
+
+# ===========================================================================
+# Section 10.2b — ETE PCA-conditioning config hash (additive, method-agnostic)
+# ===========================================================================
+
+def compute_conditioning_config_hash(
+    config: dict,
+    method_key: str,
+    k0: int,
+) -> str:
+    """
+    Stable short hash tag for the parameter set that determines how a
+    PCA-compressed conditioning composite (``z_composite_per_pair``) was
+    built for a given method/window.
+
+    Used by the raw pipelines (``compute_multivariate_dspte_matrix`` in
+    ``phase_2/06_multivariate_dspte.py``, ``compute_amplitude_conditional_dste_matrix``
+    in ``phase_4/14_amplitude_dste.py``) to tag the composite they store in
+    their additive ETE metadata, and by the ETE surrogate core
+    (``11_symbolic_ete_core.py``) to verify — before reusing a stored
+    composite across the observed computation and all N surrogates — that
+    it was built under the exact same configuration as the current run. A
+    mismatch means the stored composite is stale (e.g. computed under
+    different filter/PCA/k0 settings) and must not be silently reused; the
+    caller should raise rather than proceed.
+
+    Only parameters that actually influence the *construction* of the
+    composite are included (deliberately excludes things like
+    ``sparsity_fallback_threshold`` or ``u_max``, which affect per-lag
+    fallback behaviour / how many lags are searched but not the composite
+    symbol sequence itself, which is built once per window before the lag
+    loop even starts):
+
+      - ``method_key`` (different methods should never be cross-compared)
+      - ``signal.embedding_dimension`` (d — shape of the embedded matrices
+        PCA is applied to)
+      - ``k0`` (the actual, already-clamped codebook size for this window —
+        affects both the shared codebook and ``symbolise_pca_conditioner``)
+      - ``<method_key>.conditional_pca`` (enabled / n_components — determines
+        whether/how compression happens)
+      - ``narrowband_filter`` (enabled / f_lo / f_hi / order — affects the
+        Hilbert phase input to the embedding for phase-based methods; inert
+        but harmless to include for amplitude-based methods that ignore it)
+      - ``<method_key>.envelope_normalize`` (amplitude-based methods only;
+        defaults to True and is simply unused by phase-based methods)
+
+    Parameters
+    ----------
+    config : dict
+        Parsed config.yaml.
+    method_key : str
+        Key into ``config['stage_e_transfer_entropy']`` (e.g. 'phase_2',
+        'phase_4').
+    k0 : int
+        The actual (post-clamp) shared codebook size used for this window.
+
+    Returns
+    -------
+    str
+        16-character hex digest (truncated SHA-256) of the canonical JSON
+        of the parameters above. Deterministic across runs/processes for
+        the same effective parameter set.
+    """
+    import hashlib
+    import json
+
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    sig_cfg = te_cfg.get("signal", {})
+    method_cfg = te_cfg.get(method_key, {})
+    pca_cfg = method_cfg.get("conditional_pca", {})
+    filt_cfg = te_cfg.get("narrowband_filter", {})
+
+    payload = {
+        "method_key": method_key,
+        "embedding_dimension": int(sig_cfg.get("embedding_dimension", 2)),
+        "k0": int(k0),
+        "conditional_pca_enabled": bool(pca_cfg.get("enabled", True)),
+        "conditional_pca_n_components": int(pca_cfg.get("n_components", 1)),
+        "narrowband_filter_enabled": bool(filt_cfg.get("enabled", True)),
+        "narrowband_filter_f_lo": float(filt_cfg.get("f_lo", 0.01)),
+        "narrowband_filter_f_hi": float(filt_cfg.get("f_hi", 0.10)),
+        "narrowband_filter_order": int(filt_cfg.get("order", 3)),
+        "envelope_normalize": bool(method_cfg.get("envelope_normalize", True)),
+    }
+    blob = json.dumps(payload, sort_keys=True).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
 
 
 # ===========================================================================
