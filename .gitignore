@@ -2,6 +2,7 @@ Raw/
 BIDS/
 .venv/
 .pip_deps/
+.DS_Store
 __pycache__/
 techval_branch/
 outputs/
