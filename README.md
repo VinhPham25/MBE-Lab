@@ -233,7 +233,13 @@ pip install -r requirements.txt
 
 Core stack: NumPy, SciPy, pandas, MNE / MNE-NIRS, scikit-learn, statsmodels, PyYAML, matplotlib, seaborn. Stage E also lists `pyswarms` (Phase 3 weight sweep; optional). Neural-Gas is **not** a pip package — it lives in `code/stage_e_transfer_entropy/utils_te.py`.
 
-**Data.** Place BIDS recordings at `data/BIDS/Expert-Novice/` (and the other study folders if needed). The tree is gitignored. Download from the ASTaUND *Scientific Data* paper / Figshare.
+**Data.** The recordings are intentionally not versioned. Download the [ASTaUND dataset collection on Figshare](https://springernature.figshare.com/collections/Assessment_of_Surgical_TAsks_Using_Neuroimaging_Dataset_ASTaUND_/6429713) (see the accompanying [Scientific Data paper](https://www.nature.com/articles/s41597-023-02603-3#Sec11)), then place the extracted BIDS recordings at `data/BIDS/Expert-Novice/` (and the other study folders when needed). Confirm the Expert–Novice data are discoverable before running the full pipeline:
+
+```bash
+find data/BIDS/Expert-Novice -type f -iname '*.snirf' | head
+```
+
+The command should print one or more `.snirf` files. The `data/` tree is gitignored.
 
 **IDTxl** (optional, Phase 2 KSG validation) is vendored under `IDTxl/` and gitignored; follow `docs/IDTXL_EVAL.md` if you need it.
 
@@ -242,6 +248,16 @@ Core stack: NumPy, SciPy, pandas, MNE / MNE-NIRS, scikit-learn, statsmodels, PyY
 ## Running the pipeline
 
 Do not hunt through `argparse` in `code/`. Use the wrappers:
+
+### Quick smoke test (no dataset required)
+
+After installing dependencies, verify the current primary method with synthetic inputs:
+
+```bash
+"scripts/Stage E Transfer Entropy/Phase 4 Multivariate Conditional Amplitude dSTE/14_process.sh" --smoke-test
+```
+
+Success ends with `ALL SMOKE TESTS PASSED` and requires no downloaded BIDS data.
 
 ```bash
 # From anywhere — wrappers resolve the repo root via git
