@@ -8,6 +8,10 @@ techval_branch/
 outputs/*
 !outputs/README.md
 stage_b_preprocessing/
+!code/stage_b_preprocessing/
+code/stage_b_preprocessing/*
+!code/stage_b_preprocessing/08_plot_individual_hrfs.py
 stage_c_validation/
 IDTxl/
 report_logs/
+docs/
