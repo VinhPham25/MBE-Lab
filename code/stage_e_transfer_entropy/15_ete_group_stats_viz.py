@@ -38,7 +38,15 @@ Functions
     Null-distribution histograms (Gaussian approximation from the
     persisted ``null_mean``/``null_std`` — see note below) for the most
     significant connections, floor-vs-signal stacked bars, and an
-    Expert/Novice ETE delta bar chart.
+    Expert/Novice ETE delta bar chart. Also writes the standalone
+    Expert-vs-Novice ETE grouped bar (no surrogate floor) used for
+    group-level interpretation — see ``plot_ete_bar_expert_vs_novice``.
+
+``plot_ete_bar_expert_vs_novice(method_key, config, overwrite)``
+    Paired Expert / Novice bars of mean ETE per connection (subject_mean
+    strategy, SEM whiskers). Same layout as Phase 4's
+    ``group_te_bar_expert_vs_novice.png``, but the quantity is
+    floor-corrected ETE — no ``null_mean`` stacked underneath.
 
 Note on null-distribution histograms
 -------------------------------------
@@ -224,6 +232,59 @@ def _load_subject_ete_npz_lists(
 
 def _stats_cfg(config: dict) -> dict:
     return config["stage_e_transfer_entropy"]["statistics"]
+
+
+def _ete_group_stats(
+    subj_matrix: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Mean and SEM across subjects for each of the 20 connections."""
+    n = subj_matrix.shape[0]
+    mean_vec = np.nanmean(subj_matrix, axis=0)
+    std_vec = np.nanstd(subj_matrix, axis=0, ddof=1)
+    sem_vec = std_vec / np.sqrt(n) if n > 1 else np.zeros_like(std_vec)
+    return mean_vec, sem_vec, n
+
+
+def _ete_params_from_config(method_key: str, config: dict) -> dict:
+    """Resolve the method's ``ete:`` block, falling back to ``phase_4.ete``."""
+    te_cfg = config.get("stage_e_transfer_entropy", {})
+    method_ete = te_cfg.get(method_key, {}).get("ete")
+    if isinstance(method_ete, dict) and method_ete:
+        return method_ete
+    return te_cfg.get("phase_4", {}).get("ete", {})
+
+
+def _format_ete_bar_caption(method_key: str, config: dict) -> str:
+    """
+    One-line figure caption: ETE surrogate settings, plus (for Phase 4)
+    the raw-pipeline params that actually produced the connectivity on disk.
+    """
+    ete_cfg = _ete_params_from_config(method_key, config)
+    ete_parts = [
+        f"n_surrogates={ete_cfg.get('n_surrogates', '?')}",
+        str(ete_cfg.get("surrogate_method", "circular_shift")),
+        f"floor={ete_cfg.get('floor_estimator', 'mean')}",
+        f"clip_negative={'on' if ete_cfg.get('clip_negative') else 'off'}",
+        f"min_shift_frac={ete_cfg.get('min_shift_fraction', '?')}",
+    ]
+    ete_line = f"ETE ({method_key}): " + " | ".join(ete_parts)
+
+    if method_key != "phase_4":
+        return ete_line
+
+    try:
+        p = _STAGE_E_ROOT / "phase_4" / "16_amplitude_dste_visualization.py"
+        spec = importlib.util.spec_from_file_location("p4_viz_for_ete_caption", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        run_meta = mod._load_p4_run_metadata(config)
+        p4_line = mod._format_params_caption(run_meta)
+        if p4_line:
+            return p4_line + "  ·  " + ete_line
+    except Exception as exc:
+        logger.debug("_format_ete_bar_caption: Phase 4 run_metadata skipped (%s)", exc)
+
+    return ete_line
 
 
 # ===========================================================================
@@ -1055,6 +1116,195 @@ def run_ete_statistics(
 # Section 10.6c — Visualizations
 # ===========================================================================
 
+_EXP_COL = "#1F618D"
+_NOV_COL = "#C0392B"
+
+_ETE_BAR_FILENAME = "group_ete_bar_expert_vs_novice.png"
+_ETE_BAR_SUMMARY = "group_ete_bar_expert_vs_novice_summary.json"
+_ETE_PANEL_FILENAME = "group_ete_panel_null_floor_delta.png"
+
+
+def plot_ete_bar_expert_vs_novice(
+    method_key: str,
+    config: Optional[dict] = None,
+    overwrite: bool = False,
+) -> Path:
+    """
+    Paired Expert / Novice bar chart of mean ETE per directed connection.
+
+    Same layout as Phase 4's ``group_te_bar_expert_vs_novice.png`` (steel-blue
+    Expert / brick-red Novice, SEM across subjects, FDR stars from the ETE
+    H1 CSV) but the quantity is **floor-corrected ETE** — ``null_mean`` is
+    not drawn. Subject-mean strategy: trial-average per subject, then mean
+    ± SEM across subjects, so every subject contributes equally.
+
+    ETE is signed (``clip_negative: false``): a negative bar means raw TE
+    sat at or below the surrogate floor for that connection.
+
+    Saved to the method's ``ete_visualizations/`` as
+    ``group_ete_bar_expert_vs_novice.png`` (+ companion ``_summary.json``).
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if config is None:
+        config = load_config()
+
+    viz_dir = _ete_viz_dir(method_key, config)
+    out_path = viz_dir / _ETE_BAR_FILENAME
+    if not overwrite and out_path.exists():
+        logger.info("plot_ete_bar_expert_vs_novice [%s]: cache hit -> %s", method_key, out_path)
+        return out_path
+
+    conn_labels = _connection_labels()
+    n_conn = len(conn_labels)
+
+    mean_arrays = build_ete_group_arrays_subject_mean(
+        method_key, config=config, overwrite=False,
+    )
+    B_Exp_ete, B_Nov_ete = mean_arrays["ete_connectivity"]
+
+    # Subject-mean strategy: average over trial axis → (n_subs, 20)
+    exp_subj = np.nanmean(B_Exp_ete, axis=2)
+    nov_subj = np.nanmean(B_Nov_ete, axis=2)
+
+    exp_mean, exp_sem, n_exp = _ete_group_stats(exp_subj)
+    nov_mean, nov_sem, n_nov = _ete_group_stats(nov_subj)
+
+    sig_primary: set = set()
+    sig_fw_only: set = set()
+    stats_loaded = False
+    try:
+        h1_path = _ete_stats_dir(method_key, config) / "ete_H1_expert_vs_novice.csv"
+        if h1_path.exists():
+            h1_df = pd.read_csv(h1_path)
+            sig_primary = set(
+                h1_df.loc[h1_df["significant"] == True, "connection"].tolist()
+            )
+            if "significant_fw" in h1_df.columns:
+                sig_fw = set(
+                    h1_df.loc[h1_df["significant_fw"] == True, "connection"].tolist()
+                )
+                sig_fw_only = sig_fw - sig_primary
+            stats_loaded = True
+            logger.info(
+                "plot_ete_bar_expert_vs_novice [%s]: loaded %d primary / %d FW-only "
+                "significant connections from %s",
+                method_key, len(sig_primary), len(sig_fw_only), h1_path.name,
+            )
+    except Exception as exc:
+        logger.debug(
+            "plot_ete_bar_expert_vs_novice [%s]: ETE H1 stats not loaded (%s). "
+            "Significance markers will be omitted.", method_key, exc,
+        )
+
+    x = np.arange(n_conn)
+    bar_w = 0.38
+
+    fig, ax = plt.subplots(figsize=(16, 5.5))
+
+    ax.bar(
+        x - bar_w / 2, exp_mean, bar_w,
+        color=_EXP_COL, alpha=0.88,
+        label=f"Expert (n={n_exp})",
+        yerr=exp_sem, capsize=3,
+        error_kw={"elinewidth": 1.2, "ecolor": "#1B2631"},
+        edgecolor="#1B2631", linewidth=0.35,
+    )
+    ax.bar(
+        x + bar_w / 2, nov_mean, bar_w,
+        color=_NOV_COL, alpha=0.88,
+        label=f"Novice (n={n_nov})",
+        yerr=nov_sem, capsize=3,
+        error_kw={"elinewidth": 1.2, "ecolor": "#1B2631"},
+        edgecolor="#1B2631", linewidth=0.35,
+    )
+
+    y_hi = float(np.nanmax(np.concatenate([exp_mean + exp_sem, nov_mean + nov_sem])))
+    y_lo = float(np.nanmin(np.concatenate([exp_mean - exp_sem, nov_mean - nov_sem])))
+    y_pad = 0.04 * max(abs(y_hi), abs(y_lo), 1e-6)
+
+    for i, lbl in enumerate(conn_labels):
+        y_top = max(exp_mean[i] + exp_sem[i], nov_mean[i] + nov_sem[i]) + y_pad
+        if lbl in sig_primary:
+            ax.text(i, y_top, "*", ha="center", va="bottom",
+                    fontsize=14, fontweight="bold", color="#E74C3C")
+        elif lbl in sig_fw_only:
+            ax.text(i, y_top, "†", ha="center", va="bottom",
+                    fontsize=12, fontweight="bold", color="#E67E22")
+
+    ax.axhline(0, color="#1B2631", linewidth=0.6, linestyle="--", alpha=0.5)
+    ax.set_xticks(x)
+    ax.set_xticklabels(conn_labels, rotation=55, ha="right", fontsize=8)
+    ax.set_ylabel("Effective TE (nats)", fontsize=11)
+    ax.set_xlabel("Directed connection", fontsize=10)
+    if y_lo >= 0:
+        ax.set_ylim(bottom=0)
+    else:
+        ax.set_ylim(bottom=y_lo - y_pad)
+
+    method_label = _registry_entry(method_key, config).get("label", method_key)
+    sig_note = (
+        "  |  * FDR-sig primary  |  † FDR-sig sensitivity  |  BH α=0.05"
+        if stats_loaded else ""
+    )
+    ax.set_title(
+        f"Expert vs. Novice — Effective TE  ({method_label})  "
+        f"[All-Trial Average, subject_mean strategy]{sig_note}",
+        fontsize=11, fontweight="bold", pad=8,
+    )
+
+    ax.legend(fontsize=9, framealpha=0.9, loc="upper right")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.yaxis.grid(True, alpha=0.35, linewidth=0.7)
+    ax.set_axisbelow(True)
+    fig.tight_layout()
+
+    caption = _format_ete_bar_caption(method_key, config)
+    t = fig.text(
+        0.5, -0.02, caption,
+        ha="center", va="top", fontsize=7.5, color="#5D6D7E",
+        transform=fig.transFigure, wrap=True,
+    )
+    t.set_gid("autogen_ete_params_caption")
+
+    n_exp_gt = int(np.nansum(exp_mean > nov_mean))
+    n_nov_gt = int(np.nansum(nov_mean > exp_mean))
+
+    metadata = {
+        "method_key": method_key,
+        "measure": "ete",
+        "connection_labels": conn_labels,
+        "expert_mean": exp_mean.tolist(),
+        "expert_sem": exp_sem.tolist(),
+        "novice_mean": nov_mean.tolist(),
+        "novice_sem": nov_sem.tolist(),
+        "n_exp": n_exp,
+        "n_nov": n_nov,
+        "n_exp_gt_nov": n_exp_gt,
+        "n_nov_gt_exp": n_nov_gt,
+        "stats_loaded": stats_loaded,
+        "n_sig_primary": len(sig_primary),
+        "n_sig_fw_only": len(sig_fw_only),
+        "sig_primary_connections": sorted(sig_primary),
+        "sig_fw_only_connections": sorted(sig_fw_only),
+        "params_caption": caption,
+    }
+
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    with open(viz_dir / _ETE_BAR_SUMMARY, "w") as fh:
+        json.dump(metadata, fh, indent=2, cls=_NumpyEncoder)
+    plt.close(fig)
+    logger.info(
+        "plot_ete_bar_expert_vs_novice [%s]: saved %s  "
+        "Expert>Novice=%d  Novice>Expert=%d",
+        method_key, out_path.name, n_exp_gt, n_nov_gt,
+    )
+    return out_path
+
+
 def run_ete_visualizations(
     method_key: str,
     config: Optional[dict] = None,
@@ -1064,20 +1314,24 @@ def run_ete_visualizations(
     """
     Generate ETE diagnostic visualizations for one method (Section 10.6).
 
-    Produces one multi-panel figure:
-      1. Null-distribution histograms (Gaussian approximation — see module
-         docstring) for the ``n_representative`` most-significant
-         connections (lowest grand-mean p-value), with observed raw TE and
-         p-value annotated.
-      2. Floor-vs-signal stacked bar chart (mean ``null_mean`` floor +
-         mean ``ete`` signal = mean raw TE) per connection, per group.
-      3. Expert/Novice ETE delta bar chart (mean ETE Expert − mean ETE
-         Novice) across all 20 connections.
+    Produces:
+      * ``group_ete_bar_expert_vs_novice.png`` — standalone Expert/Novice
+        ETE grouped bars (no surrogate floor). Independent cache from the
+        diagnostic panel, so a cached panel will not skip this figure.
+      * ``group_ete_panel_null_floor_delta.png`` — multi-panel diagnostic:
+        1. Null-distribution histograms (Gaussian approximation — see module
+           docstring) for the ``n_representative`` most-significant
+           connections (lowest grand-mean p-value), with observed raw TE and
+           p-value annotated.
+        2. Floor-vs-signal stacked bar chart (mean ``null_mean`` floor +
+           mean ``ete`` signal = mean raw TE) per connection, per group.
+        3. Expert/Novice ETE delta bar chart (mean ETE Expert − mean ETE
+           Novice) across all 20 connections.
 
     Returns
     -------
     Path
-        Absolute path to the saved figure.
+        Absolute path to the saved diagnostic-panel figure.
     """
     import matplotlib
     matplotlib.use("Agg")
@@ -1089,9 +1343,14 @@ def run_ete_visualizations(
         config = load_config()
 
     viz_dir = _ete_viz_dir(method_key, config)
-    out_path = viz_dir / "group_ete_panel_null_floor_delta.png"
+    bar_path = plot_ete_bar_expert_vs_novice(
+        method_key, config=config, overwrite=overwrite,
+    )
+    logger.info("run_ete_visualizations [%s]: grouped ETE bar -> %s", method_key, bar_path)
+
+    out_path = viz_dir / _ETE_PANEL_FILENAME
     if not overwrite and out_path.exists():
-        logger.info("run_ete_visualizations [%s]: cache hit -> %s", method_key, out_path)
+        logger.info("run_ete_visualizations [%s]: panel cache hit -> %s", method_key, out_path)
         return out_path
 
     conn_labels = _connection_labels()
@@ -1208,8 +1467,13 @@ def _cli_main() -> None:
     )
     parser.add_argument("--method", type=str, default="phase_4",
                          help="Registry key in stage_e_transfer_entropy.significance_methods (default: phase_4)")
-    parser.add_argument("--step", choices=["group", "statistics", "visualizations", "all"],
-                         default="all")
+    parser.add_argument(
+        "--step",
+        choices=["group", "statistics", "visualizations", "bar", "all"],
+        default="all",
+        help="Which stage to run. 'bar' writes only group_ete_bar_expert_vs_novice.png; "
+             "'visualizations' writes that bar plus the diagnostic panel.",
+    )
     parser.add_argument("--overwrite", dest="overwrite", action="store_true")
     parser.add_argument("--no-overwrite", dest="overwrite", action="store_false")
     parser.set_defaults(overwrite=False)
@@ -1226,6 +1490,11 @@ def _cli_main() -> None:
             args.method, len(out["normality"]), len(out["h1"]), len(out["h0"]),
             len(out["hiv"]), len(out["floor_fraction"]),
         )
+    if args.step == "bar":
+        bar_path = plot_ete_bar_expert_vs_novice(
+            args.method, config=cfg, overwrite=args.overwrite,
+        )
+        logger.info("[%s] ETE bar -> %s", args.method, bar_path)
     if args.step in ("visualizations", "all"):
         fig_path = run_ete_visualizations(args.method, config=cfg, overwrite=args.overwrite)
         logger.info("[%s] visualizations -> %s", args.method, fig_path)

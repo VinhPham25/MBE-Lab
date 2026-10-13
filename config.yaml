@@ -823,7 +823,7 @@ stage_e_transfer_entropy:
       ete_connectivity_dir: "phase_2_ete_connectivity"
       ete_group_dir: "phase_2_ete_group"
       executed_raw: true                 # raw multivariate dSPTE already batch-computed (Section 7.2.3/7.3.1)
-      executed_ete_or_significance: false  # phase_2/12_multivariate_ete.py is WIRE ONLY this pass (10.4b)
+      executed_ete_or_significance: true   # Phase 2 ETE batch run 2026-08-31 (13/13 subjects; see PHASE2_ETE_AI_HANDOFF.md)
       ai_loader:
         kind: "symbolic_mean_npz"
         group_dir: "phase_2_group"
@@ -896,6 +896,24 @@ stage_e_transfer_entropy:
       h1_loader:
         kind: "output_subdir_csv"
         dir_key: "phase_4_ete_statistics"
+        filename: "ete_H1_expert_vs_novice.csv"
+
+    phase_2_ete:
+      label: "Phase 2 — Multivariate dSPTE (ETE, floor-corrected)"
+      kind: "symbolic_te"
+      has_ete: false
+      has_analytic_significance: false
+      ai_loader:
+        kind: "symbolic_mean_npz"
+        group_dir: "phase_2_ete_group"
+        exp_filename: "B_Exp_ete_mean_ete_connectivity.npz"
+        nov_filename: "B_Nov_ete_mean_ete_connectivity.npz"
+      ai_track: true
+      ai_stats_dir: "phase_2_ete_statistics"
+      ai_viz_dir: "phase_2_ete_viz"
+      h1_loader:
+        kind: "output_subdir_csv"
+        dir_key: "phase_2_ete_statistics"
         filename: "ete_H1_expert_vs_novice.csv"
 
     # --------------------------------------------------------------------

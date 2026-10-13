@@ -654,7 +654,7 @@ group builder.
 
 **Args**
 - `--method METHOD` — registry key (default in Python: `phase_4`; also `phase_2` once that ETE batch exists)
-- `--step {group,statistics,visualizations,all}` — which stage to run (default: `all`)
+- `--step {group,statistics,visualizations,bar,all}` — which stage to run (default: `all`). `bar` writes only `group_ete_bar_expert_vs_novice.png`; `visualizations` writes that bar plus the diagnostic panel.
 - `--overwrite` — rebuild even if cached files exist
 - `--no-overwrite` — use cached outputs when present (Python default)
 
@@ -665,6 +665,7 @@ group builder.
 ```bash
 ./20_ete_group_stats_viz.sh
 ./20_ete_group_stats_viz.sh --step visualizations
+./20_ete_group_stats_viz.sh --step bar --overwrite
 ./20_ete_group_stats_viz.sh --method phase_2 --step all --overwrite
 ```
 

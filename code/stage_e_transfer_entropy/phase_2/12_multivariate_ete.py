@@ -1,14 +1,17 @@
 """
 Stage E — Phase 2: Effective TE (ETE) Wiring (Section 10.4b).
 
-**STATUS: WIRE ONLY this pass — NOT executed as a batch.**  Phase 2's
-phase-based dSPTE is retained for documentation/comparison only (see
+**STATUS: batch executed (2026-08-31, 13/13 subjects) — see
+``PHASE2_ETE_AI_HANDOFF.md`` and ``config.yaml``'s
+``phase_2.executed_ete_or_significance: true``.**  Phase 2's phase-based
+dSPTE is still retained for documentation/comparison only (see
 ``CLAUDE.md`` Section 3 — "the project has moved off phase-based TE
-entirely"). This file proves the ``11_symbolic_ete_core.py`` contract is
+entirely"); this ETE track exists purely as a comparison point against
+Phase 4's primary amplitude-ETE track, not as a methodological pivot back
+to phase. This file proves the ``11_symbolic_ete_core.py`` contract is
 truly method-agnostic (Section 10.6's completion check) by wiring it to a
-second, structurally different raw pipeline, but is not run in the current
-work cycle. Run manually via the CLI below if/when Phase 2 ETE numbers are
-ever needed for the cross-phase comparison (Section 10.11).
+second, structurally different raw pipeline. Re-run manually via the CLI
+below if the raw Phase 2 dSPTE pipeline or its config changes.
 
 Key structural difference from Phase 4's wiring (``19_amplitude_ete.py``):
 ``compute_multivariate_dspte_matrix(Phi_win, taus, config, roi_names)`` takes an
@@ -31,8 +34,8 @@ Output schema (parallel to Phase 4's, when run)
   plus ``subject_id, group, trial_ids, window_counts, roi_names_used,
   connection_labels, n_trials, params_json``.
 
-CLI (not run this pass)
-------------------------
+CLI
+---
 python3 12_multivariate_ete.py --smoke-test
 python3 12_multivariate_ete.py --benchmark SUBJECT_ID [--n-windows N]
 python3 12_multivariate_ete.py --subject SUBJECT_ID
@@ -248,8 +251,8 @@ def process_subject_multivariate_ete(
     binds ``taus_trial`` into ``raw_compute_fn`` via
     ``_make_multivariate_raw_compute_fn()``.
 
-    **NOT invoked in the current work cycle** (WIRE ONLY) — provided for
-    future use per the module docstring.
+    Batch-executed 2026-08-31 (see module docstring) — safe to re-run with
+    ``overwrite=True`` if the raw Phase 2 dSPTE pipeline or its config changes.
     """
     config = _load_config_if_none(config)
     utils_te = _get_utils_te()
@@ -408,7 +411,7 @@ def process_subject_multivariate_ete(
 
 
 # ===========================================================================
-# Batch runner (NOT invoked this pass — WIRE ONLY)
+# Batch runner
 # ===========================================================================
 
 def run_batch_multivariate_ete(
@@ -417,7 +420,7 @@ def run_batch_multivariate_ete(
     config: "dict | None" = None,
     overwrite: bool = False,
 ) -> dict:
-    """Batch-process all subjects for Phase 2 Effective TE. NOT run this pass."""
+    """Batch-process all subjects for Phase 2 Effective TE."""
     config = _load_config_if_none(config)
     utils_te = _get_utils_te()
 
@@ -474,7 +477,7 @@ def run_batch_multivariate_ete(
 
 
 # ===========================================================================
-# CLI (not invoked this pass — WIRE ONLY)
+# CLI
 # ===========================================================================
 
 if __name__ == "__main__":
@@ -486,7 +489,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(
-        description="Stage E Phase 2 -- Effective TE (WIRE ONLY, not run in Section 10 pass)"
+        description="Stage E Phase 2 -- Effective TE"
     )
     grp = parser.add_mutually_exclusive_group(required=True)
     grp.add_argument("--benchmark", type=str, metavar="SUBJECT_ID")
